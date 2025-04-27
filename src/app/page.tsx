@@ -152,8 +152,38 @@ export default function Home() {
   };
 
   const handleExport = () => {
-    // Implement export functionality here (e.g., to CSV or Excel)
-    alert("Exportar a Excel/CSV");
+    // Convert product data to CSV format
+    const csvData = convertToCSV(products);
+
+    // Create a Blob from the CSV data
+    const blob = new Blob([csvData], { type: "text/csv;charset=utf-8;" });
+
+    // Create a link to download the CSV file
+    const link = document.createElement("a");
+    link.href = URL.createObjectURL(blob);
+    link.setAttribute("download", "inventory_count.csv");
+    document.body.appendChild(link);
+
+    // Trigger the download
+    link.click();
+
+    // Clean up
+    document.body.removeChild(link);
+  };
+
+  const convertToCSV = (data: Product[]) => {
+    const headers = ["Barcode", "Description", "Provider", "Stock", "Count"];
+    const rows = data.map((product) => [
+      product.barcode,
+      product.description,
+      product.provider,
+      product.stock,
+      product.count,
+    ]);
+
+    // Join headers and rows with commas and newlines
+    const csv = headers.join(",") + "\n" + rows.map((row) => row.join(",")).join("\n");
+    return csv;
   };
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
@@ -346,4 +376,3 @@ export default function Home() {
     </div>
   );
 }
-

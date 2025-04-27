@@ -1,6 +1,3 @@
-
-"use client";
-
 import { useState, useCallback, useRef, useEffect } from "react";
 import {
   Table,
@@ -49,6 +46,7 @@ import {
 } from "@/components/ui/alert-dialog";
 import { Progress } from "@/components/ui/progress";
 import { useIsMobile } from "@/hooks/use-mobile";
+import { ai } from "@/ai/ai-instance";
 
 interface Product {
   barcode: string;
@@ -224,7 +222,7 @@ const parseCSV = (csvData: string): Product[] => {
 
   for (let i = 1; i < lines.length; i++) {
     const data = lines[i].split(",");
-    if (data.length === headers.length) {
+    if (data.length === 4) {
       const barcode = data[0] || "";
       const description = data[1] || "";
       const provider = data[2] || "";
@@ -604,7 +602,7 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = ({
           <TableHeader>
             <TableRow>
               <TableHead>Código de Barras</TableHead>
-              <TableHead>Descripción</TableHead>
+              <TableHead style={{ width: '50%' }}>Descripción</TableHead>
               <TableHead className={isMobile ? "hidden" : ""}>Proveedor</TableHead>
               <TableHead className="text-right">Stock</TableHead>
               <TableHead className="text-center">Acciones</TableHead>
@@ -624,7 +622,7 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = ({
                     product.barcode
                   )}
                 </TableCell>
-                <TableCell>
+                <TableCell style={{ width: '50%' }}>
                   {editingBarcode === product.barcode ? (
                     <Textarea
                       value={editedProduct?.description || ""}
@@ -798,3 +796,4 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = ({
     </div>
   );
 };
+

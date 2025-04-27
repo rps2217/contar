@@ -161,11 +161,23 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = ({
     reader.onload = (event) => {
       const csvData = event.target?.result as string;
       const parsedProducts = parseCSV(csvData);
-      setDatabaseProducts([...databaseProducts, ...parsedProducts]);
-      toast({
-        title: "Productos cargados",
-        description: `${parsedProducts.length} productos han sido cargados desde el archivo.`,
-      });
+      // Limit the number of products to 4000
+      const totalProducts = databaseProducts.length + parsedProducts.length;
+      if (totalProducts > 4000) {
+        const allowedProducts = 4000 - databaseProducts.length;
+        const limitedProducts = parsedProducts.slice(0, allowedProducts);
+        setDatabaseProducts([...databaseProducts, ...limitedProducts]);
+        toast({
+          title: "Productos cargados",
+          description: `${limitedProducts.length} productos han sido cargados desde el archivo. Se han ignorado los productos que exceden el límite de 4000.`,
+        });
+      } else {
+        setDatabaseProducts([...databaseProducts, ...parsedProducts]);
+        toast({
+          title: "Productos cargados",
+          description: `${parsedProducts.length} productos han sido cargados desde el archivo.`,
+        });
+      }
     };
     reader.readAsText(file);
   };
@@ -433,3 +445,4 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = ({
     </div>
   );
 };
+

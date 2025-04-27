@@ -162,7 +162,7 @@ const updateProductInDB = async (product: Product): Promise<void> => {
 
     request.onerror = () => {
       console.error("Error updating product in IndexedDB", request.error);
-      reject(request.error);
+      reject(transaction.error);
     };
 
     transaction.oncomplete = () => {
@@ -184,7 +184,7 @@ const deleteProductFromDB = async (barcode: string): Promise<void> => {
 
     request.onerror = () => {
       console.error("Error deleting product from IndexedDB", request.error);
-      reject(request.error);
+      reject(transaction.error);
     };
 
     transaction.oncomplete = () => {
@@ -206,7 +206,7 @@ const clearDatabaseDB = async (): Promise<void> => {
 
     request.onerror = () => {
       console.error("Error clearing IndexedDB", request.error);
-      reject(request.error);
+      reject(transaction.error);
     };
 
     transaction.oncomplete = () => {
@@ -363,17 +363,15 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = ({
         const processChunk = async (start: number, end: number) => {
           const chunk = lines.slice(start, end);
           const parsedProducts = parseCSV(chunk.join("\n"));
-          const totalProductsBeforeUpload = databaseProducts.length;
-          const allowedProducts = 4000 - totalProductsBeforeUpload;
-          const productsToAdd = parsedProducts.slice(0, allowedProducts); // Limit products to add
+
           try {
-            await addProductsToDB(productsToAdd);
+            await addProductsToDB(parsedProducts);
 
             setDatabaseProducts((prevProducts) => {
-              const updatedProducts = [...prevProducts, ...productsToAdd];
-              return updatedProducts.slice(0, 4000)
+              const updatedProducts = [...prevProducts, ...parsedProducts];
+              return updatedProducts;
             });
-            uploadedCount += productsToAdd.length;
+            uploadedCount += parsedProducts.length;
             setUploadProgress(
               Math.min(
                 100,
@@ -409,7 +407,7 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = ({
       };
       reader.readAsText(file);
     },
-    [databaseProducts, setDatabaseProducts, toast]
+    [setDatabaseProducts, toast]
   );
 
   const parseCSV = useCallback((csvData: string): Product[] => {
@@ -685,3 +683,4 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = ({
     </div>
   );
 };
+

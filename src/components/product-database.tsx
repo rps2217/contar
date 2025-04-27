@@ -11,7 +11,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { Button } from "@/components/ui/button";
-import { Trash, Edit, Upload, FileDown } from "lucide-react";
+import { Trash, Upload, FileDown } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import {
   Dialog,
@@ -50,7 +50,6 @@ import {
 } from "@/components/ui/alert-dialog";
 import { Progress } from "@/components/ui/progress";
 import { useIsMobile } from "@/hooks/use-mobile";
-import { ai } from "@/ai/ai-instance";
 
 interface Product {
   barcode: string;
@@ -612,28 +611,26 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = ({
           <TableCaption>Lista de productos en la base de datos.</TableCaption>
           <TableHeader>
             <TableRow>
-              <TableHead style={{ width: '25%' }}>Código de Barras</TableHead>
-              <TableHead style={{ width: '25%' }}>Descripción</TableHead>
-              <TableHead style={{ width: '25%' }} className={isMobile ? "hidden" : ""}>Proveedor</TableHead>
-              <TableHead style={{ width: '25%' }} className="text-right">Stock</TableHead>
+              <TableHead style={{ width: '33%' }}>Código de Barras</TableHead>
+              <TableHead style={{ width: '33%' }}>Descripción</TableHead>
+              
+              <TableHead style={{ width: '33%' }} className="text-right">Stock</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
             {databaseProducts.map((product) => (
               <TableRow key={product.barcode}>
                 <TableCell
-                 style={{ width: '25%', cursor: 'pointer' }}
+                 style={{ width: '33%', cursor: 'pointer' }}
                  onClick={() => handleOpenEditDialog(product)}
                 >
                   {product.barcode}
                 </TableCell>
-                <TableCell style={{ width: '25%' }}>
+                <TableCell style={{ width: '33%' }}>
                   {product.description}
                 </TableCell>
-                <TableCell style={{ width: '25%' }} className={isMobile ? "hidden" : ""}>
-                  {product.provider}
-                </TableCell>
-                <TableCell style={{ width: '25%' }} className="text-right">
+                
+                <TableCell style={{ width: '33%' }} className="text-right">
                   {product.stock}
                 </TableCell>
               </TableRow>
@@ -758,3 +755,4 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = ({
     </div>
   );
 };
+

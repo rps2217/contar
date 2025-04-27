@@ -154,7 +154,7 @@ export default function Home() {
     <div className="container mx-auto p-4">
       <h1 className="text-2xl font-bold mb-4 text-center">StockCounter Pro</h1>
 
-      <Tabs defaultValue="Contador" className="w-[400px] mx-auto">
+      <Tabs defaultValue="Contador" className="w-full md:w-[400px] mx-auto">
         <TabsList>
           <TabsTrigger value="Contador">Contador de Existencias</TabsTrigger>
           <TabsTrigger value="Base de Datos">Base de Datos</TabsTrigger>
@@ -186,7 +186,9 @@ export default function Home() {
             <TableHeader>
               <TableRow>
                 <TableHead>Descripción</TableHead>
-                <TableHead>Proveedor</TableHead>
+                <TableHead className="hidden sm:table-cell">
+                  Proveedor
+                </TableHead>
                 <TableHead>Stock</TableHead>
                 <TableHead className="text-right">Cantidad</TableHead>
                 <TableHead className="text-center">Acciones</TableHead>
@@ -196,7 +198,9 @@ export default function Home() {
               {products.map((product) => (
                 <TableRow key={product.barcode}>
                   <TableCell>{product.description}</TableCell>
-                  <TableCell>{product.provider}</TableCell>
+                  <TableCell className="hidden sm:table-cell">
+                    {product.provider}
+                  </TableCell>
                   <TableCell>{product.stock}</TableCell>
                   <TableCell className="text-right">{product.count}</TableCell>
                   <TableCell className="text-center">

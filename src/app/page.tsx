@@ -127,13 +127,11 @@ export default function Home() {
     alert("Exportar a Excel/CSV");
   };
 
-  const totalCount = products.reduce((sum, product) => sum + product.count, 0);
-
-    const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
-        if (e.key === 'Enter') {
-            handleAddProduct();
-        }
-    };
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === 'Enter') {
+      handleAddProduct();
+    }
+  };
 
   return (
     <div className="container mx-auto p-4">
@@ -148,7 +146,7 @@ export default function Home() {
           onChange={(e) => setBarcode(e.target.value)}
           className="mr-2 bg-violet-100"
           ref={barcodeInputRef} // Attach the ref to the input
-            onKeyDown={handleKeyDown}
+          onKeyDown={handleKeyDown}
         />
         <Button onClick={handleAddProduct} variant="secondary" style={{ backgroundColor: '#008080', color: 'white' }}>Agregar</Button>
       </div>
@@ -195,10 +193,10 @@ export default function Home() {
 
       {/* Count Export */}
       <div className="mt-4 flex justify-between items-center">
-        <p className="font-bold">Total de productos: {totalCount}</p>
         <Button onClick={handleExport}>Exportar</Button>
       </div>
     </div>
   );
 }
+
 

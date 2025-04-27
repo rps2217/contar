@@ -1,5 +1,4 @@
 // src/components/product-database.worker.ts
-// Use the 'no-use-before-define' ESLint rule to disable this warning.
 /* eslint-disable no-use-before-define */
 
 interface Product {
@@ -9,8 +8,6 @@ interface Product {
   stock: number;
   count: number;
 }
-
-const CHUNK_SIZE = 200;
 
 const openDB = (dbName: string, dbVersion: number, objectStoreName: string): Promise<IDBDatabase> => {
   return new Promise((resolve, reject) => {
@@ -56,7 +53,6 @@ const addProductsToDB = async (dbName: string, objectStoreName: string, products
   });
 };
 
-
 const parseCSV = (csvData: string): Product[] => {
   const lines = csvData.split("\n");
   const headers = lines[0].split(",");
@@ -85,30 +81,27 @@ const parseCSV = (csvData: string): Product[] => {
   return products;
 };
 
+async function streamReadCSV(csvData: string, dbName: string, objectStoreName: string): Promise<number> {
+  const lines = csvData.split("\n");
+    let uploadedCount = 0;
+
+     // Process chunks sequentially
+     const parsedProducts = parseCSV(csvData);
+     await addProductsToDB(dbName, objectStoreName, parsedProducts);
+     uploadedCount += parsedProducts.length;
+     // Send completion message to the main thread
+     return uploadedCount;
+}
+
 // Listen for messages from the main thread
 self.onmessage = async (event) => {
   if (event.data.type === 'processCSV') {
     try {
       const { csvData, dbName, objectStoreName } = event.data;
-      const lines = csvData.split("\n");
-        const totalProducts = lines.length - 1;
-        let uploadedCount = 0;
-         // Process chunks sequentially
-         for (let i = 1; i < lines.length; i += CHUNK_SIZE) {
-          const start = i;
-          const end = Math.min(i + CHUNK_SIZE, lines.length);
-          const chunk = lines.slice(start, end);
-          const parsedProducts = parseCSV(chunk.join("\n"));
-            await addProductsToDB(dbName, objectStoreName, parsedProducts);
-            uploadedCount += parsedProducts.length;
-            const progress = Math.min(
-              100,
-              Math.round((uploadedCount / totalProducts) * 100)
-            ); // Ensure progress doesn't exceed 100
-             // Send progress update to the main thread
-             self.postMessage({ type: 'updateProgress', progress });
-          }
 
+        const totalProducts = csvData.length;
+        let uploadedCount = 0;
+         uploadedCount = await streamReadCSV(csvData, dbName, objectStoreName);
         // Send completion message to the main thread
         self.postMessage({ type: 'uploadComplete', count: uploadedCount });
     } catch (error: any) {

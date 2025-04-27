@@ -234,7 +234,7 @@ export default function Home() {
                   </TableHead>
                   <TableHead>Stock</TableHead>
                   <TableHead className="text-right">Cantidad</TableHead>
-                  <TableHead className="text-center">Acciones</TableHead>
+                  <TableHead className="text-center sm:table-cell hidden">Acciones</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -256,7 +256,7 @@ export default function Home() {
                     >
                       {product.count}
                     </TableCell>
-                    <TableCell className="text-center">
+                    <TableCell className="text-center sm:table-cell hidden">
                       <Button
                         onClick={() => handleDecrement(product.barcode)}
                         size="icon"

@@ -131,24 +131,28 @@ const getAllProductsFromDB = async (): Promise<Product[]> => {
 };
 
 const addProductsToDB = async (products: Product[]): Promise<void> => {
-  const db = await openDB();
-  return new Promise((resolve, reject) => {
-    const transaction = db.transaction(OBJECT_STORE_NAME, "readwrite");
-    const objectStore = transaction.objectStore(OBJECT_STORE_NAME);
+  return new Promise(async (resolve, reject) => {
+    try {
+      const db = await openDB();
+      const transaction = db.transaction(OBJECT_STORE_NAME, "readwrite");
+      const objectStore = transaction.objectStore(OBJECT_STORE_NAME);
 
-    products.forEach(product => {
-      objectStore.put(product);
-    });
+      products.forEach(product => {
+        objectStore.put(product);
+      });
 
-    transaction.oncomplete = () => {
-      db.close();
-      resolve();
-    };
+      transaction.oncomplete = () => {
+        db.close();
+        resolve();
+      };
 
-    transaction.onerror = () => {
-      console.error("Error adding products to IndexedDB", transaction.error);
-      reject(transaction.error);
-    };
+      transaction.onerror = () => {
+        console.error("Error adding products to IndexedDB", transaction.error);
+        reject(transaction.error);
+      };
+    } catch (error) {
+      reject(error);
+    }
   });
 };
 
@@ -197,25 +201,29 @@ const deleteProductFromDB = async (barcode: string): Promise<void> => {
 };
 
 const clearDatabaseDB = async (): Promise<void> => {
-  const db = await openDB();
-  return new Promise((resolve, reject) => {
-    const transaction = db.transaction(OBJECT_STORE_NAME, "readwrite");
-    const objectStore = transaction.objectStore(OBJECT_STORE_NAME);
-    const request = objectStore.clear();
+    return new Promise(async (resolve, reject) => {
+        try {
+            const db = await openDB();
+            const transaction = db.transaction(OBJECT_STORE_NAME, "readwrite");
+            const objectStore = transaction.objectStore(OBJECT_STORE_NAME);
+            const request = objectStore.clear();
 
-    request.onsuccess = () => {
-      resolve();
-    };
+            request.onsuccess = () => {
+                resolve();
+            };
 
-    request.onerror = () => {
-      console.error("Error clearing IndexedDB", request.error);
-      reject(transaction.error);
-    };
+            request.onerror = () => {
+                console.error("Error clearing IndexedDB", request.error);
+                reject(request.error);
+            };
 
-    transaction.oncomplete = () => {
-      db.close();
-    };
-  });
+            transaction.oncomplete = () => {
+                db.close();
+            };
+        } catch (error) {
+            reject(error);
+        }
+    });
 };
 
 const parseCSV = (csvData: string): Product[] => {
@@ -744,22 +752,22 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = ({
         </DialogContent>
       </Dialog>
        <AlertDialog open={openAlert} onOpenChange={setOpenAlert}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>¿Estás seguro?</AlertDialogTitle>
-            <AlertDialogDescription>
-              Esta acción eliminará el producto de la base de datos.
-              Esta acción no se puede deshacer.
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>Cancelar</AlertDialogCancel>
-            <Button variant="destructive" onClick={handleDeleteProduct}>
-              Borrar
-            </Button>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
+         <AlertDialogContent>
+           <AlertDialogHeader>
+             <AlertDialogTitle>¿Estás seguro?</AlertDialogTitle>
+             <AlertDialogDescription>
+               Esta acción eliminará el producto de la base de datos.
+               Esta acción no se puede deshacer.
+             </AlertDialogDescription>
+           </AlertDialogHeader>
+           <AlertDialogFooter>
+             <AlertDialogCancel>Cancelar</AlertDialogCancel>
+             <Button variant="destructive" onClick={handleDeleteProduct}>
+               Borrar
+             </Button>
+           </AlertDialogFooter>
+         </AlertDialogContent>
+       </AlertDialog>
     </div>
   );
 };

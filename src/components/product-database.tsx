@@ -78,7 +78,7 @@ interface ProductDatabaseProps {
   setDatabaseProducts: (products: Product[]) => void;
 }
 
-const CHUNK_SIZE = 200; // Number of products to process per chunk
+const CHUNK_SIZE = 200;
 const DATABASE_NAME = "stockCounterDB";
 const OBJECT_STORE_NAME = "products";
 const DATABASE_VERSION = 1;
@@ -161,7 +161,7 @@ const updateProductInDB = async (product: Product): Promise<void> => {
     };
 
     request.onerror = () => {
-      console.error("Error updating product in IndexedDB", request.error);
+      console.error("Error updating product in IndexedDB", transaction.error);
       reject(transaction.error);
     };
 
@@ -256,9 +256,9 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = ({
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [uploadComplete, setUploadComplete] = useState(false);
   const [totalProducts, setTotalProducts] = useState(0);
-    const [productsLoaded, setProductsLoaded] = useState(0);
-    const [editingBarcode, setEditingBarcode] = useState<string | null>(null);
-    const [editedProduct, setEditedProduct] = useState<Product | null>(null);
+  const [productsLoaded, setProductsLoaded] = useState(0);
+  const [editingBarcode, setEditingBarcode] = useState<string | null>(null);
+  const [editedProduct, setEditedProduct] = useState<Product | null>(null);
 
   const productForm = useForm<ProductValues>({
     resolver: zodResolver(productSchema),
@@ -309,27 +309,27 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = ({
     }
   }, [setDatabaseProducts, toast]);
 
-    const handleSaveProduct = useCallback(async (product: Product) => {
-        try {
-            await updateProductInDB(product);
-            setDatabaseProducts(prevProducts =>
-                prevProducts.map(p =>
-                    p.barcode === product.barcode ? product : p
-                )
-            );
-            toast({
-                title: "Producto actualizado",
-                description: `Producto con código de barras ${product.barcode} ha sido actualizado.`,
-            });
-        } catch (error) {
-            console.error("Failed to update product", error);
-            toast({
-                variant: "destructive",
-                title: "Error",
-                description: "Failed to update product in database.",
-            });
-        }
-    }, [setDatabaseProducts, toast]);
+  const handleSaveProduct = useCallback(async (product: Product) => {
+    try {
+      await updateProductInDB(product);
+      setDatabaseProducts(prevProducts =>
+        prevProducts.map(p =>
+          p.barcode === product.barcode ? product : p
+        )
+      );
+      toast({
+        title: "Producto actualizado",
+        description: `Producto con código de barras ${product.barcode} ha sido actualizado.`,
+      });
+    } catch (error) {
+      console.error("Failed to update product", error);
+      toast({
+        variant: "destructive",
+        title: "Error",
+        description: "Failed to update product in database.",
+      });
+    }
+  }, [setDatabaseProducts, toast]);
 
   const handleDeleteProductFromDB = useCallback(
     async (barcode: string) => {
@@ -370,13 +370,13 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = ({
       setIsUploading(true);
       setUploadProgress(0);
       setUploadComplete(false);
-            setProductsLoaded(0);
+      setProductsLoaded(0);
 
       const reader = new FileReader();
       reader.onload = async (event) => {
         const csvData = event.target?.result as string;
         const lines = csvData.split('\n');
-                setTotalProducts(lines.length - 1); // Exclude headers
+        setTotalProducts(lines.length - 1); // Exclude headers
 
         let processedCount = 0;
         let productsToLoad: Product[] = [];
@@ -402,7 +402,7 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = ({
             if (processedCount % CHUNK_SIZE === 0 || i === lines.length - 1) {
               try {
                 await addProductsToDB(productsToLoad);
-                                setProductsLoaded((prev) => prev + productsToLoad.length);
+                setProductsLoaded((prev) => prev + productsToLoad.length);
                 setUploadProgress(Math.round((i / (lines.length - 1)) * 100));
                 productsToLoad = [];
                 await new Promise(resolve => setTimeout(resolve, 0)); // Yield to the event loop
@@ -491,40 +491,40 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = ({
     }
   }, [setDatabaseProducts, toast]);
 
-      const startEditing = useCallback((product: Product) => {
-          setEditingBarcode(product.barcode);
-          setEditedProduct({ ...product });
-      }, []);
+  const startEditing = useCallback((product: Product) => {
+    setEditingBarcode(product.barcode);
+    setEditedProduct({ ...product });
+  }, []);
 
-      const cancelEditing = useCallback(() => {
-          setEditingBarcode(null);
-          setEditedProduct(null);
-      }, []);
+  const cancelEditing = useCallback(() => {
+    setEditingBarcode(null);
+    setEditedProduct(null);
+  }, []);
 
-      const saveProduct = useCallback(async (barcode: string) => {
-          if (!editedProduct) return;
+  const saveProduct = useCallback(async (barcode: string) => {
+    if (!editedProduct) return;
 
-          try {
-              await updateProductInDB(editedProduct);
-              const updatedProducts = databaseProducts.map(p =>
-                  p.barcode === barcode ? editedProduct : p
-              );
-              setDatabaseProducts(updatedProducts);
-              toast({
-                  title: "Producto actualizado",
-                  description: `Producto con código de barras ${barcode} ha sido actualizado.`,
-              });
-              setEditingBarcode(null);
-              setEditedProduct(null);
-          } catch (error) {
-              console.error("Failed to update product", error);
-              toast({
-                  variant: "destructive",
-                  title: "Error",
-                  description: "Failed to update product in database.",
-              });
-          }
-      }, [databaseProducts, setDatabaseProducts, toast, editedProduct]);
+    try {
+      await updateProductInDB(editedProduct);
+      const updatedProducts = databaseProducts.map(p =>
+        p.barcode === barcode ? editedProduct : p
+      );
+      setDatabaseProducts(updatedProducts);
+      toast({
+        title: "Producto actualizado",
+        description: `Producto con código de barras ${barcode} ha sido actualizado.`,
+      });
+      setEditingBarcode(null);
+      setEditedProduct(null);
+    } catch (error) {
+      console.error("Failed to update product", error);
+      toast({
+        variant: "destructive",
+        title: "Error",
+        description: "Failed to update product in database.",
+      });
+    }
+  }, [databaseProducts, setDatabaseProducts, toast, editedProduct]);
 
   const handleAddProduct = async (values: ProductValues) => {
     await handleAddProductToDB(values);
@@ -565,9 +565,9 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = ({
       {isUploading && (
         <>
           <Progress value={uploadProgress} className="mb-4" />
-                    <p className="text-sm text-blue-500">
-                        Cargando {productsLoaded} de {totalProducts} productos...
-                    </p>
+          <p className="text-sm text-blue-500">
+            Cargando {productsLoaded} de {totalProducts} productos...
+          </p>
         </>
       )}
       {uploadComplete && (
@@ -611,85 +611,85 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = ({
             {databaseProducts.map((product) => (
               <TableRow key={product.barcode}>
                 <TableCell>
-                                        {editingBarcode === product.barcode ? (
-                                            <Input
-                                                type="text"
-                                                value={editedProduct?.barcode || ""}
-                                                onChange={(e) => setEditedProduct({ ...editedProduct, barcode: e.target.value } as Product)}
-                                            />
-                                        ) : (
-                                            product.barcode
-                                        )}
-                                    </TableCell>
-                                    <TableCell>
-                                        {editingBarcode === product.barcode ? (
-                                            <Textarea
-                                                value={editedProduct?.description || ""}
-                                                onChange={(e) => setEditedProduct({ ...editedProduct, description: e.target.value } as Product)}
-                                            />
-                                        ) : (
-                                            product.description
-                                        )}
-                                    </TableCell>
-                                    <TableCell>
-                                        {editingBarcode === product.barcode ? (
-                                            <Input
-                                                type="text"
-                                                value={editedProduct?.provider || ""}
-                                                onChange={(e) => setEditedProduct({ ...editedProduct, provider: e.target.value } as Product)}
-                                            />
-                                        ) : (
-                                            product.provider
-                                        )}
-                                    </TableCell>
-                                    <TableCell className="text-right">
-                                        {editingBarcode === product.barcode ? (
-                                            <Input
-                                                type="number"
-                                                value={editedProduct?.stock?.toString() || ""}
-                                                onChange={(e) => setEditedProduct({ ...editedProduct, stock: Number(e.target.value) } as Product)}
-                                            />
-                                        ) : (
-                                            product.stock
-                                        )}
-                                    </TableCell>
-                                    <TableCell className="text-center">
-                                        {editingBarcode === product.barcode ? (
-                                            <>
-                                                <Button
-                                                    onClick={() => saveProduct(editedProduct as Product)}
-                                                    size="icon"
-                                                    variant="outline"
-                                                >
-                                                    Guardar
-                                                </Button>
-                                                <Button
-                                                    onClick={cancelEditing}
-                                                    size="icon"
-                                                    variant="ghost"
-                                                >
-                                                    Cancelar
-                                                </Button>
-                                            </>
-                                        ) : (
-                                            <>
-                                                <Button
-                                                    onClick={() => startEditing(product)}
-                                                    size="icon"
-                                                    variant="outline"
-                                                >
-                                                    <Edit className="h-4 w-4" />
-                                                </Button>
-                                                <Button
-                                                    onClick={() => handleDeleteProductFromDB(product.barcode)}
-                                                    size="icon"
-                                                    variant="destructive"
-                                                >
-                                                    <Trash className="h-4 w-4" />
-                                                </Button>
-                                            </>
-                                        )}
-                                    </TableCell>
+                  {editingBarcode === product.barcode ? (
+                    <Input
+                      type="text"
+                      value={editedProduct?.barcode || ""}
+                      onChange={(e) => setEditedProduct({ ...editedProduct, barcode: e.target.value } as Product)}
+                    />
+                  ) : (
+                    product.barcode
+                  )}
+                </TableCell>
+                <TableCell>
+                  {editingBarcode === product.barcode ? (
+                    <Textarea
+                      value={editedProduct?.description || ""}
+                      onChange={(e) => setEditedProduct({ ...editedProduct, description: e.target.value } as Product)}
+                    />
+                  ) : (
+                    product.description
+                  )}
+                </TableCell>
+                <TableCell>
+                  {editingBarcode === product.barcode ? (
+                    <Input
+                      type="text"
+                      value={editedProduct?.provider || ""}
+                      onChange={(e) => setEditedProduct({ ...editedProduct, provider: e.target.value } as Product)}
+                    />
+                  ) : (
+                    product.provider
+                  )}
+                </TableCell>
+                <TableCell className="text-right">
+                  {editingBarcode === product.barcode ? (
+                    <Input
+                      type="number"
+                      value={editedProduct?.stock?.toString() || ""}
+                      onChange={(e) => setEditedProduct({ ...editedProduct, stock: Number(e.target.value) } as Product)}
+                    />
+                  ) : (
+                    product.stock
+                  )}
+                </TableCell>
+                <TableCell className="text-center">
+                  {editingBarcode === product.barcode ? (
+                    <>
+                      <Button
+                        onClick={() => saveProduct(editedProduct as Product)}
+                        size="icon"
+                        variant="outline"
+                      >
+                        Guardar
+                      </Button>
+                      <Button
+                        onClick={cancelEditing}
+                        size="icon"
+                        variant="ghost"
+                      >
+                        Cancelar
+                      </Button>
+                    </>
+                  ) : (
+                    <>
+                      <Button
+                        onClick={() => startEditing(product)}
+                        size="icon"
+                        variant="outline"
+                      >
+                        <Edit className="h-4 w-4" />
+                      </Button>
+                      <Button
+                        onClick={() => handleDeleteProductFromDB(product.barcode)}
+                        size="icon"
+                        variant="destructive"
+                      >
+                        <Trash className="h-4 w-4" />
+                      </Button>
+                    </>
+                  )}
+                </TableCell>
               </TableRow>
             ))}
             {databaseProducts.length === 0 && (
@@ -785,7 +785,7 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = ({
               />
               <DialogFooter>
                 <Button type="submit">
-                    Guardar
+                  Guardar
                 </Button>
               </DialogFooter>
             </form>

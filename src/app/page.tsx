@@ -61,6 +61,8 @@ export default function Home() {
   const barcodeInputRef = useRef<HTMLInputElement>(null);
   const [open, setOpen] = useState(false);
   const [selectedProductBarcode, setSelectedProductBarcode] = useState<string | null>(null);
+  const [editingStockBarcode, setEditingStockBarcode] = useState<string | null>(null);
+  const [newStockValue, setNewStockValue] = useState<string>("");
 
   useEffect(() => {
     barcodeInputRef.current?.focus();
@@ -194,6 +196,50 @@ export default function Home() {
     return products.find((product) => product.barcode === barcode);
   }, [products]);
 
+  const handleStockChange = useCallback((barcode: string, newStock: number) => {
+    setProducts(prevProducts =>
+      prevProducts.map(product =>
+        product.barcode === barcode ? { ...product, stock: newStock } : product
+      )
+    );
+  }, []);
+
+  const handleStartEditingStock = (barcode: string) => {
+    setEditingStockBarcode(barcode);
+    const product = getProductByBarcode(barcode);
+    setNewStockValue(product?.stock.toString() || "");
+  };
+
+  const handleCancelEditingStock = () => {
+    setEditingStockBarcode(null);
+    setNewStockValue("");
+  };
+
+  const handleSaveStock = (barcode: string) => {
+      const newStock = parseInt(newStockValue, 10);
+      if (!isNaN(newStock)) {
+          handleStockChange(barcode, newStock);
+
+          setDatabaseProducts(prevProducts => {
+              return prevProducts.map(product => {
+                  if (product.barcode === barcode) {
+                      return { ...product, stock: newStock };
+                  }
+                  return product;
+              });
+          });
+
+          setEditingStockBarcode(null);
+          setNewStockValue("");
+      } else {
+          toast({
+              variant: "destructive",
+              title: "Error",
+              description: "Por favor, introduce un número válido para el stock.",
+          });
+      }
+  };
+
   return (
     <div className="container mx-auto p-4">
       <h1 className="text-2xl font-bold mb-4 text-center">StockCounter Pro</h1>
@@ -249,7 +295,40 @@ export default function Home() {
                     <TableCell className="hidden sm:table-cell">
                       {product.provider}
                     </TableCell>
-                    <TableCell>{product.stock}</TableCell>
+                      <TableCell>
+                          {editingStockBarcode === product.barcode ? (
+                              <div className="flex items-center">
+                                  <Input
+                                      type="number"
+                                      value={newStockValue}
+                                      onChange={(e) => setNewStockValue(e.target.value)}
+                                      className="w-20 text-right"
+                                  />
+                                  <Button
+                                      onClick={() => handleSaveStock(product.barcode)}
+                                      size="sm"
+                                      className="ml-2"
+                                  >
+                                      Guardar
+                                  </Button>
+                                  <Button
+                                      onClick={handleCancelEditingStock}
+                                      size="sm"
+                                      variant="ghost"
+                                      className="ml-2"
+                                  >
+                                      Cancelar
+                                  </Button>
+                              </div>
+                          ) : (
+                              <span
+                                  className="cursor-pointer"
+                                  onClick={() => handleStartEditingStock(product.barcode)}
+                              >
+                                  {product.stock}
+                              </span>
+                          )}
+                      </TableCell>
                     <TableCell
                       className="text-right cursor-pointer"
                       onClick={() => handleOpenQuantityDialog(product.barcode)}
@@ -355,5 +434,4 @@ export default function Home() {
     </div>
   );
 }
-
 

@@ -78,7 +78,7 @@ interface ProductDatabaseProps {
   setDatabaseProducts: (products: Product[]) => void;
 }
 
-const CHUNK_SIZE = 200; // Number of products to process per chunk
+const CHUNK_SIZE = 100; // Number of products to process per chunk
 const DATABASE_NAME = "stockCounterDB";
 const OBJECT_STORE_NAME = "products";
 const DATABASE_VERSION = 1;
@@ -127,11 +127,11 @@ const getAllProductsFromDB = async (): Promise<Product[]> => {
   });
 };
 
-const addProductsToDB = async (products: Product[]): Promise<void> => {
-  const db = await openDB();
+const addProductsToDB = async (dbName: string, objectStoreName: string, products: Product[]): Promise<void> => {
+  const db = await openDB(dbName, 1, objectStoreName);
   return new Promise((resolve, reject) => {
-    const transaction = db.transaction(OBJECT_STORE_NAME, "readwrite");
-    const objectStore = transaction.objectStore(OBJECT_STORE_NAME);
+    const transaction = db.transaction(objectStoreName, "readwrite");
+    const objectStore = transaction.objectStore(objectStoreName);
 
     products.forEach(product => {
       objectStore.put(product);
@@ -183,7 +183,7 @@ const deleteProductFromDB = async (barcode: string): Promise<void> => {
     };
 
     request.onerror = () => {
-      console.error("Error deleting product from IndexedDB", request.error);
+      console.error("Error deleting product from IndexedDB", transaction.error);
       reject(transaction.error);
     };
 
@@ -215,8 +215,33 @@ const clearDatabaseDB = async (): Promise<void> => {
   });
 };
 
-// Define the worker URL
-const workerURL = new URL('./product-database.worker', import.meta.url);
+const parseCSV = (csvData: string): Product[] => {
+  const lines = csvData.split("\n");
+  const headers = lines[0].split(",");
+  const products: Product[] = [];
+
+  for (let i = 1; i < lines.length; i++) {
+    const data = lines[i].split(",");
+    if (data.length === headers.length) {
+      const barcode = data[0] || "";
+      const description = data[1] || "";
+      const provider = data[2] || "";
+      const stockValue = parseInt(data[3]);
+      const stock = isNaN(stockValue) ? 0 : stockValue;
+
+      const product: Product = {
+        barcode,
+        description,
+        provider,
+        stock,
+        count: 0,
+      };
+      products.push(product);
+    }
+  }
+
+  return products;
+};
 
 export const ProductDatabase: React.FC<ProductDatabaseProps> = ({
   databaseProducts,
@@ -229,7 +254,7 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = ({
   const [uploadProgress, setUploadProgress] = useState(0);
   const [isUploading, setIsUploading] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const [worker, setWorker] = useState<Worker | null>(null);
+  const [uploadComplete, setUploadComplete] = useState(false);
 
   const productForm = useForm<ProductValues>({
     resolver: zodResolver(productSchema),
@@ -242,42 +267,6 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = ({
   });
 
   const { handleSubmit } = productForm;
-
-  useEffect(() => {
-     // Create a new worker
-     const newWorker = new Worker(workerURL, { type: 'module' });
-     setWorker(newWorker);
-
-     // Handle messages from the worker
-     newWorker.onmessage = (event) => {
-       if (event.data.type === 'updateProgress') {
-         setUploadProgress(event.data.progress);
-       } else if (event.data.type === 'uploadComplete') {
-         setIsUploading(false);
-         setUploadProgress(100);
-         toast({
-           title: "Productos cargados",
-           description: `${event.data.count} productos han sido cargados desde el archivo.`,
-         });
-         loadInitialData(); // Refresh data after upload
-         if (fileInputRef.current) {
-           fileInputRef.current.value = ""; // Reset file input
-         }
-       } else if (event.data.type === 'error') {
-         setIsUploading(false);
-         toast({
-           variant: "destructive",
-           title: "Error",
-           description: event.data.message || "Failed to process CSV data.",
-         });
-       }
-     };
-
-     // Clean up the worker when the component unmounts
-     return () => {
-       newWorker.terminate();
-     };
-   }, [setDatabaseProducts, toast]);
 
   const loadInitialData = async () => {
     try {
@@ -391,26 +380,83 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = ({
 
       setIsUploading(true);
       setUploadProgress(0);
+      setUploadComplete(false);
+
+      const db = await openDB();
+      const transaction = db.transaction(OBJECT_STORE_NAME, "readwrite");
+      const objectStore = transaction.objectStore(OBJECT_STORE_NAME);
 
       const reader = new FileReader();
       reader.onload = async (event) => {
         const csvData = event.target?.result as string;
-          if (worker) {
-            worker.postMessage({
-              type: 'processCSV',
-              csvData,
-              dbName: DATABASE_NAME,
-              objectStoreName: OBJECT_STORE_NAME,
-            });
-          } else {
-            console.error("Worker not initialized.");
-            toast({
-              variant: "destructive",
-              title: "Error",
-              description: "Worker initialization failed.",
-            });
-            setIsUploading(false);
+        const lines = csvData.split('\n');
+        const headers = lines[0].split(',');
+
+        let processedCount = 0;
+
+        for (let i = 1; i < lines.length; i++) {
+          const data = lines[i].split(',');
+          if (data.length === headers.length) {
+            const barcode = data[0] || "";
+            const description = data[1] || "";
+            const provider = data[2] || "";
+            const stockValue = parseInt(data[3]);
+            const stock = isNaN(stockValue) ? 0 : stockValue;
+
+            const product: Product = {
+              barcode,
+              description,
+              provider,
+              stock,
+              count: 0,
+            };
+
+            try {
+              objectStore.put(product);
+              processedCount++;
+
+              // Update progress every CHUNK_SIZE products
+              if (processedCount % CHUNK_SIZE === 0) {
+                const progress = Math.min((processedCount / lines.length) * 100, 100);
+                setUploadProgress(progress);
+                await new Promise(resolve => setTimeout(resolve, 0)); // Yield to the event loop
+              }
+            } catch (error) {
+              console.error("Error adding product to IndexedDB", error);
+              toast({
+                variant: "destructive",
+                title: "Error",
+                description: `Failed to add product to database: ${barcode}`,
+              });
+            }
           }
+        }
+
+        transaction.oncomplete = () => {
+          db.close();
+          setIsUploading(false);
+          setUploadProgress(100);
+          setUploadComplete(true);
+          loadInitialData(); // Refresh data after upload
+          toast({
+            title: "Productos cargados",
+            description: `Se han cargado ${processedCount} productos desde el archivo.`,
+          });
+          if (fileInputRef.current) {
+            fileInputRef.current.value = ""; // Reset file input
+          }
+        };
+
+        transaction.onerror = () => {
+          console.error("Transaction error", transaction.error);
+          setIsUploading(false);
+          toast({
+            variant: "destructive",
+            title: "Error",
+            description: "Error al cargar los productos al la base de datos",
+          });
+        };
+
       };
       reader.onerror = () => {
         setIsUploading(false);
@@ -422,7 +468,7 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = ({
       };
       reader.readAsText(file);
     },
-    [setDatabaseProducts, toast, worker]
+    [setDatabaseProducts, toast]
   );
 
 
@@ -506,6 +552,11 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = ({
       </div>
       {isUploading && (
         <Progress value={uploadProgress} className="mb-4" />
+      )}
+        {uploadComplete && (
+        <p className="text-sm text-green-500">
+          Carga completa!
+        </p>
       )}
       <AlertDialog open={openAlert} onOpenChange={setOpenAlert}>
         <AlertDialogTrigger asChild>

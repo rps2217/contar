@@ -11,7 +11,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { Button } from "@/components/ui/button";
-import { Trash, Edit, Upload } from "lucide-react";
+import { Trash, Edit, Upload, FileDown } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import {
   Dialog,
@@ -190,11 +190,48 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = ({
     return products;
   };
 
+  const handleExportDatabase = () => {
+    // Convert product data to CSV format
+    const csvData = convertToCSV(databaseProducts);
+
+    // Create a Blob from the CSV data
+    const blob = new Blob([csvData], { type: "text/csv;charset=utf-8;" });
+
+    // Create a link to download the CSV file
+    const link = document.createElement("a");
+    link.href = URL.createObjectURL(blob);
+    link.setAttribute("download", "product_database.csv");
+    document.body.appendChild(link);
+
+    // Trigger the download
+    link.click();
+
+    // Clean up
+    document.body.removeChild(link);
+  };
+
+  const convertToCSV = (data: Product[]) => {
+    const headers = ["Barcode", "Description", "Provider", "Stock"];
+    const rows = data.map((product) => [
+      product.barcode,
+      product.description,
+      product.provider,
+      product.stock,
+    ]);
+
+    // Join headers and rows with commas and newlines
+    const csv = headers.join(",") + "\n" + rows.map((row) => row.join(",")).join("\n");
+    return csv;
+  };
+
   return (
     <div>
       {/* Add Product Button */}
-      <div className="flex justify-end mb-4">
+      <div className="flex justify-between mb-4">
         <Button onClick={handleAddProductToDB}>Agregar Producto</Button>
+        <Button onClick={handleExportDatabase}>
+          Exportar Base de Datos <FileDown className="ml-2 h-4 w-4" />
+        </Button>
       </div>
 
       {/* File Upload */}

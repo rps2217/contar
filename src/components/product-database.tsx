@@ -36,6 +36,7 @@ import * as z from "zod";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { AlertDialog, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from "@/components/ui/alert-dialog";
 
 interface Product {
   barcode: string;
@@ -74,6 +75,7 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = ({
   const { toast } = useToast();
   const [open, setOpen] = useState(false);
   const [selectedProduct, setSelectedProduct] = useState<Product | null>(null);
+  const [openAlert, setOpenAlert] = useState(false);
 
   const productForm = useForm<ProductValues>({
     resolver: zodResolver(productSchema),
@@ -224,14 +226,26 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = ({
     return csv;
   };
 
+  const handleClearDatabase = () => {
+    setDatabaseProducts([]);
+    toast({
+      title: "Base de datos borrada",
+      description: "Todos los productos han sido eliminados de la base de datos.",
+    });
+    setOpenAlert(false);
+  };
+
+
   return (
     <div>
       {/* Add Product Button */}
       <div className="flex justify-between mb-4">
         <Button onClick={handleAddProductToDB}>Agregar Producto</Button>
-        <Button onClick={handleExportDatabase}>
-          Exportar Base de Datos <FileDown className="ml-2 h-4 w-4" />
-        </Button>
+        <div>
+          <Button onClick={handleExportDatabase}>
+            Exportar Base de Datos <FileDown className="ml-2 h-4 w-4" />
+          </Button>
+        </div>
       </div>
 
       {/* File Upload */}
@@ -253,7 +267,26 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = ({
           </label>
         </Button>
       </div>
-
+      <AlertDialog open={openAlert} onOpenChange={setOpenAlert}>
+        <AlertDialogTrigger asChild>
+          <Button variant="destructive">Borrar Base de Datos</Button>
+        </AlertDialogTrigger>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>¿Estás seguro?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Esta acción eliminará todos los productos de la base de datos.
+              Esta acción no se puede deshacer.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancelar</AlertDialogCancel>
+            <Button variant="destructive" onClick={handleClearDatabase}>
+              Borrar
+            </Button>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
       {/* Product Database Table */}
       <ScrollArea>
         <Table>

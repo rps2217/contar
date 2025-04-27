@@ -17,6 +17,16 @@ import { useToast } from "@/hooks/use-toast";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ProductDatabase } from "@/components/product-database";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+  DialogFooter,
+  DialogClose,
+} from "@/components/ui/dialog";
 
 interface Product {
   barcode: string;
@@ -50,6 +60,10 @@ export default function Home() {
     useState<Product[]>(initialProducts); // Simulate database
   const { toast } = useToast();
   const barcodeInputRef = useRef<HTMLInputElement>(null);
+  const [open, setOpen] = useState(false);
+  const [selectedProductBarcode, setSelectedProductBarcode] = useState<
+    string | null
+  >(null);
 
   useEffect(() => {
     // Focus the input on initial load
@@ -150,6 +164,19 @@ export default function Home() {
 
   const totalCount = products.reduce((acc, product) => acc + product.count, 0);
 
+  const handleOpenQuantityDialog = (barcode: string) => {
+    setSelectedProductBarcode(barcode);
+    setOpen(true);
+  };
+
+  const handleQuantityChange = (barcode: string, newCount: number) => {
+    setProducts(
+      products.map((product) =>
+        product.barcode === barcode ? { ...product, count: newCount } : product
+      )
+    );
+  };
+
   return (
     <div className="container mx-auto p-4">
       <h1 className="text-2xl font-bold mb-4 text-center">StockCounter Pro</h1>
@@ -199,14 +226,21 @@ export default function Home() {
                 {products.map((product) => (
                   <TableRow
                     key={product.barcode}
-                    className={product.count === product.stock ? "bg-green-100" : ""}
+                    className={
+                      product.count === product.stock ? "bg-green-100" : ""
+                    }
                   >
                     <TableCell>{product.description}</TableCell>
                     <TableCell className="hidden sm:table-cell">
                       {product.provider}
                     </TableCell>
                     <TableCell>{product.stock}</TableCell>
-                    <TableCell className="text-right">{product.count}</TableCell>
+                    <TableCell
+                      className="text-right cursor-pointer"
+                      onClick={() => handleOpenQuantityDialog(product.barcode)}
+                    >
+                      {product.count}
+                    </TableCell>
                     <TableCell className="text-center">
                       <Button
                         onClick={() => handleDecrement(product.barcode)}
@@ -256,6 +290,48 @@ export default function Home() {
           />
         </TabsContent>
       </Tabs>
+      {/* Quantity adjustment dialog */}
+      <Dialog open={open} onOpenChange={setOpen}>
+        <DialogContent className="sm:max-w-[425px]">
+          <DialogHeader>
+            <DialogTitle>Ajustar Cantidad</DialogTitle>
+            <DialogDescription>
+              Ajuste la cantidad manualmente.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="grid gap-4 py-4">
+            <div className="flex justify-between">
+              <Button
+                size="lg"
+                onClick={() => {
+                  if (selectedProductBarcode) {
+                    handleDecrement(selectedProductBarcode);
+                  }
+                }}
+              >
+                <Minus className="h-8 w-8" />
+              </Button>
+              <Button
+                size="lg"
+                onClick={() => {
+                  if (selectedProductBarcode) {
+                    handleIncrement(selectedProductBarcode);
+                  }
+                }}
+              >
+                <Plus className="h-8 w-8" />
+              </Button>
+            </div>
+          </div>
+          <DialogFooter>
+            <DialogClose asChild>
+              <Button type="button" variant="secondary">
+                Cerrar
+              </Button>
+            </DialogClose>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

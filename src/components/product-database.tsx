@@ -1,3 +1,5 @@
+"use client";
+
 import { useState, useCallback, useRef, useEffect } from "react";
 import {
   Table,
@@ -610,28 +612,28 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = ({
           <TableCaption>Lista de productos en la base de datos.</TableCaption>
           <TableHeader>
             <TableRow>
-              <TableHead>Código de Barras</TableHead>
-              <TableHead style={{ width: '50%' }}>Descripción</TableHead>
-              <TableHead className={isMobile ? "hidden" : ""}>Proveedor</TableHead>
-              <TableHead className="text-right">Stock</TableHead>
+              <TableHead style={{ width: '25%' }}>Código de Barras</TableHead>
+              <TableHead style={{ width: '25%' }}>Descripción</TableHead>
+              <TableHead style={{ width: '25%' }} className={isMobile ? "hidden" : ""}>Proveedor</TableHead>
+              <TableHead style={{ width: '25%' }} className="text-right">Stock</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
             {databaseProducts.map((product) => (
               <TableRow key={product.barcode}>
                 <TableCell
-                 style={{ cursor: 'pointer' }}
+                 style={{ width: '25%', cursor: 'pointer' }}
                  onClick={() => handleOpenEditDialog(product)}
                 >
                   {product.barcode}
                 </TableCell>
-                <TableCell style={{ width: '50%' }}>
+                <TableCell style={{ width: '25%' }}>
                   {product.description}
                 </TableCell>
-                <TableCell className={isMobile ? "hidden" : ""}>
+                <TableCell style={{ width: '25%' }} className={isMobile ? "hidden" : ""}>
                   {product.provider}
                 </TableCell>
-                <TableCell className="text-right">
+                <TableCell style={{ width: '25%' }} className="text-right">
                   {product.stock}
                 </TableCell>
               </TableRow>
@@ -728,15 +730,6 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = ({
                 )}
               />
               <DialogFooter>
-              {selectedProduct && (
-                  <Button
-                    type="button"
-                    variant="destructive"
-                    onClick={() => handleDeleteConfirmation(selectedProduct)}
-                  >
-                    Eliminar
-                  </Button>
-                )}
                 <Button type="submit">
                   {selectedProduct ? "Guardar cambios" : "Guardar"}
                 </Button>

@@ -90,3 +90,13 @@ body {
   }
 }
 
+/* Styles for desktop view */
+@media (min-width: 768px) {
+  .container {
+    max-width: 90%; /* Adjust as needed */
+  }
+
+  .md\:w-\[400px\] {
+    width: 600px; /* Adjust as needed */
+  }
+}

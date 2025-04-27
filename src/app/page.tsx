@@ -154,7 +154,7 @@ export default function Home() {
     <div className="container mx-auto p-4">
       <h1 className="text-2xl font-bold mb-4 text-center">StockCounter Pro</h1>
 
-      <Tabs defaultValue="Contador" className="w-full md:w-[400px] mx-auto">
+      <Tabs defaultValue="Contador" className="w-full md:w-[600px] mx-auto">
         <TabsList>
           <TabsTrigger value="Contador">Contador de Existencias</TabsTrigger>
           <TabsTrigger value="Base de Datos">Base de Datos</TabsTrigger>
@@ -181,62 +181,64 @@ export default function Home() {
           </div>
 
           {/* Inventory Table */}
-          <Table>
-            <TableCaption>Inventario de productos escaneados.</TableCaption>
-            <TableHeader>
-              <TableRow>
-                <TableHead>Descripción</TableHead>
-                <TableHead className="hidden sm:table-cell">
-                  Proveedor
-                </TableHead>
-                <TableHead>Stock</TableHead>
-                <TableHead className="text-right">Cantidad</TableHead>
-                <TableHead className="text-center">Acciones</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {products.map((product) => (
-                <TableRow key={product.barcode}>
-                  <TableCell>{product.description}</TableCell>
-                  <TableCell className="hidden sm:table-cell">
-                    {product.provider}
-                  </TableCell>
-                  <TableCell>{product.stock}</TableCell>
-                  <TableCell className="text-right">{product.count}</TableCell>
-                  <TableCell className="text-center">
-                    <Button
-                      onClick={() => handleDecrement(product.barcode)}
-                      size="icon"
-                      variant="outline"
-                    >
-                      <Minus className="h-4 w-4" />
-                    </Button>
-                    <Button
-                      onClick={() => handleIncrement(product.barcode)}
-                      size="icon"
-                      variant="outline"
-                    >
-                      <Plus className="h-4 w-4" />
-                    </Button>
-                    <Button
-                      onClick={() => handleDelete(product.barcode)}
-                      size="icon"
-                      variant="destructive"
-                    >
-                      Eliminar
-                    </Button>
-                  </TableCell>
-                </TableRow>
-              ))}
-              {products.length === 0 && (
+          <ScrollArea>
+            <Table>
+              <TableCaption>Inventario de productos escaneados.</TableCaption>
+              <TableHeader>
                 <TableRow>
-                  <TableCell colSpan={4} className="text-center">
-                    No hay productos agregados.
-                  </TableCell>
+                  <TableHead>Descripción</TableHead>
+                  <TableHead className="hidden sm:table-cell">
+                    Proveedor
+                  </TableHead>
+                  <TableHead>Stock</TableHead>
+                  <TableHead className="text-right">Cantidad</TableHead>
+                  <TableHead className="text-center">Acciones</TableHead>
                 </TableRow>
-              )}
-            </TableBody>
-          </Table>
+              </TableHeader>
+              <TableBody>
+                {products.map((product) => (
+                  <TableRow key={product.barcode}>
+                    <TableCell>{product.description}</TableCell>
+                    <TableCell className="hidden sm:table-cell">
+                      {product.provider}
+                    </TableCell>
+                    <TableCell>{product.stock}</TableCell>
+                    <TableCell className="text-right">{product.count}</TableCell>
+                    <TableCell className="text-center">
+                      <Button
+                        onClick={() => handleDecrement(product.barcode)}
+                        size="icon"
+                        variant="outline"
+                      >
+                        <Minus className="h-4 w-4" />
+                      </Button>
+                      <Button
+                        onClick={() => handleIncrement(product.barcode)}
+                        size="icon"
+                        variant="outline"
+                      >
+                        <Plus className="h-4 w-4" />
+                      </Button>
+                      <Button
+                        onClick={() => handleDelete(product.barcode)}
+                        size="icon"
+                        variant="destructive"
+                      >
+                        Eliminar
+                      </Button>
+                    </TableCell>
+                  </TableRow>
+                ))}
+                {products.length === 0 && (
+                  <TableRow>
+                    <TableCell colSpan={4} className="text-center">
+                      No hay productos agregados.
+                    </TableCell>
+                  </TableRow>
+                )}
+              </TableBody>
+            </Table>
+          </ScrollArea>
 
           {/* Count Export */}
           <div className="mt-4 flex justify-between items-center">

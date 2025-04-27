@@ -66,6 +66,11 @@ export default function Home() {
     barcodeInputRef.current?.focus();
   }, []);
 
+  const playBeep = () => {
+    const audio = new Audio('/beep.mp3'); // Path to the beep sound file
+    audio.play();
+  };
+
   const handleAddProduct = useCallback(async () => {
     if (!barcode) {
       toast({
@@ -79,6 +84,7 @@ export default function Home() {
     let productInfo = databaseProducts.find((p) => p.barcode === barcode);
 
     if (!productInfo) {
+      playBeep();
       productInfo = {
         barcode: barcode,
         description: `Nuevo producto ${barcode}`,
@@ -187,16 +193,14 @@ export default function Home() {
     return products.find((product) => product.barcode === barcode);
   }, [products]);
 
-  const totalCount = products.reduce((acc, product) => acc + product.count, 0);
-
   return (
     <div className="container mx-auto p-4">
       <h1 className="text-2xl font-bold mb-4 text-center">StockCounter Pro</h1>
 
       <Tabs defaultValue="Contador" className="w-full md:w-[600px] mx-auto">
         <TabsList>
-          <TabsTrigger value="Contador">Contador de Existencias</TabsTrigger>
-          <TabsTrigger value="Base de Datos">Base de Datos</TabsTrigger>
+          <TabsTrigger value="Contador" style={{ backgroundColor: "#E3F2FD", color: "#008080" }}>Contador de Existencias</TabsTrigger>
+          <TabsTrigger value="Base de Datos" style={{ backgroundColor: "#E3F2FD", color: "#008080" }}>Base de Datos</TabsTrigger>
         </TabsList>
         <TabsContent value="Contador">
           <div className="flex items-center mb-4">
@@ -350,3 +354,4 @@ export default function Home() {
     </div>
   );
 }
+

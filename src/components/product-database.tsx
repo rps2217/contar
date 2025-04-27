@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback, useRef } from "react";
+import { useState, useCallback, useRef, useEffect } from "react";
 import {
   Table,
   TableBody,
@@ -79,6 +79,141 @@ interface ProductDatabaseProps {
 }
 
 const CHUNK_SIZE = 200; // Number of products to process per chunk
+const DATABASE_NAME = "stockCounterDB";
+const OBJECT_STORE_NAME = "products";
+const DATABASE_VERSION = 1;
+
+const openDB = (): Promise<IDBDatabase> => {
+  return new Promise((resolve, reject) => {
+    const request = window.indexedDB.open(DATABASE_NAME, DATABASE_VERSION);
+
+    request.onerror = () => {
+      console.error("Error opening IndexedDB", request.error);
+      reject(request.error);
+    };
+
+    request.onupgradeneeded = (event: IDBVersionChangeEvent) => {
+      const db = (event.target as IDBOpenDBRequest).result;
+      if (!db.objectStoreNames.contains(OBJECT_STORE_NAME)) {
+        db.createObjectStore(OBJECT_STORE_NAME, { keyPath: "barcode" });
+      }
+    };
+
+    request.onsuccess = () => {
+      resolve(request.result);
+    };
+  });
+};
+
+const getAllProductsFromDB = async (): Promise<Product[]> => {
+  const db = await openDB();
+  return new Promise((resolve, reject) => {
+    const transaction = db.transaction(OBJECT_STORE_NAME, "readonly");
+    const objectStore = transaction.objectStore(OBJECT_STORE_NAME);
+    const request = objectStore.getAll();
+
+    request.onsuccess = () => {
+      resolve(request.result);
+    };
+
+    request.onerror = () => {
+      console.error("Error getting all products from IndexedDB", request.error);
+      reject(request.error);
+    };
+
+    transaction.oncomplete = () => {
+      db.close();
+    };
+  });
+};
+
+const addProductsToDB = async (products: Product[]): Promise<void> => {
+  const db = await openDB();
+  return new Promise((resolve, reject) => {
+    const transaction = db.transaction(OBJECT_STORE_NAME, "readwrite");
+    const objectStore = transaction.objectStore(OBJECT_STORE_NAME);
+
+    products.forEach(product => {
+      objectStore.put(product);
+    });
+
+    transaction.oncomplete = () => {
+      db.close();
+      resolve();
+    };
+
+    transaction.onerror = () => {
+      console.error("Error adding products to IndexedDB", transaction.error);
+      reject(transaction.error);
+    };
+  });
+};
+
+const updateProductInDB = async (product: Product): Promise<void> => {
+  const db = await openDB();
+  return new Promise((resolve, reject) => {
+    const transaction = db.transaction(OBJECT_STORE_NAME, "readwrite");
+    const objectStore = transaction.objectStore(OBJECT_STORE_NAME);
+    const request = objectStore.put(product);
+
+    request.onsuccess = () => {
+      resolve();
+    };
+
+    request.onerror = () => {
+      console.error("Error updating product in IndexedDB", request.error);
+      reject(request.error);
+    };
+
+    transaction.oncomplete = () => {
+      db.close();
+    };
+  });
+};
+
+const deleteProductFromDB = async (barcode: string): Promise<void> => {
+  const db = await openDB();
+  return new Promise((resolve, reject) => {
+    const transaction = db.transaction(OBJECT_STORE_NAME, "readwrite");
+    const objectStore = transaction.objectStore(OBJECT_STORE_NAME);
+    const request = objectStore.delete(barcode);
+
+    request.onsuccess = () => {
+      resolve();
+    };
+
+    request.onerror = () => {
+      console.error("Error deleting product from IndexedDB", request.error);
+      reject(request.error);
+    };
+
+    transaction.oncomplete = () => {
+      db.close();
+    };
+  });
+};
+
+const clearDatabaseDB = async (): Promise<void> => {
+  const db = await openDB();
+  return new Promise((resolve, reject) => {
+    const transaction = db.transaction(OBJECT_STORE_NAME, "readwrite");
+    const objectStore = transaction.objectStore(OBJECT_STORE_NAME);
+    const request = objectStore.clear();
+
+    request.onsuccess = () => {
+      resolve();
+    };
+
+    request.onerror = () => {
+      console.error("Error clearing IndexedDB", request.error);
+      reject(request.error);
+    };
+
+    transaction.oncomplete = () => {
+      db.close();
+    };
+  });
+};
 
 export const ProductDatabase: React.FC<ProductDatabaseProps> = ({
   databaseProducts,
@@ -104,33 +239,57 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = ({
 
   const { handleSubmit } = productForm;
 
-  const onSubmit = useCallback(
-    (data: ProductValues) => {
-      if (selectedProduct) {
-        const updatedProducts = databaseProducts.map((p) =>
-          p.barcode === selectedProduct.barcode
-            ? { ...data, stock: Number(data.stock), count: 0 }
-            : p
-        );
-        setDatabaseProducts(updatedProducts);
+  useEffect(() => {
+    const loadInitialData = async () => {
+      try {
+        const products = await getAllProductsFromDB();
+        setDatabaseProducts(products);
+      } catch (error) {
+        console.error("Failed to load products from IndexedDB", error);
         toast({
-          title: "Producto actualizado",
-          description: `${data.description} ha sido actualizado en la base de datos.`,
-        });
-      } else {
-        setDatabaseProducts([
-          ...databaseProducts,
-          { ...data, stock: Number(data.stock), count: 0 },
-        ]);
-        toast({
-          title: "Producto agregado",
-          description: `${data.description} ha sido agregado a la base de datos.`,
+          variant: "destructive",
+          title: "Error",
+          description: "Failed to load products from database.",
         });
       }
+    };
+    loadInitialData();
+  }, [setDatabaseProducts, toast]);
 
-      setOpen(false);
-      setSelectedProduct(null);
-      productForm.reset();
+
+  const onSubmit = useCallback(
+    async (data: ProductValues) => {
+      const newProduct = { ...data, stock: Number(data.stock), count: 0 };
+      try {
+        if (selectedProduct) {
+          await updateProductInDB(newProduct);
+          const updatedProducts = databaseProducts.map((p) =>
+            p.barcode === selectedProduct.barcode ? newProduct : p
+          );
+          setDatabaseProducts(updatedProducts);
+          toast({
+            title: "Producto actualizado",
+            description: `${data.description} ha sido actualizado en la base de datos.`,
+          });
+        } else {
+          await addProductsToDB([newProduct]);
+          setDatabaseProducts([...databaseProducts, newProduct]);
+          toast({
+            title: "Producto agregado",
+            description: `${data.description} ha sido agregado a la base de datos.`,
+          });
+        }
+        setOpen(false);
+        setSelectedProduct(null);
+        productForm.reset();
+      } catch (error) {
+        console.error("Database operation failed", error);
+        toast({
+          variant: "destructive",
+          title: "Error",
+          description: "Failed to save product to database.",
+        });
+      }
     },
     [databaseProducts, productForm, selectedProduct, setDatabaseProducts, toast]
   );
@@ -154,15 +313,25 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = ({
   }, [productForm]);
 
   const handleDeleteProductFromDB = useCallback(
-    (barcode: string) => {
-      const updatedProducts = databaseProducts.filter(
-        (p) => p.barcode !== barcode
-      );
-      setDatabaseProducts(updatedProducts);
-      toast({
-        title: "Producto eliminado",
-        description: `Producto con código de barras ${barcode} ha sido eliminado de la base de datos.`,
-      });
+    async (barcode: string) => {
+      try {
+        await deleteProductFromDB(barcode);
+        const updatedProducts = databaseProducts.filter(
+          (p) => p.barcode !== barcode
+        );
+        setDatabaseProducts(updatedProducts);
+        toast({
+          title: "Producto eliminado",
+          description: `Producto con código de barras ${barcode} ha sido eliminado de la base de datos.`,
+        });
+      } catch (error) {
+        console.error("Failed to delete product from database", error);
+        toast({
+          variant: "destructive",
+          title: "Error",
+          description: "Failed to delete product from database.",
+        });
+      }
     },
     [databaseProducts, setDatabaseProducts, toast]
   );
@@ -197,18 +366,28 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = ({
           const totalProductsBeforeUpload = databaseProducts.length;
           const allowedProducts = 4000 - totalProductsBeforeUpload;
           const productsToAdd = parsedProducts.slice(0, allowedProducts); // Limit products to add
+          try {
+            await addProductsToDB(productsToAdd);
 
-          setDatabaseProducts((prevProducts) => [
-            ...prevProducts,
-            ...productsToAdd,
-          ]);
-          uploadedCount += productsToAdd.length;
-          setUploadProgress(
-            Math.min(
-              100,
-              Math.round((uploadedCount / totalProducts) * 100)
-            )
-          ); // Ensure progress doesn't exceed 100
+            setDatabaseProducts((prevProducts) => {
+              const updatedProducts = [...prevProducts, ...productsToAdd];
+              return updatedProducts.slice(0, 4000)
+            });
+            uploadedCount += productsToAdd.length;
+            setUploadProgress(
+              Math.min(
+                100,
+                Math.round((uploadedCount / totalProducts) * 100)
+              )
+            ); // Ensure progress doesn't exceed 100
+          } catch (error) {
+            console.error("Failed to add chunk to database", error);
+            toast({
+              variant: "destructive",
+              title: "Error",
+              description: "Failed to add chunk to database.",
+            });
+          }
         };
 
         // Process chunks sequentially
@@ -288,14 +467,24 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = ({
     return csv;
   }, []);
 
-  const handleClearDatabase = useCallback(() => {
-    setDatabaseProducts([]);
-    toast({
-      title: "Base de datos borrada",
-      description:
-        "Todos los productos han sido eliminados de la base de datos.",
-    });
-    setOpenAlert(false);
+  const handleClearDatabase = useCallback(async () => {
+    try {
+      await clearDatabaseDB();
+      setDatabaseProducts([]);
+      toast({
+        title: "Base de datos borrada",
+        description:
+          "Todos los productos han sido eliminados de la base de datos.",
+      });
+      setOpenAlert(false);
+    } catch (error) {
+      console.error("Failed to clear database", error);
+      toast({
+        variant: "destructive",
+        title: "Error",
+        description: "Failed to clear database.",
+      });
+    }
   }, [setDatabaseProducts, toast]);
 
   return (

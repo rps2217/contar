@@ -47,6 +47,7 @@ import {
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
 import { Progress } from "@/components/ui/progress";
+import { useIsMobile } from "@/hooks/use-mobile";
 
 interface Product {
   barcode: string;
@@ -259,6 +260,7 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = ({
   const [productsLoaded, setProductsLoaded] = useState(0);
   const [editingBarcode, setEditingBarcode] = useState<string | null>(null);
   const [editedProduct, setEditedProduct] = useState<Product | null>(null);
+  const isMobile = useIsMobile();
 
   const productForm = useForm<ProductValues>({
     resolver: zodResolver(productSchema),
@@ -602,7 +604,7 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = ({
             <TableRow>
               <TableHead>Código de Barras</TableHead>
               <TableHead>Descripción</TableHead>
-              <TableHead>Proveedor</TableHead>
+              <TableHead className={isMobile ? "hidden" : ""}>Proveedor</TableHead>
               <TableHead className="text-right">Stock</TableHead>
               <TableHead className="text-center">Acciones</TableHead>
             </TableRow>
@@ -631,7 +633,7 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = ({
                     product.description
                   )}
                 </TableCell>
-                <TableCell>
+                <TableCell className={isMobile ? "hidden" : ""}>
                   {editingBarcode === product.barcode ? (
                     <Input
                       type="text"

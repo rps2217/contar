@@ -1,3 +1,4 @@
+
 "use client";
 
 import { useState, useCallback, useRef, useEffect } from "react";
@@ -612,7 +613,7 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = ({
           <TableBody>
             {databaseProducts.map((product) => (
               <TableRow key={product.barcode}>
-                <TableCell>
+                <TableCell onClick={() => startEditing(product)}>
                   {editingBarcode === product.barcode ? (
                     <Input
                       type="text"

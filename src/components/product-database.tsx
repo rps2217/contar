@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useCallback } from "react";
 import {
   Table,
   TableBody,
@@ -98,10 +98,8 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = ({
 
   const { handleSubmit } = productForm;
 
-  const onSubmit = (data: ProductValues) => {
-    // Handle adding/editing product in the database
+  const onSubmit = useCallback((data: ProductValues) => {
     if (selectedProduct) {
-      // Edit existing product
       const updatedProducts = databaseProducts.map((p) =>
         p.barcode === selectedProduct.barcode
           ? { ...data, stock: Number(data.stock), count: 0 }
@@ -113,7 +111,6 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = ({
         description: `${data.description} ha sido actualizado en la base de datos.`,
       });
     } else {
-      // Add new product
       setDatabaseProducts([
         ...databaseProducts,
         { ...data, stock: Number(data.stock), count: 0 },
@@ -127,24 +124,24 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = ({
     setOpen(false);
     setSelectedProduct(null);
     productForm.reset();
-  };
+  }, [databaseProducts, productForm, selectedProduct, setDatabaseProducts, toast]);
 
-  const handleEditProduct = (product: Product) => {
+  const handleEditProduct = useCallback((product: Product) => {
     setSelectedProduct(product);
     productForm.setValue("barcode", product.barcode);
     productForm.setValue("description", product.description);
     productForm.setValue("provider", product.provider);
     productForm.setValue("stock", product.stock);
     setOpen(true);
-  };
+  }, [productForm]);
 
-  const handleAddProductToDB = () => {
+  const handleAddProductToDB = useCallback(() => {
     setSelectedProduct(null);
     productForm.reset();
     setOpen(true);
-  };
+  }, [productForm]);
 
-  const handleDeleteProductFromDB = (barcode: string) => {
+  const handleDeleteProductFromDB = useCallback((barcode: string) => {
     const updatedProducts = databaseProducts.filter(
       (p) => p.barcode !== barcode
     );
@@ -153,9 +150,9 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = ({
       title: "Producto eliminado",
       description: `Producto con código de barras ${barcode} ha sido eliminado de la base de datos.`,
     });
-  };
+  }, [databaseProducts, setDatabaseProducts, toast]);
 
-  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleFileUpload = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) {
       toast({
@@ -170,7 +167,6 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = ({
     reader.onload = (event) => {
       const csvData = event.target?.result as string;
       const parsedProducts = parseCSV(csvData);
-      // Limit the number of products to 4000
       const totalProducts = databaseProducts.length + parsedProducts.length;
       if (totalProducts > 4000) {
         const allowedProducts = 4000 - databaseProducts.length;
@@ -189,9 +185,9 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = ({
       }
     };
     reader.readAsText(file);
-  };
+  }, [databaseProducts, setDatabaseProducts, toast]);
 
-  const parseCSV = (csvData: string): Product[] => {
+  const parseCSV = useCallback((csvData: string): Product[] => {
     const lines = csvData.split("\n");
     const headers = lines[0].split(",");
     const products: Product[] = [];
@@ -217,29 +213,20 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = ({
     }
 
     return products;
-  };
+  }, []);
 
-  const handleExportDatabase = () => {
-    // Convert product data to CSV format
+  const handleExportDatabase = useCallback(() => {
     const csvData = convertToCSV(databaseProducts);
-
-    // Create a Blob from the CSV data
     const blob = new Blob([csvData], { type: "text/csv;charset=utf-8;" });
-
-    // Create a link to download the CSV file
     const link = document.createElement("a");
     link.href = URL.createObjectURL(blob);
     link.setAttribute("download", "product_database.csv");
     document.body.appendChild(link);
-
-    // Trigger the download
     link.click();
-
-    // Clean up
     document.body.removeChild(link);
-  };
+  }, [databaseProducts]);
 
-  const convertToCSV = (data: Product[]) => {
+  const convertToCSV = useCallback((data: Product[]) => {
     const headers = ["Barcode", "Description", "Provider", "Stock"];
     const rows = data.map((product) => [
       product.barcode,
@@ -248,15 +235,14 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = ({
       product.stock,
     ]);
 
-    // Join headers and rows with commas and newlines
     const csv =
       headers.join(",") +
       "\n" +
       rows.map((row) => row.join(",")).join("\n");
     return csv;
-  };
+  }, []);
 
-  const handleClearDatabase = () => {
+  const handleClearDatabase = useCallback(() => {
     setDatabaseProducts([]);
     toast({
       title: "Base de datos borrada",
@@ -264,11 +250,10 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = ({
         "Todos los productos han sido eliminados de la base de datos.",
     });
     setOpenAlert(false);
-  };
+  }, [setDatabaseProducts, toast]);
 
   return (
     <div>
-      {/* Add Product Button */}
       <div className="flex justify-between mb-4">
         <Button onClick={handleAddProductToDB}>Agregar Producto</Button>
         <div>
@@ -278,7 +263,6 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = ({
         </div>
       </div>
 
-      {/* File Upload */}
       <div className="flex items-center mb-4">
         <Label htmlFor="file-upload" className="mr-2">
           Cargar desde CSV:
@@ -317,7 +301,6 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = ({
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
-      {/* Product Database Table */}
       <ScrollArea>
         <Table>
           <TableCaption>Lista de productos en la base de datos.</TableCaption>
@@ -366,7 +349,6 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = ({
         </Table>
       </ScrollArea>
 
-      {/* Edit/Add Product Dialog */}
       <Dialog open={open} onOpenChange={setOpen}>
         <DialogContent className="sm:max-w-[425px]">
           <DialogHeader>

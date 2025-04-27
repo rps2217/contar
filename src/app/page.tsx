@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, useCallback } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
@@ -56,21 +56,17 @@ const initialProducts: Product[] = [
 export default function Home() {
   const [barcode, setBarcode] = useState("");
   const [products, setProducts] = useState<Product[]>([]);
-  const [databaseProducts, setDatabaseProducts] =
-    useState<Product[]>(initialProducts); // Simulate database
+  const [databaseProducts, setDatabaseProducts] = useState<Product[]>(initialProducts);
   const { toast } = useToast();
   const barcodeInputRef = useRef<HTMLInputElement>(null);
   const [open, setOpen] = useState(false);
-  const [selectedProductBarcode, setSelectedProductBarcode] = useState<
-    string | null
-  >(null);
+  const [selectedProductBarcode, setSelectedProductBarcode] = useState<string | null>(null);
 
   useEffect(() => {
-    // Focus the input on initial load
     barcodeInputRef.current?.focus();
   }, []);
 
-  const handleAddProduct = async () => {
+  const handleAddProduct = useCallback(async () => {
     if (!barcode) {
       toast({
         variant: "destructive",
@@ -80,11 +76,9 @@ export default function Home() {
       return;
     }
 
-    // Fetch product info from the database based on barcode
     let productInfo = databaseProducts.find((p) => p.barcode === barcode);
 
     if (!productInfo) {
-      // If product doesn't exist, create a new product with the barcode as the description
       productInfo = {
         barcode: barcode,
         description: `Nuevo producto ${barcode}`,
@@ -98,13 +92,9 @@ export default function Home() {
       });
     }
 
-    // Check if product already exists in the list
-    const existingProductIndex = products.findIndex(
-      (p) => p.barcode === productInfo!.barcode
-    );
+    const existingProductIndex = products.findIndex((p) => p.barcode === productInfo!.barcode);
 
     if (existingProductIndex !== -1) {
-      // If product exists, update the count
       const updatedProducts = [...products];
       updatedProducts[existingProductIndex] = {
         ...updatedProducts[existingProductIndex],
@@ -112,12 +102,10 @@ export default function Home() {
       };
       setProducts(updatedProducts);
     } else {
-      // If product doesn't exist, add it to the beginning of the list
       setProducts([{ ...productInfo!, count: 1 }, ...products]);
     }
 
     setBarcode("");
-    // Refocus on the input after adding the product
     if (barcodeInputRef.current) {
       barcodeInputRef.current.focus();
     }
@@ -125,51 +113,42 @@ export default function Home() {
       title: "Producto agregado",
       description: `${productInfo!.description} agregado al inventario.`,
     });
-  };
+  }, [barcode, databaseProducts, products, toast]);
 
-  const handleIncrement = (barcode: string) => {
-    setProducts(
-      products.map((product) =>
+  const handleIncrement = useCallback((barcode: string) => {
+    setProducts(prevProducts =>
+      prevProducts.map(product =>
         product.barcode === barcode
           ? { ...product, count: product.count + 1 }
           : product
       )
     );
-  };
+  }, []);
 
-  const handleDecrement = (barcode: string) => {
-    setProducts(
-      products.map((product) =>
+  const handleDecrement = useCallback((barcode: string) => {
+    setProducts(prevProducts =>
+      prevProducts.map(product =>
         product.barcode === barcode && product.count > 0
           ? { ...product, count: product.count - 1 }
           : product
       )
     );
-  };
+  }, []);
 
-  const handleDelete = (barcode: string) => {
-    setProducts(products.filter((product) => product.barcode !== barcode));
-  };
+  const handleDelete = useCallback((barcode: string) => {
+    setProducts(prevProducts => prevProducts.filter(product => product.barcode !== barcode));
+  }, []);
 
-  const handleExport = () => {
-    // Convert product data to CSV format
+  const handleExport = useCallback(() => {
     const csvData = convertToCSV(products);
-
-    // Create a Blob from the CSV data
     const blob = new Blob([csvData], { type: "text/csv;charset=utf-8;" });
-
-    // Create a link to download the CSV file
     const link = document.createElement("a");
     link.href = URL.createObjectURL(blob);
     link.setAttribute("download", "inventory_count.csv");
     document.body.appendChild(link);
-
-    // Trigger the download
     link.click();
-
-    // Clean up
     document.body.removeChild(link);
-  };
+  }, [products]);
 
   const convertToCSV = (data: Product[]) => {
     const headers = ["Barcode", "Description", "Provider", "Stock", "Count"];
@@ -181,7 +160,6 @@ export default function Home() {
       product.count,
     ]);
 
-    // Join headers and rows with commas and newlines
     const csv = headers.join(",") + "\n" + rows.map((row) => row.join(",")).join("\n");
     return csv;
   };
@@ -192,24 +170,24 @@ export default function Home() {
     }
   };
 
-  const totalCount = products.reduce((acc, product) => acc + product.count, 0);
-
-  const handleOpenQuantityDialog = (barcode: string) => {
+  const handleOpenQuantityDialog = useCallback((barcode: string) => {
     setSelectedProductBarcode(barcode);
     setOpen(true);
-  };
+  }, []);
 
-  const handleQuantityChange = (barcode: string, newCount: number) => {
-    setProducts(
-      products.map((product) =>
+  const handleQuantityChange = useCallback((barcode: string, newCount: number) => {
+    setProducts(prevProducts =>
+      prevProducts.map(product =>
         product.barcode === barcode ? { ...product, count: newCount } : product
       )
     );
-  };
+  }, []);
 
-  const getProductByBarcode = (barcode: string) => {
+  const getProductByBarcode = useCallback((barcode: string) => {
     return products.find((product) => product.barcode === barcode);
-  };
+  }, [products]);
+
+  const totalCount = products.reduce((acc, product) => acc + product.count, 0);
 
   return (
     <div className="container mx-auto p-4">
@@ -221,7 +199,6 @@ export default function Home() {
           <TabsTrigger value="Base de Datos">Base de Datos</TabsTrigger>
         </TabsList>
         <TabsContent value="Contador">
-          {/* Barcode Input */}
           <div className="flex items-center mb-4">
             <Input
               type="number"
@@ -229,7 +206,7 @@ export default function Home() {
               value={barcode}
               onChange={(e) => setBarcode(e.target.value)}
               className="mr-2 bg-violet-100"
-              ref={barcodeInputRef} // Attach the ref to the input
+              ref={barcodeInputRef}
               onKeyDown={handleKeyDown}
             />
             <Button
@@ -241,7 +218,6 @@ export default function Home() {
             </Button>
           </div>
 
-          {/* Inventory Table */}
           <ScrollArea>
             <Table>
               <TableCaption>Inventario de productos escaneados.</TableCaption>
@@ -311,10 +287,8 @@ export default function Home() {
             </Table>
           </ScrollArea>
 
-          {/* Count Export */}
           <div className="mt-4 flex justify-between items-center">
             <Button onClick={handleExport}>Exportar</Button>
-            <div>Total de productos: {totalCount}</div>
           </div>
         </TabsContent>
         <TabsContent value="Base de Datos">
@@ -324,7 +298,7 @@ export default function Home() {
           />
         </TabsContent>
       </Tabs>
-      {/* Quantity adjustment dialog */}
+
       <Dialog open={open} onOpenChange={setOpen}>
         <DialogContent className="sm:max-w-[425px]">
           <DialogHeader>

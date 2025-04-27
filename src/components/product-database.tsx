@@ -36,7 +36,16 @@ import * as z from "zod";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { AlertDialog, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from "@/components/ui/alert-dialog";
+import {
+  AlertDialog,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from "@/components/ui/alert-dialog";
 
 interface Product {
   barcode: string;
@@ -190,11 +199,17 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = ({
     for (let i = 1; i < lines.length; i++) {
       const data = lines[i].split(",");
       if (data.length === headers.length) {
+        const barcode = data[0] || "";
+        const description = data[1] || "";
+        const provider = data[2] || "";
+        const stockValue = parseInt(data[3]);
+        const stock = isNaN(stockValue) ? 0 : stockValue;
+
         const product: Product = {
-          barcode: data[0],
-          description: data[1],
-          provider: data[2],
-          stock: parseInt(data[3]),
+          barcode,
+          description,
+          provider,
+          stock,
           count: 0,
         };
         products.push(product);
@@ -234,7 +249,10 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = ({
     ]);
 
     // Join headers and rows with commas and newlines
-    const csv = headers.join(",") + "\n" + rows.map((row) => row.join(",")).join("\n");
+    const csv =
+      headers.join(",") +
+      "\n" +
+      rows.map((row) => row.join(",")).join("\n");
     return csv;
   };
 
@@ -242,11 +260,11 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = ({
     setDatabaseProducts([]);
     toast({
       title: "Base de datos borrada",
-      description: "Todos los productos han sido eliminados de la base de datos.",
+      description:
+        "Todos los productos han sido eliminados de la base de datos.",
     });
     setOpenAlert(false);
   };
-
 
   return (
     <div>
@@ -445,4 +463,3 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = ({
     </div>
   );
 };
-

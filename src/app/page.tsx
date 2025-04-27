@@ -197,7 +197,10 @@ export default function Home() {
               </TableHeader>
               <TableBody>
                 {products.map((product) => (
-                  <TableRow key={product.barcode}>
+                  <TableRow
+                    key={product.barcode}
+                    className={product.count === product.stock ? "bg-green-100" : ""}
+                  >
                     <TableCell>{product.description}</TableCell>
                     <TableCell className="hidden sm:table-cell">
                       {product.provider}

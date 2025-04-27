@@ -106,7 +106,8 @@ export default function Home() {
         ...updatedProducts[existingProductIndex],
         count: updatedProducts[existingProductIndex].count + 1,
       };
-      setProducts(updatedProducts);
+      setProducts([updatedProducts[existingProductIndex], ...products.slice(0, existingProductIndex), ...products.slice(existingProductIndex + 1)]);
+
     } else {
       setProducts([{ ...productInfo!, count: 1 }, ...products]);
     }
@@ -354,4 +355,5 @@ export default function Home() {
     </div>
   );
 }
+
 

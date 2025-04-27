@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback } from "react";
+import { useState, useCallback, useRef } from "react";
 import {
   Table,
   TableBody,
@@ -46,6 +46,7 @@ import {
   AlertDialogTitle,
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
+import { Progress } from "@/components/ui/progress";
 
 interface Product {
   barcode: string;
@@ -77,6 +78,8 @@ interface ProductDatabaseProps {
   setDatabaseProducts: (products: Product[]) => void;
 }
 
+const CHUNK_SIZE = 200; // Number of products to process per chunk
+
 export const ProductDatabase: React.FC<ProductDatabaseProps> = ({
   databaseProducts,
   setDatabaseProducts,
@@ -85,6 +88,9 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = ({
   const [open, setOpen] = useState(false);
   const [selectedProduct, setSelectedProduct] = useState<Product | null>(null);
   const [openAlert, setOpenAlert] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState(0);
+  const [isUploading, setIsUploading] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const productForm = useForm<ProductValues>({
     resolver: zodResolver(productSchema),
@@ -98,42 +104,48 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = ({
 
   const { handleSubmit } = productForm;
 
-  const onSubmit = useCallback((data: ProductValues) => {
-    if (selectedProduct) {
-      const updatedProducts = databaseProducts.map((p) =>
-        p.barcode === selectedProduct.barcode
-          ? { ...data, stock: Number(data.stock), count: 0 }
-          : p
-      );
-      setDatabaseProducts(updatedProducts);
-      toast({
-        title: "Producto actualizado",
-        description: `${data.description} ha sido actualizado en la base de datos.`,
-      });
-    } else {
-      setDatabaseProducts([
-        ...databaseProducts,
-        { ...data, stock: Number(data.stock), count: 0 },
-      ]);
-      toast({
-        title: "Producto agregado",
-        description: `${data.description} ha sido agregado a la base de datos.`,
-      });
-    }
+  const onSubmit = useCallback(
+    (data: ProductValues) => {
+      if (selectedProduct) {
+        const updatedProducts = databaseProducts.map((p) =>
+          p.barcode === selectedProduct.barcode
+            ? { ...data, stock: Number(data.stock), count: 0 }
+            : p
+        );
+        setDatabaseProducts(updatedProducts);
+        toast({
+          title: "Producto actualizado",
+          description: `${data.description} ha sido actualizado en la base de datos.`,
+        });
+      } else {
+        setDatabaseProducts([
+          ...databaseProducts,
+          { ...data, stock: Number(data.stock), count: 0 },
+        ]);
+        toast({
+          title: "Producto agregado",
+          description: `${data.description} ha sido agregado a la base de datos.`,
+        });
+      }
 
-    setOpen(false);
-    setSelectedProduct(null);
-    productForm.reset();
-  }, [databaseProducts, productForm, selectedProduct, setDatabaseProducts, toast]);
+      setOpen(false);
+      setSelectedProduct(null);
+      productForm.reset();
+    },
+    [databaseProducts, productForm, selectedProduct, setDatabaseProducts, toast]
+  );
 
-  const handleEditProduct = useCallback((product: Product) => {
-    setSelectedProduct(product);
-    productForm.setValue("barcode", product.barcode);
-    productForm.setValue("description", product.description);
-    productForm.setValue("provider", product.provider);
-    productForm.setValue("stock", product.stock);
-    setOpen(true);
-  }, [productForm]);
+  const handleEditProduct = useCallback(
+    (product: Product) => {
+      setSelectedProduct(product);
+      productForm.setValue("barcode", product.barcode);
+      productForm.setValue("description", product.description);
+      productForm.setValue("provider", product.provider);
+      productForm.setValue("stock", product.stock);
+      setOpen(true);
+    },
+    [productForm]
+  );
 
   const handleAddProductToDB = useCallback(() => {
     setSelectedProduct(null);
@@ -141,51 +153,85 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = ({
     setOpen(true);
   }, [productForm]);
 
-  const handleDeleteProductFromDB = useCallback((barcode: string) => {
-    const updatedProducts = databaseProducts.filter(
-      (p) => p.barcode !== barcode
-    );
-    setDatabaseProducts(updatedProducts);
-    toast({
-      title: "Producto eliminado",
-      description: `Producto con código de barras ${barcode} ha sido eliminado de la base de datos.`,
-    });
-  }, [databaseProducts, setDatabaseProducts, toast]);
-
-  const handleFileUpload = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) {
+  const handleDeleteProductFromDB = useCallback(
+    (barcode: string) => {
+      const updatedProducts = databaseProducts.filter(
+        (p) => p.barcode !== barcode
+      );
+      setDatabaseProducts(updatedProducts);
       toast({
-        variant: "destructive",
-        title: "Error",
-        description: "Por favor, selecciona un archivo.",
+        title: "Producto eliminado",
+        description: `Producto con código de barras ${barcode} ha sido eliminado de la base de datos.`,
       });
-      return;
-    }
+    },
+    [databaseProducts, setDatabaseProducts, toast]
+  );
 
-    const reader = new FileReader();
-    reader.onload = (event) => {
-      const csvData = event.target?.result as string;
-      const parsedProducts = parseCSV(csvData);
-      const totalProducts = databaseProducts.length + parsedProducts.length;
-      if (totalProducts > 4000) {
-        const allowedProducts = 4000 - databaseProducts.length;
-        const limitedProducts = parsedProducts.slice(0, allowedProducts);
-        setDatabaseProducts([...databaseProducts, ...limitedProducts]);
+  const handleFileUpload = useCallback(
+    async (e: React.ChangeEvent<HTMLInputElement>) => {
+      const file = e.target.files?.[0];
+      if (!file) {
         toast({
-          title: "Productos cargados",
-          description: `${limitedProducts.length} productos han sido cargados desde el archivo. Se han ignorado los productos que exceden el límite de 4000.`,
+          variant: "destructive",
+          title: "Error",
+          description: "Por favor, selecciona un archivo.",
         });
-      } else {
-        setDatabaseProducts([...databaseProducts, ...parsedProducts]);
-        toast({
-          title: "Productos cargados",
-          description: `${parsedProducts.length} productos han sido cargados desde el archivo.`,
-        });
+        return;
       }
-    };
-    reader.readAsText(file);
-  }, [databaseProducts, setDatabaseProducts, toast]);
+
+      setIsUploading(true);
+      setUploadProgress(0);
+
+      const reader = new FileReader();
+      reader.onload = async (event) => {
+        const csvData = event.target?.result as string;
+        const lines = csvData.split("\n");
+        const headers = lines[0].split(",");
+        const totalProducts = lines.length - 1;
+        let uploadedCount = 0;
+
+        // Function to process a chunk of products
+        const processChunk = async (start: number, end: number) => {
+          const chunk = lines.slice(start, end);
+          const parsedProducts = parseCSV(chunk.join("\n"));
+          const totalProductsBeforeUpload = databaseProducts.length;
+          const allowedProducts = 4000 - totalProductsBeforeUpload;
+          const productsToAdd = parsedProducts.slice(0, allowedProducts); // Limit products to add
+
+          setDatabaseProducts((prevProducts) => [
+            ...prevProducts,
+            ...productsToAdd,
+          ]);
+          uploadedCount += productsToAdd.length;
+          setUploadProgress(
+            Math.min(
+              100,
+              Math.round((uploadedCount / totalProducts) * 100)
+            )
+          ); // Ensure progress doesn't exceed 100
+        };
+
+        // Process chunks sequentially
+        for (let i = 1; i < lines.length; i += CHUNK_SIZE) {
+          const start = i;
+          const end = Math.min(i + CHUNK_SIZE, lines.length);
+          await processChunk(start, end);
+        }
+
+        setIsUploading(false);
+        setUploadProgress(100); // Ensure progress is 100 when finished
+        toast({
+          title: "Productos cargados",
+          description: `${uploadedCount} productos han sido cargados desde el archivo.`,
+        });
+        if (fileInputRef.current) {
+          fileInputRef.current.value = ""; // Reset file input
+        }
+      };
+      reader.readAsText(file);
+    },
+    [databaseProducts, setDatabaseProducts, toast]
+  );
 
   const parseCSV = useCallback((csvData: string): Product[] => {
     const lines = csvData.split("\n");
@@ -273,14 +319,19 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = ({
           accept=".csv"
           onChange={handleFileUpload}
           className="hidden"
+          ref={fileInputRef}
+          disabled={isUploading}
         />
-        <Button asChild variant="secondary">
+        <Button asChild variant="secondary" disabled={isUploading}>
           <label htmlFor="file-upload" className="flex items-center">
             <Upload className="mr-2 h-4 w-4" />
             Subir Archivo
           </label>
         </Button>
       </div>
+      {isUploading && (
+        <Progress value={uploadProgress} className="mb-4" />
+      )}
       <AlertDialog open={openAlert} onOpenChange={setOpenAlert}>
         <AlertDialogTrigger asChild>
           <Button variant="destructive">Borrar Base de Datos</Button>

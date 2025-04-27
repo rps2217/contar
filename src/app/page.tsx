@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useRef, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Table, TableBody, TableCaption, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
@@ -19,6 +19,12 @@ export default function Home() {
   const [barcode, setBarcode] = useState("");
   const [products, setProducts] = useState<Product[]>([]);
   const { toast } = useToast();
+  const barcodeInputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    // Focus the input on initial load
+    barcodeInputRef.current?.focus();
+  }, []);
 
   const handleAddProduct = async () => {
     if (!barcode) {
@@ -65,6 +71,10 @@ export default function Home() {
     }
 
     setBarcode("");
+    // Refocus on the input after adding the product
+    if (barcodeInputRef.current) {
+        barcodeInputRef.current.focus();
+    }
     toast({
       title: "Producto agregado",
       description: `${productInfo!.description} agregado al inventario.`,
@@ -131,6 +141,7 @@ export default function Home() {
           value={barcode}
           onChange={(e) => setBarcode(e.target.value)}
           className="mr-2"
+          ref={barcodeInputRef} // Attach the ref to the input
         />
         <Button onClick={handleAddProduct} variant="secondary">Agregar</Button>
       </div>

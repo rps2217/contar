@@ -538,6 +538,9 @@ export default function Home() {
                         type="number"
                         placeholder="Stock"
                         {...field}
+                        onChange={(e) => {
+                          field.onChange(Number(e.target.value));
+                        }}
                       />
                     </FormControl>
                     <FormMessage />

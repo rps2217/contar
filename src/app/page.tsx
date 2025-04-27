@@ -31,37 +31,45 @@ export default function Home() {
     }
 
     // Simulate fetching product info from the database based on barcode
-    const productInfo = await getProductInfo(barcode);
+    let productInfo = await getProductInfo(barcode);
 
-    if (productInfo) {
-      // Check if product already exists in the list
-      const existingProductIndex = products.findIndex((p) => p.barcode === productInfo.barcode);
-
-      if (existingProductIndex !== -1) {
-        // If product exists, update the count
-        const updatedProducts = [...products];
-        updatedProducts[existingProductIndex] = {
-          ...updatedProducts[existingProductIndex],
-          count: updatedProducts[existingProductIndex].count + 1,
-        };
-        setProducts(updatedProducts);
-      } else {
-        // If product doesn't exist, add it to the list
-        setProducts([...products, { ...productInfo, count: 1 }]);
-      }
-
-      setBarcode("");
+    if (!productInfo) {
+      // If product doesn't exist, create a new product with the barcode as the description
+      productInfo = {
+        barcode: barcode,
+        description: `Nuevo producto ${barcode}`,
+        provider: "Desconocido",
+        stock: 0,
+      };
       toast({
-        title: "Producto agregado",
-        description: `${productInfo.description} agregado al inventario.`,
-      });
-    } else {
-      toast({
-        variant: "destructive",
-        title: "Error",
-        description: "Producto no encontrado.",
+        title: "Producto no encontrado",
+        description: `Producto con código de barras ${barcode} no encontrado. Se ha creado un nuevo producto.`,
       });
     }
+
+
+    // Check if product already exists in the list
+    const existingProductIndex = products.findIndex((p) => p.barcode === productInfo!.barcode);
+
+    if (existingProductIndex !== -1) {
+      // If product exists, update the count
+      const updatedProducts = [...products];
+      updatedProducts[existingProductIndex] = {
+        ...updatedProducts[existingProductIndex],
+        count: updatedProducts[existingProductIndex].count + 1,
+      };
+      setProducts(updatedProducts);
+    } else {
+      // If product doesn't exist, add it to the list
+      setProducts([...products, { ...productInfo!, count: 1 }]);
+    }
+
+    setBarcode("");
+    toast({
+      title: "Producto agregado",
+      description: `${productInfo!.description} agregado al inventario.`,
+    });
+
   };
 
 

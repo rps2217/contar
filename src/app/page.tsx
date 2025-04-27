@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Table, TableBody, TableCaption, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Plus, Minus, Trash } from "lucide-react";
+import { useToast } from "@/hooks/use-toast";
 
 interface Product {
   barcode: string;
@@ -17,29 +18,70 @@ interface Product {
 export default function Home() {
   const [barcode, setBarcode] = useState("");
   const [products, setProducts] = useState<Product[]>([]);
+  const { toast } = useToast();
 
-  const handleAddProduct = () => {
+  const handleAddProduct = async () => {
+    if (!barcode) {
+      toast({
+        variant: "destructive",
+        title: "Error",
+        description: "Por favor, introduce un código de barras.",
+      });
+      return;
+    }
+
     // Simulate fetching product info from the database based on barcode
-    const productInfo = getProductInfo(barcode);
+    const productInfo = await getProductInfo(barcode);
 
     if (productInfo) {
-      setProducts([...products, { ...productInfo, count: 1 }]);
+      // Check if product already exists in the list
+      const existingProductIndex = products.findIndex((p) => p.barcode === productInfo.barcode);
+
+      if (existingProductIndex !== -1) {
+        // If product exists, update the count
+        const updatedProducts = [...products];
+        updatedProducts[existingProductIndex] = {
+          ...updatedProducts[existingProductIndex],
+          count: updatedProducts[existingProductIndex].count + 1,
+        };
+        setProducts(updatedProducts);
+      } else {
+        // If product doesn't exist, add it to the list
+        setProducts([...products, { ...productInfo, count: 1 }]);
+      }
+
       setBarcode("");
+      toast({
+        title: "Producto agregado",
+        description: `${productInfo.description} agregado al inventario.`,
+      });
     } else {
-      alert("Producto no encontrado");
+      toast({
+        variant: "destructive",
+        title: "Error",
+        description: "Producto no encontrado.",
+      });
     }
   };
 
-  const getProductInfo = (barcode: string) => {
+
+  const getProductInfo = async (barcode: string) => {
     // Mock data - replace with actual database lookup
-    switch (barcode) {
-      case "12345":
-        return { barcode: "12345", description: "Paracetamol 500mg", provider: "Genfar", stock: 100 };
-      case "67890":
-        return { barcode: "67890", description: "Amoxicilina 250mg", provider: "MK", stock: 50 };
-      default:
-        return null;
-    }
+    // Simulate an asynchronous operation (e.g., fetching from a database)
+    return new Promise<Product | null>((resolve) => {
+      setTimeout(() => {
+        switch (barcode) {
+          case "12345":
+            resolve({ barcode: "12345", description: "Paracetamol 500mg", provider: "Genfar", stock: 100 });
+            break;
+          case "67890":
+            resolve({ barcode: "67890", description: "Amoxicilina 250mg", provider: "MK", stock: 50 });
+            break;
+          default:
+            resolve(null);
+        }
+      }, 500); // Simulate a 500ms delay
+    });
   };
 
   const handleIncrement = (barcode: string) => {

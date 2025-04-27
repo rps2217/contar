@@ -177,6 +177,10 @@ export default function Home() {
     );
   };
 
+  const getProductByBarcode = (barcode: string) => {
+    return products.find((product) => product.barcode === barcode);
+  };
+
   return (
     <div className="container mx-auto p-4">
       <h1 className="text-2xl font-bold mb-4 text-center">StockCounter Pro</h1>
@@ -300,7 +304,7 @@ export default function Home() {
             </DialogDescription>
           </DialogHeader>
           <div className="grid gap-4 py-4">
-            <div className="flex justify-between">
+            <div className="flex justify-between items-center">
               <Button
                 size="lg"
                 onClick={() => {
@@ -311,6 +315,13 @@ export default function Home() {
               >
                 <Minus className="h-8 w-8" />
               </Button>
+
+              {selectedProductBarcode && (
+                <div className="text-4xl font-bold mx-4">
+                  {getProductByBarcode(selectedProductBarcode)?.count}
+                </div>
+              )}
+
               <Button
                 size="lg"
                 onClick={() => {
@@ -335,3 +346,4 @@ export default function Home() {
     </div>
   );
 }
+

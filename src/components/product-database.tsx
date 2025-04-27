@@ -78,7 +78,7 @@ interface ProductDatabaseProps {
   setDatabaseProducts: (products: Product[]) => void;
 }
 
-const CHUNK_SIZE = 100; // Number of products to process per chunk
+const CHUNK_SIZE = 200; // Number of products to process per chunk
 const DATABASE_NAME = "stockCounterDB";
 const OBJECT_STORE_NAME = "products";
 const DATABASE_VERSION = 1;
@@ -127,11 +127,11 @@ const getAllProductsFromDB = async (): Promise<Product[]> => {
   });
 };
 
-const addProductsToDB = async (dbName: string, objectStoreName: string, products: Product[]): Promise<void> => {
-  const db = await openDB(dbName, 1, objectStoreName);
+const addProductsToDB = async (products: Product[]): Promise<void> => {
+  const db = await openDB();
   return new Promise((resolve, reject) => {
-    const transaction = db.transaction(objectStoreName, "readwrite");
-    const objectStore = transaction.objectStore(objectStoreName);
+    const transaction = db.transaction(OBJECT_STORE_NAME, "readwrite");
+    const objectStore = transaction.objectStore(OBJECT_STORE_NAME);
 
     products.forEach(product => {
       objectStore.put(product);
@@ -382,10 +382,6 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = ({
       setUploadProgress(0);
       setUploadComplete(false);
 
-      const db = await openDB();
-      const transaction = db.transaction(OBJECT_STORE_NAME, "readwrite");
-      const objectStore = transaction.objectStore(OBJECT_STORE_NAME);
-
       const reader = new FileReader();
       reader.onload = async (event) => {
         const csvData = event.target?.result as string;
@@ -393,7 +389,7 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = ({
         const headers = lines[0].split(',');
 
         let processedCount = 0;
-
+        let productsToLoad: Product[] = [];
         for (let i = 1; i < lines.length; i++) {
           const data = lines[i].split(',');
           if (data.length === headers.length) {
@@ -410,53 +406,37 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = ({
               stock,
               count: 0,
             };
-
-            try {
-              objectStore.put(product);
-              processedCount++;
-
-              // Update progress every CHUNK_SIZE products
-              if (processedCount % CHUNK_SIZE === 0) {
-                const progress = Math.min((processedCount / lines.length) * 100, 100);
-                setUploadProgress(progress);
+            productsToLoad.push(product);
+            processedCount++;
+            if (processedCount % CHUNK_SIZE === 0 || i === lines.length - 1) {
+              try {
+                await addProductsToDB(productsToLoad);
+                setUploadProgress(Math.round((i / (lines.length - 1)) * 100));
+                productsToLoad = [];
                 await new Promise(resolve => setTimeout(resolve, 0)); // Yield to the event loop
+              } catch (error: any) {
+                console.error("Error adding product to IndexedDB", error);
+                toast({
+                  variant: "destructive",
+                  title: "Error",
+                  description: `Failed to add product to database: ${barcode}`,
+                });
+                break; // Stop processing on error
               }
-            } catch (error) {
-              console.error("Error adding product to IndexedDB", error);
-              toast({
-                variant: "destructive",
-                title: "Error",
-                description: `Failed to add product to database: ${barcode}`,
-              });
             }
           }
         }
-
-        transaction.oncomplete = () => {
-          db.close();
-          setIsUploading(false);
-          setUploadProgress(100);
-          setUploadComplete(true);
-          loadInitialData(); // Refresh data after upload
-          toast({
-            title: "Productos cargados",
-            description: `Se han cargado ${processedCount} productos desde el archivo.`,
-          });
-          if (fileInputRef.current) {
-            fileInputRef.current.value = ""; // Reset file input
-          }
-        };
-
-        transaction.onerror = () => {
-          console.error("Transaction error", transaction.error);
-          setIsUploading(false);
-          toast({
-            variant: "destructive",
-            title: "Error",
-            description: "Error al cargar los productos al la base de datos",
-          });
-        };
-
+        setIsUploading(false);
+        setUploadProgress(100);
+        setUploadComplete(true);
+        loadInitialData(); // Refresh data after upload
+        toast({
+          title: "Productos cargados",
+          description: `Se han cargado ${processedCount} productos desde el archivo.`,
+        });
+        if (fileInputRef.current) {
+          fileInputRef.current.value = ""; // Reset file input
+        }
       };
       reader.onerror = () => {
         setIsUploading(false);

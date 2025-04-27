@@ -18,6 +18,8 @@ import {
   DialogFooter,
   DialogHeader,
   DialogTitle,
+  DialogTrigger,
+  DialogClose,
 } from "@/components/ui/dialog";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
@@ -257,8 +259,6 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = ({
   const [uploadComplete, setUploadComplete] = useState(false);
   const [totalProducts, setTotalProducts] = useState(0);
   const [productsLoaded, setProductsLoaded] = useState(0);
-  const [editingBarcode, setEditingBarcode] = useState<string | null>(null);
-  const [editedProduct, setEditedProduct] = useState<Product | null>(null);
   const isMobile = useIsMobile();
 
   const productForm = useForm<ProductValues>({
@@ -492,31 +492,33 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = ({
     }
   }, [setDatabaseProducts, toast]);
 
-  const startEditing = useCallback((product: Product) => {
-    setEditingBarcode(product.barcode);
-    setEditedProduct({ ...product });
-  }, []);
+  const handleOpenEditDialog = (product: Product) => {
+    setSelectedProduct(product);
+    productForm.reset(product); // populate form with product data
+    setOpen(true);
+  };
 
-  const cancelEditing = useCallback(() => {
-    setEditingBarcode(null);
-    setEditedProduct(null);
-  }, []);
+  const handleEditProduct = async (values: ProductValues) => {
+    if (!selectedProduct) return;
 
-  const saveProduct = useCallback(async (barcode: string) => {
-    if (!editedProduct) return;
+    const updatedProduct = {
+      ...selectedProduct,
+      ...values,
+      stock: Number(values.stock),
+    };
 
     try {
-      await updateProductInDB(editedProduct);
-      const updatedProducts = databaseProducts.map(p =>
-        p.barcode === barcode ? editedProduct : p
+      await updateProductInDB(updatedProduct);
+      setDatabaseProducts((prevProducts) =>
+        prevProducts.map((p) =>
+          p.barcode === selectedProduct.barcode ? updatedProduct : p
+        )
       );
-      setDatabaseProducts(updatedProducts);
       toast({
         title: "Producto actualizado",
-        description: `Producto con código de barras ${barcode} ha sido actualizado.`,
+        description: `Producto con código de barras ${selectedProduct.barcode} ha sido actualizado.`,
       });
-      setEditingBarcode(null);
-      setEditedProduct(null);
+      setOpen(false); // close dialog
     } catch (error) {
       console.error("Failed to update product", error);
       toast({
@@ -525,11 +527,18 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = ({
         description: "Failed to update product in database.",
       });
     }
-  }, [databaseProducts, setDatabaseProducts, toast, editedProduct]);
+  };
 
-  const handleAddProduct = async (values: ProductValues) => {
-    await handleAddProductToDB(values);
-    reset();
+  const handleDeleteConfirmation = (product: Product) => {
+    setSelectedProduct(product);
+    setOpenAlert(true);
+  };
+
+  const handleDeleteProduct = async () => {
+    if (!selectedProduct) return;
+
+    await handleDeleteProductFromDB(selectedProduct.barcode);
+    setOpenAlert(false);
   };
 
   return (
@@ -605,91 +614,25 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = ({
               <TableHead style={{ width: '50%' }}>Descripción</TableHead>
               <TableHead className={isMobile ? "hidden" : ""}>Proveedor</TableHead>
               <TableHead className="text-right">Stock</TableHead>
-              <TableHead className="text-center">Acciones</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
             {databaseProducts.map((product) => (
               <TableRow key={product.barcode}>
-                <TableCell onClick={() => startEditing(product)}>
-                  {editingBarcode === product.barcode ? (
-                    <Input
-                      type="text"
-                      value={editedProduct?.barcode || ""}
-                      onChange={(e) => setEditedProduct({ ...editedProduct, barcode: e.target.value } as Product)}
-                    />
-                  ) : (
-                    product.barcode
-                  )}
+                <TableCell
+                 style={{ cursor: 'pointer' }}
+                 onClick={() => handleOpenEditDialog(product)}
+                >
+                  {product.barcode}
                 </TableCell>
                 <TableCell style={{ width: '50%' }}>
-                  {editingBarcode === product.barcode ? (
-                    <Textarea
-                      value={editedProduct?.description || ""}
-                      onChange={(e) => setEditedProduct({ ...editedProduct, description: e.target.value } as Product)}
-                    />
-                  ) : (
-                    product.description
-                  )}
+                  {product.description}
                 </TableCell>
                 <TableCell className={isMobile ? "hidden" : ""}>
-                  {editingBarcode === product.barcode ? (
-                    <Input
-                      type="text"
-                      value={editedProduct?.provider || ""}
-                      onChange={(e) => setEditedProduct({ ...editedProduct, provider: e.target.value } as Product)}
-                    />
-                  ) : (
-                    product.provider
-                  )}
+                  {product.provider}
                 </TableCell>
                 <TableCell className="text-right">
-                  {editingBarcode === product.barcode ? (
-                    <Input
-                      type="number"
-                      value={editedProduct?.stock?.toString() || ""}
-                      onChange={(e) => setEditedProduct({ ...editedProduct, stock: Number(e.target.value) } as Product)}
-                    />
-                  ) : (
-                    product.stock
-                  )}
-                </TableCell>
-                <TableCell className="text-center">
-                  {editingBarcode === product.barcode ? (
-                    <>
-                      <Button
-                        onClick={() => saveProduct(editedProduct as Product)}
-                        size="icon"
-                        variant="outline"
-                      >
-                        Guardar
-                      </Button>
-                      <Button
-                        onClick={cancelEditing}
-                        size="icon"
-                        variant="ghost"
-                      >
-                        Cancelar
-                      </Button>
-                    </>
-                  ) : (
-                    <>
-                      <Button
-                        onClick={() => startEditing(product)}
-                        size="icon"
-                        variant="outline"
-                      >
-                        <Edit className="h-4 w-4" />
-                      </Button>
-                      <Button
-                        onClick={() => handleDeleteProductFromDB(product.barcode)}
-                        size="icon"
-                        variant="destructive"
-                      >
-                        <Trash className="h-4 w-4" />
-                      </Button>
-                    </>
-                  )}
+                  {product.stock}
                 </TableCell>
               </TableRow>
             ))}
@@ -707,13 +650,13 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = ({
       <Dialog open={open} onOpenChange={setOpen}>
         <DialogContent className="sm:max-w-[425px]">
           <DialogHeader>
-            <DialogTitle>Agregar Producto</DialogTitle>
+            <DialogTitle>{selectedProduct ? "Editar Producto" : "Agregar Producto"}</DialogTitle>
             <DialogDescription>
-              Agrega un nuevo producto a la base de datos.
+              {selectedProduct ? "Edita los detalles del producto." : "Agrega un nuevo producto a la base de datos."}
             </DialogDescription>
           </DialogHeader>
           <Form {...productForm}>
-            <form onSubmit={handleSubmit(handleAddProduct)} className="space-y-4">
+            <form onSubmit={handleSubmit(selectedProduct ? handleEditProduct : handleAddProductToDB)} className="space-y-4">
               <FormField
                 control={productForm.control}
                 name="barcode"
@@ -785,15 +728,40 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = ({
                 )}
               />
               <DialogFooter>
+              {selectedProduct && (
+                  <Button
+                    type="button"
+                    variant="destructive"
+                    onClick={() => handleDeleteConfirmation(selectedProduct)}
+                  >
+                    Eliminar
+                  </Button>
+                )}
                 <Button type="submit">
-                  Guardar
+                  {selectedProduct ? "Guardar cambios" : "Guardar"}
                 </Button>
               </DialogFooter>
             </form>
           </Form>
         </DialogContent>
       </Dialog>
+       <AlertDialog open={openAlert} onOpenChange={setOpenAlert}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>¿Estás seguro?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Esta acción eliminará el producto de la base de datos.
+              Esta acción no se puede deshacer.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancelar</AlertDialogCancel>
+            <Button variant="destructive" onClick={handleDeleteProduct}>
+              Borrar
+            </Button>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 };
-

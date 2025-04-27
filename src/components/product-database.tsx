@@ -257,6 +257,8 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = ({
   const [uploadComplete, setUploadComplete] = useState(false);
   const [totalProducts, setTotalProducts] = useState(0);
     const [productsLoaded, setProductsLoaded] = useState(0);
+    const [editingBarcode, setEditingBarcode] = useState<string | null>(null);
+    const [editedProduct, setEditedProduct] = useState<Product | null>(null);
 
   const productForm = useForm<ProductValues>({
     resolver: zodResolver(productSchema),
@@ -268,7 +270,7 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = ({
     },
   });
 
-  const { handleSubmit } = productForm;
+  const { handleSubmit, reset } = productForm;
 
   const loadInitialData = async () => {
     try {
@@ -288,61 +290,46 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = ({
     loadInitialData();
   }, [setDatabaseProducts, toast]);
 
+  const handleAddProductToDB = useCallback(async (data: ProductValues) => {
+    const newProduct = { ...data, stock: Number(data.stock), count: 0 };
+    try {
+      await addProductsToDB([newProduct]);
+      setDatabaseProducts((prevProducts) => [...prevProducts, newProduct]);
+      toast({
+        title: "Producto agregado",
+        description: `${data.description} ha sido agregado a la base de datos.`,
+      });
+    } catch (error) {
+      console.error("Database operation failed", error);
+      toast({
+        variant: "destructive",
+        title: "Error",
+        description: "Failed to save product to database.",
+      });
+    }
+  }, [setDatabaseProducts, toast]);
 
-  const onSubmit = useCallback(
-    async (data: ProductValues) => {
-      const newProduct = { ...data, stock: Number(data.stock), count: 0 };
-      try {
-        if (selectedProduct) {
-          await updateProductInDB(newProduct);
-          const updatedProducts = databaseProducts.map((p) =>
-            p.barcode === selectedProduct.barcode ? newProduct : p
-          );
-          setDatabaseProducts(updatedProducts);
-          toast({
-            title: "Producto actualizado",
-            description: `${data.description} ha sido actualizado en la base de datos.`,
-          });
-        } else {
-          await addProductsToDB([newProduct]);
-          setDatabaseProducts([...databaseProducts, newProduct]);
-          toast({
-            title: "Producto agregado",
-            description: `${data.description} ha sido agregado a la base de datos.`,
-          });
+    const handleSaveProduct = useCallback(async (product: Product) => {
+        try {
+            await updateProductInDB(product);
+            setDatabaseProducts(prevProducts =>
+                prevProducts.map(p =>
+                    p.barcode === product.barcode ? product : p
+                )
+            );
+            toast({
+                title: "Producto actualizado",
+                description: `Producto con código de barras ${product.barcode} ha sido actualizado.`,
+            });
+        } catch (error) {
+            console.error("Failed to update product", error);
+            toast({
+                variant: "destructive",
+                title: "Error",
+                description: "Failed to update product in database.",
+            });
         }
-        setOpen(false);
-        setSelectedProduct(null);
-        productForm.reset();
-      } catch (error) {
-        console.error("Database operation failed", error);
-        toast({
-          variant: "destructive",
-          title: "Error",
-          description: "Failed to save product to database.",
-        });
-      }
-    },
-    [databaseProducts, productForm, selectedProduct, setDatabaseProducts, toast]
-  );
-
-  const handleEditProduct = useCallback(
-    (product: Product) => {
-      setSelectedProduct(product);
-      productForm.setValue("barcode", product.barcode);
-      productForm.setValue("description", product.description);
-      productForm.setValue("provider", product.provider);
-      productForm.setValue("stock", product.stock);
-      setOpen(true);
-    },
-    [productForm]
-  );
-
-  const handleAddProductToDB = useCallback(() => {
-    setSelectedProduct(null);
-    productForm.reset();
-    setOpen(true);
-  }, [productForm]);
+    }, [setDatabaseProducts, toast]);
 
   const handleDeleteProductFromDB = useCallback(
     async (barcode: string) => {
@@ -504,48 +491,50 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = ({
     }
   }, [setDatabaseProducts, toast]);
 
-    const [editingBarcode, setEditingBarcode] = useState<string | null>(null);
-    const [editedProduct, setEditedProduct] = useState<Product | null>(null);
+      const startEditing = useCallback((product: Product) => {
+          setEditingBarcode(product.barcode);
+          setEditedProduct({ ...product });
+      }, []);
 
-    const startEditing = useCallback((product: Product) => {
-        setEditingBarcode(product.barcode);
-        setEditedProduct({ ...product });
-    }, []);
+      const cancelEditing = useCallback(() => {
+          setEditingBarcode(null);
+          setEditedProduct(null);
+      }, []);
 
-    const cancelEditing = useCallback(() => {
-        setEditingBarcode(null);
-        setEditedProduct(null);
-    }, []);
+      const saveProduct = useCallback(async (barcode: string) => {
+          if (!editedProduct) return;
 
-    const saveProduct = useCallback(async (barcode: string) => {
-        if (!editedProduct) return;
+          try {
+              await updateProductInDB(editedProduct);
+              const updatedProducts = databaseProducts.map(p =>
+                  p.barcode === barcode ? editedProduct : p
+              );
+              setDatabaseProducts(updatedProducts);
+              toast({
+                  title: "Producto actualizado",
+                  description: `Producto con código de barras ${barcode} ha sido actualizado.`,
+              });
+              setEditingBarcode(null);
+              setEditedProduct(null);
+          } catch (error) {
+              console.error("Failed to update product", error);
+              toast({
+                  variant: "destructive",
+                  title: "Error",
+                  description: "Failed to update product in database.",
+              });
+          }
+      }, [databaseProducts, setDatabaseProducts, toast, editedProduct]);
 
-        try {
-            await updateProductInDB(editedProduct);
-            const updatedProducts = databaseProducts.map(p =>
-                p.barcode === barcode ? editedProduct : p
-            );
-            setDatabaseProducts(updatedProducts);
-            toast({
-                title: "Producto actualizado",
-                description: `Producto con código de barras ${barcode} ha sido actualizado.`,
-            });
-            setEditingBarcode(null);
-            setEditedProduct(null);
-        } catch (error) {
-            console.error("Failed to update product", error);
-            toast({
-                variant: "destructive",
-                title: "Error",
-                description: "Failed to update product in database.",
-            });
-        }
-    }, [databaseProducts, setDatabaseProducts, toast, editedProduct]);
+  const handleAddProduct = async (values: ProductValues) => {
+    await handleAddProductToDB(values);
+    reset();
+  };
 
   return (
     <div>
       <div className="flex justify-between mb-4">
-        <Button onClick={handleAddProductToDB}>Agregar Producto</Button>
+        <Button onClick={() => setOpen(true)}>Agregar Producto</Button>
         <div>
           <Button onClick={handleExportDatabase}>
             Exportar Base de Datos <FileDown className="ml-2 h-4 w-4" />
@@ -668,7 +657,7 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = ({
                                         {editingBarcode === product.barcode ? (
                                             <>
                                                 <Button
-                                                    onClick={() => saveProduct(product.barcode)}
+                                                    onClick={() => saveProduct(editedProduct as Product)}
                                                     size="icon"
                                                     variant="outline"
                                                 >
@@ -717,17 +706,13 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = ({
       <Dialog open={open} onOpenChange={setOpen}>
         <DialogContent className="sm:max-w-[425px]">
           <DialogHeader>
-            <DialogTitle>
-              {selectedProduct ? "Editar Producto" : "Agregar Producto"}
-            </DialogTitle>
+            <DialogTitle>Agregar Producto</DialogTitle>
             <DialogDescription>
-              {selectedProduct
-                ? "Edita la información del producto."
-                : "Agrega un nuevo producto a la base de datos."}
+              Agrega un nuevo producto a la base de datos.
             </DialogDescription>
           </DialogHeader>
           <Form {...productForm}>
-            <form onSubmit={handleSubmit(onSubmit)} className="space-y-4">
+            <form onSubmit={handleSubmit(handleAddProduct)} className="space-y-4">
               <FormField
                 control={productForm.control}
                 name="barcode"
@@ -800,7 +785,7 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = ({
               />
               <DialogFooter>
                 <Button type="submit">
-                  {selectedProduct ? "Actualizar" : "Guardar"}
+                    Guardar
                 </Button>
               </DialogFooter>
             </form>
@@ -810,5 +795,3 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = ({
     </div>
   );
 };
-
-

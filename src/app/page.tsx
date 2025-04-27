@@ -129,6 +129,12 @@ export default function Home() {
 
   const totalCount = products.reduce((sum, product) => sum + product.count, 0);
 
+    const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+        if (e.key === 'Enter') {
+            handleAddProduct();
+        }
+    };
+
   return (
     <div className="container mx-auto p-4">
       <h1 className="text-2xl font-bold mb-4 text-center">StockCounter Pro</h1>
@@ -136,14 +142,15 @@ export default function Home() {
       {/* Barcode Input */}
       <div className="flex items-center mb-4">
         <Input
-          type="text"
+          type="number"
           placeholder="Código de barras"
           value={barcode}
           onChange={(e) => setBarcode(e.target.value)}
-          className="mr-2"
+          className="mr-2 bg-violet-100"
           ref={barcodeInputRef} // Attach the ref to the input
+            onKeyDown={handleKeyDown}
         />
-        <Button onClick={handleAddProduct} variant="secondary">Agregar</Button>
+        <Button onClick={handleAddProduct} variant="secondary" style={{ backgroundColor: '#008080', color: 'white' }}>Agregar</Button>
       </div>
 
       {/* Inventory Table */}
@@ -194,3 +201,4 @@ export default function Home() {
     </div>
   );
 }
+

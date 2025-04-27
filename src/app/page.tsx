@@ -66,8 +66,8 @@ export default function Home() {
       };
       setProducts(updatedProducts);
     } else {
-      // If product doesn't exist, add it to the list
-      setProducts([...products, { ...productInfo!, count: 1 }]);
+      // If product doesn't exist, add it to the beginning of the list
+      setProducts([ { ...productInfo!, count: 1 }, ...products]);
     }
 
     setBarcode("");
@@ -133,6 +133,9 @@ export default function Home() {
     }
   };
 
+  const totalCount = products.reduce((acc, product) => acc + product.count, 0);
+
+
   return (
     <div className="container mx-auto p-4">
       <h1 className="text-2xl font-bold mb-4 text-center">StockCounter Pro</h1>
@@ -194,6 +197,7 @@ export default function Home() {
       {/* Count Export */}
       <div className="mt-4 flex justify-between items-center">
         <Button onClick={handleExport}>Exportar</Button>
+        <div>Total de productos: {totalCount}</div>
       </div>
     </div>
   );

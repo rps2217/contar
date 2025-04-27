@@ -215,6 +215,9 @@ const clearDatabaseDB = async (): Promise<void> => {
   });
 };
 
+// Define the worker URL
+const workerURL = new URL('./product-database.worker', import.meta.url);
+
 export const ProductDatabase: React.FC<ProductDatabaseProps> = ({
   databaseProducts,
   setDatabaseProducts,
@@ -226,6 +229,7 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = ({
   const [uploadProgress, setUploadProgress] = useState(0);
   const [isUploading, setIsUploading] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const [worker, setWorker] = useState<Worker | null>(null);
 
   const productForm = useForm<ProductValues>({
     resolver: zodResolver(productSchema),
@@ -240,19 +244,56 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = ({
   const { handleSubmit } = productForm;
 
   useEffect(() => {
-    const loadInitialData = async () => {
-      try {
-        const products = await getAllProductsFromDB();
-        setDatabaseProducts(products);
-      } catch (error) {
-        console.error("Failed to load products from IndexedDB", error);
-        toast({
-          variant: "destructive",
-          title: "Error",
-          description: "Failed to load products from database.",
-        });
-      }
-    };
+     // Create a new worker
+     const newWorker = new Worker(workerURL, { type: 'module' });
+     setWorker(newWorker);
+
+     // Handle messages from the worker
+     newWorker.onmessage = (event) => {
+       if (event.data.type === 'updateProgress') {
+         setUploadProgress(event.data.progress);
+       } else if (event.data.type === 'uploadComplete') {
+         setIsUploading(false);
+         setUploadProgress(100);
+         toast({
+           title: "Productos cargados",
+           description: `${event.data.count} productos han sido cargados desde el archivo.`,
+         });
+         loadInitialData(); // Refresh data after upload
+         if (fileInputRef.current) {
+           fileInputRef.current.value = ""; // Reset file input
+         }
+       } else if (event.data.type === 'error') {
+         setIsUploading(false);
+         toast({
+           variant: "destructive",
+           title: "Error",
+           description: event.data.message || "Failed to process CSV data.",
+         });
+       }
+     };
+
+     // Clean up the worker when the component unmounts
+     return () => {
+       newWorker.terminate();
+     };
+   }, [setDatabaseProducts, toast]);
+
+  const loadInitialData = async () => {
+    try {
+      const products = await getAllProductsFromDB();
+      setDatabaseProducts(products);
+    } catch (error) {
+      console.error("Failed to load products from IndexedDB", error);
+      toast({
+        variant: "destructive",
+        title: "Error",
+        description: "Failed to load products from database.",
+      });
+    }
+  };
+
+  useEffect(() => {
     loadInitialData();
   }, [setDatabaseProducts, toast]);
 
@@ -354,89 +395,36 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = ({
       const reader = new FileReader();
       reader.onload = async (event) => {
         const csvData = event.target?.result as string;
-        const lines = csvData.split("\n");
-        const headers = lines[0].split(",");
-        const totalProducts = lines.length - 1;
-        let uploadedCount = 0;
-
-        // Function to process a chunk of products
-        const processChunk = async (start: number, end: number) => {
-          const chunk = lines.slice(start, end);
-          const parsedProducts = parseCSV(chunk.join("\n"));
-
-          try {
-            await addProductsToDB(parsedProducts);
-
-            setDatabaseProducts((prevProducts) => {
-              const updatedProducts = [...prevProducts, ...parsedProducts];
-              return updatedProducts;
+          if (worker) {
+            worker.postMessage({
+              type: 'processCSV',
+              csvData,
+              dbName: DATABASE_NAME,
+              objectStoreName: OBJECT_STORE_NAME,
             });
-            uploadedCount += parsedProducts.length;
-            setUploadProgress(
-              Math.min(
-                100,
-                Math.round((uploadedCount / totalProducts) * 100)
-              )
-            ); // Ensure progress doesn't exceed 100
-          } catch (error) {
-            console.error("Failed to add chunk to database", error);
+          } else {
+            console.error("Worker not initialized.");
             toast({
               variant: "destructive",
               title: "Error",
-              description: "Failed to add chunk to database.",
+              description: "Worker initialization failed.",
             });
+            setIsUploading(false);
           }
-        };
-
-        // Process chunks sequentially
-        for (let i = 1; i < lines.length; i += CHUNK_SIZE) {
-          const start = i;
-          const end = Math.min(i + CHUNK_SIZE, lines.length);
-          await processChunk(start, end);
-        }
-
+      };
+      reader.onerror = () => {
         setIsUploading(false);
-        setUploadProgress(100); // Ensure progress is 100 when finished
         toast({
-          title: "Productos cargados",
-          description: `${uploadedCount} productos han sido cargados desde el archivo.`,
+          variant: "destructive",
+          title: "Error",
+          description: "Error reading the file.",
         });
-        if (fileInputRef.current) {
-          fileInputRef.current.value = ""; // Reset file input
-        }
       };
       reader.readAsText(file);
     },
-    [setDatabaseProducts, toast]
+    [setDatabaseProducts, toast, worker]
   );
 
-  const parseCSV = useCallback((csvData: string): Product[] => {
-    const lines = csvData.split("\n");
-    const headers = lines[0].split(",");
-    const products: Product[] = [];
-
-    for (let i = 1; i < lines.length; i++) {
-      const data = lines[i].split(",");
-      if (data.length === headers.length) {
-        const barcode = data[0] || "";
-        const description = data[1] || "";
-        const provider = data[2] || "";
-        const stockValue = parseInt(data[3]);
-        const stock = isNaN(stockValue) ? 0 : stockValue;
-
-        const product: Product = {
-          barcode,
-          description,
-          provider,
-          stock,
-          count: 0,
-        };
-        products.push(product);
-      }
-    }
-
-    return products;
-  }, []);
 
   const handleExportDatabase = useCallback(() => {
     const csvData = convertToCSV(databaseProducts);

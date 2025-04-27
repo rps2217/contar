@@ -323,6 +323,7 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = ({
         title: "Producto actualizado",
         description: `Producto con código de barras ${product.barcode} ha sido actualizado.`,
       });
+      setOpen(false);
     } catch (error) {
       console.error("Failed to update product", error);
       toast({
@@ -730,6 +731,13 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = ({
                 <Button type="submit">
                   {selectedProduct ? "Guardar cambios" : "Guardar"}
                 </Button>
+               {selectedProduct && (
+                  <Button variant="destructive" onClick={() => {
+                      setOpenAlert(true)
+                  }}>
+                    Eliminar
+                  </Button>
+                )}
               </DialogFooter>
             </form>
           </Form>

@@ -253,7 +253,41 @@ const parseCSV = (csvData: string): Product[] => {
 
   return products;
 };
+async function fetchGoogleSheetData(sheetUrl: string): Promise<Product[]> {
+    // Extract the spreadsheet ID and sheet name from the URL
+    const urlParts = sheetUrl.split('/');
+    const spreadsheetId = urlParts[5];
+    const sheetName = urlParts[urlParts.length - 1].split('=')[1];
 
+    // Build the Google Sheets API URL
+    const apiUrl = `https://docs.google.com/spreadsheets/d/${spreadsheetId}/gviz/tq?tqx=out:json&sheet=${sheetName}`;
+
+    try {
+        const response = await fetch(apiUrl);
+        const text = await response.text();
+
+        // Extract the JSON data from the response
+        const jsonString = text.substring(text.indexOf('(') + 1, text.lastIndexOf(')'));
+        const data = JSON.parse(jsonString);
+
+        // Process the data to convert it into the desired format
+        const products: Product[] = data.table.rows.map((row: any) => {
+            const [barcode, description, provider, stock] = row.c.map((cell: any) => cell?.v);
+            return {
+                barcode: barcode?.toString() || '',
+                description: description?.toString() || '',
+                provider: provider?.toString() || '',
+                stock: parseInt(stock?.toString() || '0', 10) || 0,
+                count: 0,
+            };
+        });
+
+        return products;
+    } catch (error: any) {
+        console.error("Error fetching Google Sheet data", error);
+        throw new Error(`Failed to fetch data from Google Sheets: ${error.message}`);
+    }
+}
 export const ProductDatabase: React.FC<ProductDatabaseProps> = ({
   databaseProducts,
   setDatabaseProducts,
@@ -269,6 +303,8 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = ({
   const [totalProducts, setTotalProducts] = useState(0);
   const [productsLoaded, setProductsLoaded] = useState(0);
   const isMobile = useIsMobile();
+    const [googleSheetUrl, setGoogleSheetUrl] = useState("");
+
 
   const productForm = useForm<ProductValues>({
     resolver: zodResolver(productSchema),
@@ -366,93 +402,50 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = ({
     [databaseProducts, setDatabaseProducts, toast]
   );
 
-  const handleFileUpload = useCallback(
-    async (e: React.ChangeEvent<HTMLInputElement>) => {
-      const file = e.target.files?.[0];
-      if (!file) {
-        toast({
-          variant: "destructive",
-          title: "Error",
-          description: "Por favor, selecciona un archivo.",
-        });
-        return;
-      }
+    const handleLoadFromGoogleSheet = useCallback(async () => {
+        setIsUploading(true);
+        setUploadProgress(0);
+        setUploadComplete(false);
+        setProductsLoaded(0);
 
-      setIsUploading(true);
-      setUploadProgress(0);
-      setUploadComplete(false);
-      setProductsLoaded(0);
+        try {
+            const products = await fetchGoogleSheetData(googleSheetUrl);
+            setTotalProducts(products.length);
 
-      const reader = new FileReader();
-      reader.onload = async (event) => {
-        const csvData = event.target?.result as string;
-        const lines = csvData.split('\n');
-        setTotalProducts(lines.length - 1); // Exclude headers
-
-        let processedCount = 0;
-        let productsToLoad: Product[] = [];
-        for (let i = 1; i < lines.length; i++) {
-          const data = lines[i].split(',');
-          if (data.length === 4) {
-            const barcode = data[0] || "";
-            const description = data[1] || "";
-            const provider = data[2] || "";
-            const stockValue = parseInt(data[3]);
-            const stock = isNaN(stockValue) ? 0 : stockValue;
-
-            const product: Product = {
-              barcode,
-              description,
-              provider,
-              stock,
-              count: 0,
-            };
-            productsToLoad.push(product);
-            processedCount++;
-
-            if (processedCount % CHUNK_SIZE === 0 || i === lines.length - 1) {
-              try {
-                await addProductsToDB(productsToLoad);
-                setProductsLoaded((prev) => prev + productsToLoad.length);
-                setUploadProgress(Math.round((i / (lines.length - 1)) * 100));
-                productsToLoad = [];
-                await new Promise(resolve => setTimeout(resolve, 0)); // Yield to the event loop
-              } catch (error: any) {
-                console.error("Error adding product to IndexedDB", error);
-                toast({
-                  variant: "destructive",
-                  title: "Error",
-                  description: `Failed to add product to database: ${barcode}`,
-                });
-                break; // Stop processing on error
-              }
+            for (let i = 0; i < products.length; i++) {
+                try {
+                    await addProductsToDB([products[i]]);
+                    setProductsLoaded((prev) => prev + 1);
+                    setUploadProgress(Math.round(((i + 1) / products.length) * 100));
+                    await new Promise(resolve => setTimeout(resolve, 0)); // Yield to the event loop
+                } catch (error: any) {
+                    console.error("Error adding product to IndexedDB", error);
+                    toast({
+                        variant: "destructive",
+                        title: "Error",
+                        description: `Failed to add product to database: ${products[i].barcode}`,
+                    });
+                    break; // Stop processing on error
+                }
             }
-          }
+
+            setIsUploading(false);
+            setUploadProgress(100);
+            setUploadComplete(true);
+            loadInitialData(); // Refresh data after upload
+            toast({
+                title: "Productos cargados",
+                description: `Se han cargado ${products.length} productos desde la hoja de cálculo.`,
+            });
+        } catch (error: any) {
+            setIsUploading(false);
+            toast({
+                variant: "destructive",
+                title: "Error",
+                description: `Error loading data from Google Sheets: ${error.message}`,
+            });
         }
-        setIsUploading(false);
-        setUploadProgress(100);
-        setUploadComplete(true);
-        loadInitialData(); // Refresh data after upload
-        toast({
-          title: "Productos cargados",
-          description: `Se han cargado ${processedCount} productos desde el archivo.`,
-        });
-        if (fileInputRef.current) {
-          fileInputRef.current.value = ""; // Reset file input
-        }
-      };
-      reader.onerror = () => {
-        setIsUploading(false);
-        toast({
-          variant: "destructive",
-          title: "Error",
-          description: "Error reading the file.",
-        });
-      };
-      reader.readAsText(file);
-    },
-    [setDatabaseProducts, toast]
-  );
+    }, [setDatabaseProducts, toast, googleSheetUrl]);
 
 
   const handleExportDatabase = useCallback(() => {
@@ -563,23 +556,21 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = ({
       </div>
 
       <div className="flex items-center mb-4">
-        <Label htmlFor="file-upload" className="mr-2">
-          Cargar desde CSV:
+        <Label htmlFor="google-sheet-url" className="mr-2">
+          Cargar desde Google Sheet:
         </Label>
         <Input
-          id="file-upload"
-          type="file"
-          accept=".csv"
-          onChange={handleFileUpload}
-          className="hidden"
-          ref={fileInputRef}
+          id="google-sheet-url"
+          type="text"
+          placeholder="URL de la hoja de Google"
+          value={googleSheetUrl}
+          onChange={(e) => setGoogleSheetUrl(e.target.value)}
+          className="mr-2"
           disabled={isUploading}
         />
-        <Button asChild variant="secondary" disabled={isUploading}>
-          <label htmlFor="file-upload" className="flex items-center">
+        <Button variant="secondary" disabled={isUploading} onClick={handleLoadFromGoogleSheet}>
             <Upload className="mr-2 h-4 w-4" />
-            Subir Archivo
-          </label>
+            Cargar
         </Button>
       </div>
       {isUploading && (

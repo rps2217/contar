@@ -59,7 +59,8 @@ export default function Home() {
   const [databaseProducts, setDatabaseProducts] = useState<Product[]>(initialProducts);
   const { toast } = useToast();
   const barcodeInputRef = useRef<HTMLInputElement>(null);
-  const [open, setOpen] = useState(false);
+  const [openQuantity, setOpenQuantity] = useState(false);
+    const [openStock, setOpenStock] = useState(false);
   const [selectedProductBarcode, setSelectedProductBarcode] = useState<string | null>(null);
   const [editingStockBarcode, setEditingStockBarcode] = useState<string | null>(null);
   const [newStockValue, setNewStockValue] = useState<string>("");
@@ -126,24 +127,34 @@ export default function Home() {
     });
   }, [barcode, databaseProducts, products, toast]);
 
-  const handleIncrement = useCallback((barcode: string) => {
-    setProducts(prevProducts =>
-      prevProducts.map(product =>
-        product.barcode === barcode
-          ? { ...product, count: product.count + 1 }
-          : product
-      )
-    );
+  const handleIncrement = useCallback((barcode: string, type: 'count' | 'stock') => {
+      setProducts(prevProducts =>
+          prevProducts.map(product => {
+              if (product.barcode === barcode) {
+                  if (type === 'count') {
+                      return { ...product, count: product.count + 1 };
+                  } else if (type === 'stock') {
+                      return { ...product, stock: product.stock + 1 };
+                  }
+              }
+              return product;
+          })
+      );
   }, []);
 
-  const handleDecrement = useCallback((barcode: string) => {
-    setProducts(prevProducts =>
-      prevProducts.map(product =>
-        product.barcode === barcode && product.count > 0
-          ? { ...product, count: product.count - 1 }
-          : product
-      )
-    );
+  const handleDecrement = useCallback((barcode: string, type: 'count' | 'stock') => {
+      setProducts(prevProducts =>
+          prevProducts.map(product => {
+              if (product.barcode === barcode) {
+                  if (type === 'count' && product.count > 0) {
+                      return { ...product, count: product.count - 1 };
+                  } else if (type === 'stock' && product.stock > 0) {
+                      return { ...product, stock: product.stock - 1 };
+                  }
+              }
+              return product;
+          })
+      );
   }, []);
 
   const handleDelete = useCallback((barcode: string) => {
@@ -181,34 +192,47 @@ export default function Home() {
     }
   };
 
-  const handleOpenQuantityDialog = useCallback((barcode: string) => {
-    setSelectedProductBarcode(barcode);
-    setOpen(true);
-  }, []);
+    const handleOpenQuantityDialog = useCallback((barcode: string) => {
+        setSelectedProductBarcode(barcode);
+        setOpenQuantity(true);
+    }, []);
 
-  const handleQuantityChange = useCallback((barcode: string, newCount: number) => {
-    setProducts(prevProducts =>
-      prevProducts.map(product =>
-        product.barcode === barcode ? { ...product, count: newCount } : product
-      )
-    );
-  }, []);
+    const handleOpenStockDialog = useCallback((barcode: string) => {
+        setSelectedProductBarcode(barcode);
+        setOpenStock(true);
+    }, []);
 
-  const getProductByBarcode = useCallback((barcode: string) => {
-    return products.find((product) => product.barcode === barcode);
-  }, [products]);
+    const handleQuantityChange = useCallback((barcode: string, newCount: number) => {
+        setProducts(prevProducts =>
+            prevProducts.map(product =>
+                product.barcode === barcode ? { ...product, count: newCount } : product
+            )
+        );
+    }, []);
 
-  const handleStockChange = useCallback((barcode: string, newStock: number) => {
-    setProducts(prevProducts =>
-      prevProducts.map(product =>
-        product.barcode === barcode ? { ...product, stock: newStock } : product
-      )
-    );
-  }, []);
+    const handleStockChange = useCallback((barcode: string, newStock: number) => {
+        setProducts(prevProducts =>
+            prevProducts.map(product =>
+                product.barcode === barcode ? { ...product, stock: newStock } : product
+            )
+        );
+    }, []);
+
+    const getProductByBarcode = useCallback((barcode: string) => {
+        return products.find((product) => product.barcode === barcode);
+    }, [products]);
+
+    const handleCloseQuantityDialog = () => {
+        setOpenQuantity(false);
+    };
+
+    const handleCloseStockDialog = () => {
+        setOpenStock(false);
+    };
 
   const handleStartEditingStock = (barcode: string) => {
     setSelectedProductBarcode(barcode);
-    setOpen(true)
+    setOpenStock(true)
   };
 
   const handleCancelEditingStock = () => {
@@ -242,7 +266,7 @@ export default function Home() {
   };
 
     const renderQuantityDialog = () => (
-        <Dialog open={open} onOpenChange={setOpen}>
+        <Dialog open={openQuantity} onOpenChange={setOpenQuantity}>
             <DialogContent className="sm:max-w-[425px] bg-white text-black border-red-500">
                 <DialogHeader>
                     <DialogTitle>
@@ -289,7 +313,7 @@ export default function Home() {
                             }}
                             onClick={() => {
                                 if (selectedProductBarcode) {
-                                    handleDecrement(selectedProductBarcode);
+                                    handleDecrement(selectedProductBarcode, 'count');
                                 }
                             }}
                         >
@@ -313,7 +337,7 @@ export default function Home() {
                             }}
                             onClick={() => {
                                 if (selectedProductBarcode) {
-                                    handleIncrement(selectedProductBarcode);
+                                    handleIncrement(selectedProductBarcode, 'count');
                                 }
                             }}
                         >
@@ -323,7 +347,7 @@ export default function Home() {
                 </div>
                 <DialogFooter>
                     <DialogClose asChild>
-                        <Button type="button" variant="secondary" style={{ backgroundColor: 'white', color: 'black' }}>
+                        <Button type="button" variant="secondary" style={{ backgroundColor: 'white', color: 'black' }} onClick={handleCloseQuantityDialog}>
                             Cerrar
                         </Button>
                     </DialogClose>
@@ -333,7 +357,7 @@ export default function Home() {
     );
 
     const renderStockDialog = () => (
-        <Dialog open={open} onOpenChange={setOpen}>
+        <Dialog open={openStock} onOpenChange={setOpenStock}>
             <DialogContent className="sm:max-w-[425px] bg-white text-black border-red-500">
                 <DialogHeader>
                     <DialogTitle>
@@ -381,7 +405,7 @@ export default function Home() {
                             }}
                             onClick={() => {
                                 if (selectedProductBarcode) {
-                                    handleDecrement(selectedProductBarcode);
+                                    handleDecrement(selectedProductBarcode, 'stock');
                                 }
                             }}
                         >
@@ -405,7 +429,7 @@ export default function Home() {
                             }}
                             onClick={() => {
                                 if (selectedProductBarcode) {
-                                    handleIncrement(selectedProductBarcode);
+                                    handleIncrement(selectedProductBarcode, 'stock');
                                 }
                             }}
                         >
@@ -415,7 +439,7 @@ export default function Home() {
                 </div>
                 <DialogFooter>
                     <DialogClose asChild>
-                        <Button type="button" variant="secondary" style={{ backgroundColor: 'white', color: 'black' }}>
+                        <Button type="button" variant="secondary" style={{ backgroundColor: 'white', color: 'black' }} onClick={handleCloseStockDialog}>
                             Cerrar
                         </Button>
                     </DialogClose>
@@ -480,15 +504,11 @@ export default function Home() {
                     <TableCell className="hidden sm:table-cell">
                       {product.provider}
                     </TableCell>
-                      <TableCell>
-                           
-                                  <span
-                                      className="cursor-pointer"
-                                      onClick={() => handleStartEditingStock(product.barcode)}
-                                  >
-                                      {product.stock}
-                                  </span>
-                         
+                      <TableCell
+                                  className="cursor-pointer"
+                                  onClick={() => handleOpenStockDialog(product.barcode)}
+                              >
+                                  {product.stock}
                       </TableCell>
                     <TableCell
                       className="text-right cursor-pointer"
@@ -498,14 +518,14 @@ export default function Home() {
                     </TableCell>
                     <TableCell className="text-center sm:table-cell hidden">
                       <Button
-                        onClick={() => handleDecrement(product.barcode)}
+                        onClick={() => handleDecrement(product.barcode, 'count')}
                         size="icon"
                         variant="outline"
                       >
                         <Minus className="h-4 w-4" />
                       </Button>
                       <Button
-                        onClick={() => handleIncrement(product.barcode)}
+                        onClick={() => handleIncrement(product.barcode, 'count')}
                         size="icon"
                         variant="outline"
                       >
@@ -549,4 +569,5 @@ export default function Home() {
     </div>
   );
 }
+
 

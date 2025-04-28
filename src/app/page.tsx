@@ -27,6 +27,7 @@ import {
   DialogFooter,
   DialogClose,
 } from "@/components/ui/dialog";
+import { format } from 'date-fns';
 
 interface Product {
   barcode: string;
@@ -34,6 +35,7 @@ interface Product {
   provider: string;
   stock: number;
   count: number;
+  lastUpdated?: string; // Add lastUpdated property
 }
 
 const initialProducts: Product[] = [
@@ -43,6 +45,7 @@ const initialProducts: Product[] = [
     provider: "Genfar",
     stock: 100,
     count: 0,
+    lastUpdated: '',
   },
   {
     barcode: "67890",
@@ -50,6 +53,7 @@ const initialProducts: Product[] = [
     provider: "MK",
     stock: 50,
     count: 0,
+    lastUpdated: '',
   },
 ];
 
@@ -95,6 +99,7 @@ export default function Home() {
         provider: "Desconocido",
         stock: 0,
         count: 0,
+        lastUpdated: '',
       };
       setDatabaseProducts(prevProducts => [...prevProducts, productInfo!]);
       toast({
@@ -110,11 +115,12 @@ export default function Home() {
       updatedProducts[existingProductIndex] = {
         ...updatedProducts[existingProductIndex],
         count: updatedProducts[existingProductIndex].count + 1,
+        lastUpdated: format(new Date(), 'yyyy-MM-dd HH:mm:ss'),
       };
       setProducts([updatedProducts[existingProductIndex], ...products.slice(0, existingProductIndex), ...products.slice(existingProductIndex + 1)]);
 
     } else {
-      setProducts([{ ...productInfo!, count: 1 }, ...products]);
+      setProducts([{ ...productInfo!, count: 1, lastUpdated: format(new Date(), 'yyyy-MM-dd HH:mm:ss') }, ...products]);
     }
 
     setBarcode("");
@@ -132,9 +138,9 @@ export default function Home() {
           prevProducts.map(product => {
               if (product.barcode === barcode) {
                   if (type === 'count') {
-                      return { ...product, count: product.count + 1 };
+                      return { ...product, count: product.count + 1,  lastUpdated: format(new Date(), 'yyyy-MM-dd HH:mm:ss') };
                   } else if (type === 'stock') {
-                      return { ...product, stock: product.stock + 1 };
+                      return { ...product, stock: product.stock + 1, lastUpdated: format(new Date(), 'yyyy-MM-dd HH:mm:ss') };
                   }
               }
               return product;
@@ -147,9 +153,9 @@ export default function Home() {
           prevProducts.map(product => {
               if (product.barcode === barcode) {
                   if (type === 'count' && product.count > 0) {
-                      return { ...product, count: product.count - 1 };
+                      return { ...product, count: product.count - 1, lastUpdated: format(new Date(), 'yyyy-MM-dd HH:mm:ss') };
                   } else if (type === 'stock' && product.stock > 0) {
-                      return { ...product, stock: product.stock - 1 };
+                      return { ...product, stock: product.stock - 1, lastUpdated: format(new Date(), 'yyyy-MM-dd HH:mm:ss') };
                   }
               }
               return product;
@@ -173,13 +179,14 @@ export default function Home() {
   }, [products]);
 
   const convertToCSV = (data: Product[]) => {
-    const headers = ["Barcode", "Description", "Provider", "Stock", "Count"];
+    const headers = ["Barcode", "Description", "Provider", "Stock", "Count", "Last Updated"];
     const rows = data.map((product) => [
       product.barcode,
       product.description,
       product.provider,
       product.stock,
       product.count,
+      product.lastUpdated,
     ]);
 
     const csv = headers.join(",") + "\n" + rows.map((row) => row.join(",")).join("\n");
@@ -205,7 +212,7 @@ export default function Home() {
     const handleQuantityChange = useCallback((barcode: string, newCount: number) => {
         setProducts(prevProducts =>
             prevProducts.map(product =>
-                product.barcode === barcode ? { ...product, count: newCount } : product
+                product.barcode === barcode ? { ...product, count: newCount,  lastUpdated: format(new Date(), 'yyyy-MM-dd HH:mm:ss') } : product
             )
         );
     }, []);
@@ -213,7 +220,7 @@ export default function Home() {
     const handleStockChange = useCallback((barcode: string, newStock: number) => {
         setProducts(prevProducts =>
             prevProducts.map(product =>
-                product.barcode === barcode ? { ...product, stock: newStock } : product
+                product.barcode === barcode ? { ...product, stock: newStock, lastUpdated: format(new Date(), 'yyyy-MM-dd HH:mm:ss') } : product
             )
         );
     }, []);
@@ -489,6 +496,7 @@ export default function Home() {
                   </TableHead>
                   <TableHead>Stock</TableHead>
                   <TableHead className="text-right">Cantidad</TableHead>
+                      <TableHead className="hidden sm:table-cell">Última Actualización</TableHead>
                   <TableHead className="text-center sm:table-cell hidden">Acciones</TableHead>
                 </TableRow>
               </TableHeader>
@@ -516,6 +524,7 @@ export default function Home() {
                     >
                       {product.count}
                     </TableCell>
+                      <TableCell className="hidden sm:table-cell">{product.lastUpdated}</TableCell>
                     <TableCell className="text-center sm:table-cell hidden">
                       <Button
                         onClick={() => handleDecrement(product.barcode, 'count')}

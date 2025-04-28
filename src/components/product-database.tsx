@@ -81,7 +81,6 @@ interface ProductDatabaseProps {
   setDatabaseProducts: (products: Product[]) => void;
 }
 
-const CHUNK_SIZE = 200;
 const DATABASE_NAME = "stockCounterDB";
 const OBJECT_STORE_NAME = "products";
 const DATABASE_VERSION = 1;
@@ -226,34 +225,15 @@ const clearDatabaseDB = async (): Promise<void> => {
     });
 };
 
-const parseCSV = (csvData: string): Product[] => {
-  const lines = csvData.split("\n");
-  const headers = lines[0].split(",");
-  const products: Product[] = [];
-
-  for (let i = 1; i < lines.length; i++) {
-    const data = lines[i].split(",");
-    if (data.length === 4) {
-      const barcode = data[0] || "";
-      const description = data[1] || "";
-      const provider = data[2] || "";
-      const stockValue = parseInt(data[3]);
-      const stock = isNaN(stockValue) ? 0 : stockValue;
-
-      const product: Product = {
-        barcode,
-        description,
-        provider,
-        stock,
-        count: 0,
-      };
-      products.push(product);
-    }
-  }
-
-  return products;
-};
 async function fetchGoogleSheetData(sheetUrl: string): Promise<Product[]> {
+    // Check if the URL is valid
+    try {
+        new URL(sheetUrl);
+    } catch (error) {
+        console.error("Invalid Google Sheet URL", error);
+        throw new Error("Invalid Google Sheet URL");
+    }
+
     // Extract the spreadsheet ID and sheet name from the URL
     const urlParts = sheetUrl.split('/');
     const spreadsheetId = urlParts[5];
@@ -263,7 +243,14 @@ async function fetchGoogleSheetData(sheetUrl: string): Promise<Product[]> {
     const apiUrl = `https://docs.google.com/spreadsheets/d/${spreadsheetId}/gviz/tq?tqx=out:json&sheet=${sheetName}`;
 
     try {
-        const response = await fetch(apiUrl);
+        const response = await fetch(apiUrl, {
+            mode: 'cors', // Enable CORS
+        });
+
+        if (!response.ok) {
+            throw new Error(`Failed to fetch data from Google Sheets: ${response.status} ${response.statusText}`);
+        }
+
         const text = await response.text();
 
         // Extract the JSON data from the response
@@ -288,6 +275,7 @@ async function fetchGoogleSheetData(sheetUrl: string): Promise<Product[]> {
         throw new Error(`Failed to fetch data from Google Sheets: ${error.message}`);
     }
 }
+
 export const ProductDatabase: React.FC<ProductDatabaseProps> = ({
   databaseProducts,
   setDatabaseProducts,
@@ -760,3 +748,4 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = ({
     </div>
   );
 };
+

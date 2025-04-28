@@ -369,18 +369,47 @@ export default function Home() {
                 </DialogHeader>
                 <div className="grid gap-4 py-4">
                     <div className="flex justify-between items-center">
-                        <Input
-                            type="number"
-                            value={newStockValue}
-                            onChange={(e) => setNewStockValue(e.target.value)}
-                            className="w-20 text-right"
-                        />
-                        <Button
-                            onClick={() => handleSaveStock(selectedProductBarcode!)}
-                            size="sm"
-                            className="ml-2"
+
+                          <Button
+                            size="lg"
+                            style={{
+                                padding: '20px',
+                                borderRadius: '10px',
+                                backgroundColor: '#6B7280', // Gray-500
+                                color: 'white',
+                                fontSize: '1.5rem'
+                            }}
+                            onClick={() => {
+                                if (selectedProductBarcode) {
+                                    handleDecrement(selectedProductBarcode);
+                                }
+                            }}
                         >
-                            Guardar
+                            <Minus className="h-8 w-8" />
+                        </Button>
+
+                        {selectedProductBarcode && (
+                            <div className="text-4xl font-bold mx-4">
+                                {getProductByBarcode(selectedProductBarcode)?.stock}
+                            </div>
+                        )}
+
+                        <Button
+                            size="lg"
+                            style={{
+                                padding: '20px',
+                                borderRadius: '10px',
+                                backgroundColor: '#6B7280', // Gray-500
+                                color: 'white',
+                                fontSize: '1.5rem'
+                            }}
+                            onClick={() => {
+                                if (selectedProductBarcode) {
+                                    handleIncrement(selectedProductBarcode);
+                                }
+                            }}
+                        >
+                            <Plus className="h-8 w-8" />
                         </Button>
                     </div>
                 </div>
@@ -520,3 +549,4 @@ export default function Home() {
     </div>
   );
 }
+

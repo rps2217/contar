@@ -83,6 +83,7 @@ export default function Home() {
       return;
     }
 
+    //let productInfo = databaseProducts.find((p) => p.barcode === barcode);
     let productInfo = databaseProducts.find((p) => p.barcode === barcode);
 
     if (!productInfo) {
@@ -94,9 +95,10 @@ export default function Home() {
         stock: 0,
         count: 0,
       };
+      setDatabaseProducts(prevProducts => [...prevProducts, productInfo!]);
       toast({
         title: "Producto no encontrado",
-        description: `Producto con código de barras ${barcode} no encontrado. Se ha creado un nuevo producto.`,
+        description: `Producto con código de barras ${barcode} no encontrado. Se ha creado un nuevo producto en la base de datos.`,
       });
     }
 
@@ -518,5 +520,3 @@ export default function Home() {
     </div>
   );
 }
-
-

@@ -465,7 +465,7 @@ export default function Home() {
               placeholder="Código de barras"
               value={barcode}
               onChange={(e) => setBarcode(e.target.value)}
-              className="mr-2 bg-violet-100"
+              className="mr-2 bg-yellow-50"
               ref={barcodeInputRef}
               onKeyDown={handleKeyDown}
             />

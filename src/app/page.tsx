@@ -239,6 +239,161 @@ export default function Home() {
       }
   };
 
+    const renderQuantityDialog = () => (
+        <Dialog open={open} onOpenChange={setOpen}>
+            <DialogContent className="sm:max-w-[425px] bg-gray-700 text-white border-red-500">
+                <DialogHeader>
+                    <DialogTitle>
+                        <span style={{
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            gap: '10px',
+                            color: 'white'
+                        }}>
+                            <svg
+                                xmlns="http://www.w3.org/2000/svg"
+                                width="24"
+                                height="24"
+                                viewBox="0 0 24 24"
+                                fill="none"
+                                stroke="currentColor"
+                                strokeWidth="2"
+                                strokeLinecap="round"
+                                strokeLinejoin="round"
+                                className="lucide lucide-package"
+                                style={{ color: 'white' }}
+                            >
+                                <rect width="18" height="18" x="3" y="3" rx="2" ry="2" />
+                                <path d="m12 18-6-4.76M12 18l6-4.76M12 18V7.76" />
+                            </svg>
+                            Quantity
+                        </span>
+                    </DialogTitle>
+                    <DialogDescription style={{ color: 'white' }}>
+                        Ajuste la cantidad manualmente.
+                    </DialogDescription>
+                </DialogHeader>
+                <div className="grid gap-4 py-4">
+                    <div className="flex justify-between items-center">
+                        <Button
+                            size="lg"
+                            style={{
+                                padding: '20px',
+                                borderRadius: '10px',
+                                backgroundColor: '#6B7280', // Gray-500
+                                color: 'white',
+                                fontSize: '1.5rem'
+                            }}
+                            onClick={() => {
+                                if (selectedProductBarcode) {
+                                    handleDecrement(selectedProductBarcode);
+                                }
+                            }}
+                        >
+                            <Minus className="h-8 w-8" />
+                        </Button>
+
+                        {selectedProductBarcode && (
+                            <div className="text-4xl font-bold mx-4">
+                                {getProductByBarcode(selectedProductBarcode)?.count}
+                            </div>
+                        )}
+
+                        <Button
+                            size="lg"
+                            style={{
+                                padding: '20px',
+                                borderRadius: '10px',
+                                backgroundColor: '#6B7280', // Gray-500
+                                color: 'white',
+                                fontSize: '1.5rem'
+                            }}
+                            onClick={() => {
+                                if (selectedProductBarcode) {
+                                    handleIncrement(selectedProductBarcode);
+                                }
+                            }}
+                        >
+                            <Plus className="h-8 w-8" />
+                        </Button>
+                    </div>
+                </div>
+                <DialogFooter>
+                    <DialogClose asChild>
+                        <Button type="button" variant="secondary" style={{ backgroundColor: 'white', color: 'black' }}>
+                            Cerrar
+                        </Button>
+                    </DialogClose>
+                </DialogFooter>
+            </DialogContent>
+        </Dialog>
+    );
+
+    const renderStockDialog = () => (
+        <Dialog open={open} onOpenChange={setOpen}>
+            <DialogContent className="sm:max-w-[425px] bg-gray-700 text-white border-red-500">
+                <DialogHeader>
+                    <DialogTitle>
+                        <span style={{
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            gap: '10px',
+                            color: 'white'
+                        }}>
+                            <svg
+                                xmlns="http://www.w3.org/2000/svg"
+                                width="24"
+                                height="24"
+                                viewBox="0 0 24 24"
+                                fill="none"
+                                stroke="currentColor"
+                                strokeWidth="2"
+                                strokeLinecap="round"
+                                strokeLinejoin="round"
+                                className="lucide lucide-package"
+                                style={{ color: 'white' }}
+                            >
+                                <rect width="18" height="18" x="3" y="3" rx="2" ry="2" />
+                                <path d="m12 18-6-4.76M12 18l6-4.76M12 18V7.76" />
+                            </svg>
+                            Ajustar Stock
+                        </span>
+                    </DialogTitle>
+                    <DialogDescription style={{ color: 'white' }}>
+                        Ajuste el stock manualmente.
+                    </DialogDescription>
+                </DialogHeader>
+                <div className="grid gap-4 py-4">
+                    <div className="flex justify-between items-center">
+                        <Input
+                            type="number"
+                            value={newStockValue}
+                            onChange={(e) => setNewStockValue(e.target.value)}
+                            className="w-20 text-right"
+                        />
+                        <Button
+                            onClick={() => handleSaveStock(selectedProductBarcode!)}
+                            size="sm"
+                            className="ml-2"
+                        >
+                            Guardar
+                        </Button>
+                    </div>
+                </div>
+                <DialogFooter>
+                    <DialogClose asChild>
+                        <Button type="button" variant="secondary" style={{ backgroundColor: 'white', color: 'black' }}>
+                            Cerrar
+                        </Button>
+                    </DialogClose>
+                </DialogFooter>
+            </DialogContent>
+        </Dialog>
+    );
+
+
   return (
     <div className="container mx-auto p-4">
       <h1 className="text-2xl font-bold mb-4 text-center">StockCounter Pro</h1>
@@ -358,88 +513,9 @@ export default function Home() {
         </TabsContent>
       </Tabs>
 
-      <Dialog open={open} onOpenChange={setOpen}>
-        <DialogContent className="sm:max-w-[425px]">
-          <DialogHeader>
-            <DialogTitle>Ajustar Cantidad</DialogTitle>
-            <DialogDescription>
-              Ajuste la cantidad manualmente.
-            </DialogDescription>
-          </DialogHeader>
-          <div className="grid gap-4 py-4">
-            <div className="flex justify-between items-center">
-              <Button
-                size="lg"
-                onClick={() => {
-                  if (selectedProductBarcode) {
-                    handleDecrement(selectedProductBarcode);
-                  }
-                }}
-              >
-                <Minus className="h-8 w-8" />
-              </Button>
-
-              {selectedProductBarcode && (
-                <div className="text-4xl font-bold mx-4">
-                  {getProductByBarcode(selectedProductBarcode)?.count}
-                </div>
-              )}
-
-              <Button
-                size="lg"
-                onClick={() => {
-                  if (selectedProductBarcode) {
-                    handleIncrement(selectedProductBarcode);
-                  }
-                }}
-              >
-                <Plus className="h-8 w-8" />
-              </Button>
-            </div>
-          </div>
-          <DialogFooter>
-            <DialogClose asChild>
-              <Button type="button" variant="secondary">
-                Cerrar
-              </Button>
-            </DialogClose>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-       <Dialog open={open} onOpenChange={setOpen}>
-          <DialogContent className="sm:max-w-[425px]">
-            <DialogHeader>
-              <DialogTitle>Ajustar Stock</DialogTitle>
-              <DialogDescription>
-                Ajuste el stock manualmente.
-              </DialogDescription>
-            </DialogHeader>
-            <div className="grid gap-4 py-4">
-              <div className="flex justify-between items-center">
-                  <Input
-                      type="number"
-                      value={newStockValue}
-                      onChange={(e) => setNewStockValue(e.target.value)}
-                      className="w-20 text-right"
-                  />
-                  <Button
-                      onClick={() => handleSaveStock(selectedProductBarcode!)}
-                      size="sm"
-                      className="ml-2"
-                  >
-                      Guardar
-                  </Button>
-                </div>
-            </div>
-            <DialogFooter>
-              <DialogClose asChild>
-                <Button type="button" variant="secondary">
-                  Cerrar
-                </Button>
-              </DialogClose>
-            </DialogFooter>
-          </DialogContent>
-        </Dialog>
+            {renderQuantityDialog()}
+            {renderStockDialog()}
     </div>
   );
 }
+

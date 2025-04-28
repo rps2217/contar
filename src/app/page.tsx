@@ -241,7 +241,7 @@ export default function Home() {
 
     const renderQuantityDialog = () => (
         <Dialog open={open} onOpenChange={setOpen}>
-            <DialogContent className="sm:max-w-[425px] bg-gray-700 text-white border-red-500">
+            <DialogContent className="sm:max-w-[425px] bg-white text-black border-red-500">
                 <DialogHeader>
                     <DialogTitle>
                         <span style={{
@@ -249,7 +249,7 @@ export default function Home() {
                             alignItems: 'center',
                             justifyContent: 'center',
                             gap: '10px',
-                            color: 'white'
+                            color: 'black'
                         }}>
                             <svg
                                 xmlns="http://www.w3.org/2000/svg"
@@ -262,7 +262,7 @@ export default function Home() {
                                 strokeLinecap="round"
                                 strokeLinejoin="round"
                                 className="lucide lucide-package"
-                                style={{ color: 'white' }}
+                                style={{ color: 'black' }}
                             >
                                 <rect width="18" height="18" x="3" y="3" rx="2" ry="2" />
                                 <path d="m12 18-6-4.76M12 18l6-4.76M12 18V7.76" />
@@ -270,7 +270,7 @@ export default function Home() {
                             Quantity
                         </span>
                     </DialogTitle>
-                    <DialogDescription style={{ color: 'white' }}>
+                    <DialogDescription style={{ color: 'black' }}>
                         Ajuste la cantidad manualmente.
                     </DialogDescription>
                 </DialogHeader>
@@ -332,7 +332,7 @@ export default function Home() {
 
     const renderStockDialog = () => (
         <Dialog open={open} onOpenChange={setOpen}>
-            <DialogContent className="sm:max-w-[425px] bg-gray-700 text-white border-red-500">
+            <DialogContent className="sm:max-w-[425px] bg-white text-black border-red-500">
                 <DialogHeader>
                     <DialogTitle>
                         <span style={{
@@ -340,7 +340,7 @@ export default function Home() {
                             alignItems: 'center',
                             justifyContent: 'center',
                             gap: '10px',
-                            color: 'white'
+                            color: 'black'
                         }}>
                             <svg
                                 xmlns="http://www.w3.org/2000/svg"
@@ -353,7 +353,7 @@ export default function Home() {
                                 strokeLinecap="round"
                                 strokeLinejoin="round"
                                 className="lucide lucide-package"
-                                style={{ color: 'white' }}
+                                style={{ color: 'black' }}
                             >
                                 <rect width="18" height="18" x="3" y="3" rx="2" ry="2" />
                                 <path d="m12 18-6-4.76M12 18l6-4.76M12 18V7.76" />
@@ -361,7 +361,7 @@ export default function Home() {
                             Ajustar Stock
                         </span>
                     </DialogTitle>
-                    <DialogDescription style={{ color: 'white' }}>
+                    <DialogDescription style={{ color: 'black' }}>
                         Ajuste el stock manualmente.
                     </DialogDescription>
                 </DialogHeader>
@@ -518,4 +518,5 @@ export default function Home() {
     </div>
   );
 }
+
 

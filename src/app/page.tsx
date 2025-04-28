@@ -205,9 +205,8 @@ export default function Home() {
   }, []);
 
   const handleStartEditingStock = (barcode: string) => {
-    setEditingStockBarcode(barcode);
-    const product = getProductByBarcode(barcode);
-    setNewStockValue(product?.stock.toString() || "");
+    setSelectedProductBarcode(barcode);
+    setOpen(true)
   };
 
   const handleCancelEditingStock = () => {
@@ -296,38 +295,14 @@ export default function Home() {
                       {product.provider}
                     </TableCell>
                       <TableCell>
-                          {editingStockBarcode === product.barcode ? (
-                              <div className="flex items-center">
-                                  <Input
-                                      type="number"
-                                      value={newStockValue}
-                                      onChange={(e) => setNewStockValue(e.target.value)}
-                                      className="w-20 text-right"
-                                  />
-                                  <Button
-                                      onClick={() => handleSaveStock(product.barcode)}
-                                      size="sm"
-                                      className="ml-2"
+                           
+                                  <span
+                                      className="cursor-pointer"
+                                      onClick={() => handleStartEditingStock(product.barcode)}
                                   >
-                                      Guardar
-                                  </Button>
-                                  <Button
-                                      onClick={handleCancelEditingStock}
-                                      size="sm"
-                                      variant="ghost"
-                                      className="ml-2"
-                                  >
-                                      Cancelar
-                                  </Button>
-                              </div>
-                          ) : (
-                              <span
-                                  className="cursor-pointer"
-                                  onClick={() => handleStartEditingStock(product.barcode)}
-                              >
-                                  {product.stock}
-                              </span>
-                          )}
+                                      {product.stock}
+                                  </span>
+                         
                       </TableCell>
                     <TableCell
                       className="text-right cursor-pointer"
@@ -431,7 +406,40 @@ export default function Home() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+       <Dialog open={open} onOpenChange={setOpen}>
+          <DialogContent className="sm:max-w-[425px]">
+            <DialogHeader>
+              <DialogTitle>Ajustar Stock</DialogTitle>
+              <DialogDescription>
+                Ajuste el stock manualmente.
+              </DialogDescription>
+            </DialogHeader>
+            <div className="grid gap-4 py-4">
+              <div className="flex justify-between items-center">
+                  <Input
+                      type="number"
+                      value={newStockValue}
+                      onChange={(e) => setNewStockValue(e.target.value)}
+                      className="w-20 text-right"
+                  />
+                  <Button
+                      onClick={() => handleSaveStock(selectedProductBarcode!)}
+                      size="sm"
+                      className="ml-2"
+                  >
+                      Guardar
+                  </Button>
+                </div>
+            </div>
+            <DialogFooter>
+              <DialogClose asChild>
+                <Button type="button" variant="secondary">
+                  Cerrar
+                </Button>
+              </DialogClose>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
     </div>
   );
 }
-

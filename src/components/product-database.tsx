@@ -597,7 +597,7 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = ({
       )}
       <AlertDialog open={openAlert} onOpenChange={setOpenAlert}>
         <AlertDialogTrigger asChild>
-          <Button variant="destructive">Borrar Base de Datos</Button>
+          <Button variant="destructive" onClick={handleClearDatabase}>Borrar Base de Datos</Button>
         </AlertDialogTrigger>
         <AlertDialogContent>
           <AlertDialogHeader>
@@ -608,12 +608,11 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = ({
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel>Cancelar</AlertDialogCancel>
-            <Button variant="destructive" onClick={handleClearDatabase}>
+            <AlertDialogCancel>Cancelar</AlertDialogCancel></AlertDialogFooter>
+           <Button variant="destructive" onClick={handleClearDatabase}>
               Borrar
             </Button>
-          </AlertDialogFooter>
-        </AlertDialogContent>
+         </AlertDialogContent>
       </AlertDialog>
       <ScrollArea>
         <Table>
@@ -735,18 +734,17 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = ({
                   </FormItem>
                 )}
               />
-              <DialogFooter>
-                <Button type="submit">
+               <DialogFooter>
+              <Button type="submit">
                   {selectedProduct ? "Guardar cambios" : "Guardar"}
                 </Button>
-               {selectedProduct && (
-                  <Button variant="destructive" onClick={() => {
-                      setOpenAlert(true)
-                  }}>
+                 {selectedProduct && (
+                  
+                  <Button variant="destructive" onClick={handleDeleteProduct}>
                     Eliminar
                   </Button>
-                )}
-              </DialogFooter>
+                 )}
+                </DialogFooter>
             </form>
           </Form>
         </DialogContent>
@@ -762,7 +760,7 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = ({
            </AlertDialogHeader>
            <AlertDialogFooter>
              <AlertDialogCancel>Cancelar</AlertDialogCancel>
-             <Button variant="destructive" onClick={handleDeleteProduct}>
+             <Button variant="destructive" onClick={handleClearDatabase}>
                Borrar
              </Button>
            </AlertDialogFooter>
@@ -771,4 +769,3 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = ({
     </div>
   );
 };
-

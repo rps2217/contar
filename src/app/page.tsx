@@ -1,3 +1,4 @@
+
 "use client";
 
 import { useState, useRef, useEffect, useCallback } from "react";
@@ -27,6 +28,17 @@ import {
   DialogFooter,
   DialogClose,
 } from "@/components/ui/dialog";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from "@/components/ui/alert-dialog"
 import { format } from 'date-fns';
 
 interface Product {
@@ -68,6 +80,11 @@ export default function Home() {
   const [selectedProductBarcode, setSelectedProductBarcode] = useState<string | null>(null);
   const [editingStockBarcode, setEditingStockBarcode] = useState<string | null>(null);
   const [newStockValue, setNewStockValue] = useState<string>("");
+
+  // State for confirmation dialog
+  const [isConfirmDialogOpen, setIsConfirmDialogOpen] = useState(false);
+  const [confirmAction, setConfirmAction] = useState<'increment' | 'decrement' | null>(null);
+  const [confirmProductBarcode, setConfirmProductBarcode] = useState<string | null>(null);
 
   useEffect(() => {
     barcodeInputRef.current?.focus();
@@ -157,53 +174,100 @@ export default function Home() {
 
   }, [barcode, databaseProducts, products, toast]);
 
+
+  const executeQuantityChange = useCallback((barcode: string, action: 'increment' | 'decrement') => {
+    setProducts(prevProducts =>
+      prevProducts.map(product => {
+        if (product.barcode === barcode) {
+          const change = action === 'increment' ? 1 : -1;
+          const updatedCount = product.count + change;
+          // Prevent going below zero for decrement
+          if (action === 'decrement' && updatedCount < 0) return product;
+
+          return { ...product, count: updatedCount, lastUpdated: format(new Date(), 'yyyy-MM-dd HH:mm:ss') };
+        }
+        return product;
+      })
+    );
+  }, []);
+
   const handleIncrement = useCallback((barcode: string, type: 'count' | 'stock') => {
+    const product = products.find(p => p.barcode === barcode);
+    if (!product) return;
+
+    if (type === 'count' && product.count === product.stock && product.stock !== 0) {
+      // Show confirmation dialog
+      setConfirmProductBarcode(barcode);
+      setConfirmAction('increment');
+      setIsConfirmDialogOpen(true);
+    } else {
+      // Proceed with the increment directly
       setProducts(prevProducts =>
-          prevProducts.map(product => {
-              if (product.barcode === barcode) {
-                  const updatedCount = type === 'count' ? product.count + 1 : product.count;
-                  const updatedStock = type === 'stock' ? product.stock + 1 : product.stock;
-                  const updatedProduct = { ...product, count: updatedCount, stock: updatedStock, lastUpdated: format(new Date(), 'yyyy-MM-dd HH:mm:ss') };
+        prevProducts.map(p => {
+          if (p.barcode === barcode) {
+            const updatedCount = type === 'count' ? p.count + 1 : p.count;
+            const updatedStock = type === 'stock' ? p.stock + 1 : p.stock;
+            const updatedProduct = { ...p, count: updatedCount, stock: updatedStock, lastUpdated: format(new Date(), 'yyyy-MM-dd HH:mm:ss') };
 
-                    // Also update the stock in the database state if stock is changed
-                  if (type === 'stock') {
-                        setDatabaseProducts(prevDbProducts =>
-                            prevDbProducts.map(dbProduct =>
-                                dbProduct.barcode === barcode ? { ...dbProduct, stock: updatedStock } : dbProduct
-                            )
-                        );
-                  }
-
-                  return updatedProduct;
-              }
-              return product;
-          })
+            // Also update the stock in the database state if stock is changed
+            if (type === 'stock') {
+              setDatabaseProducts(prevDbProducts =>
+                prevDbProducts.map(dbProduct =>
+                  dbProduct.barcode === barcode ? { ...dbProduct, stock: updatedStock } : dbProduct
+                )
+              );
+            }
+            return updatedProduct;
+          }
+          return p;
+        })
       );
-  }, [setDatabaseProducts]); // Ensure setDatabaseProducts is included if it's used
-
+    }
+  }, [products, setDatabaseProducts]);
 
   const handleDecrement = useCallback((barcode: string, type: 'count' | 'stock') => {
-      setProducts(prevProducts =>
-          prevProducts.map(product => {
-              if (product.barcode === barcode) {
-                  const updatedCount = type === 'count' && product.count > 0 ? product.count - 1 : product.count;
-                  const updatedStock = type === 'stock' && product.stock > 0 ? product.stock - 1 : product.stock;
-                  const updatedProduct = { ...product, count: updatedCount, stock: updatedStock, lastUpdated: format(new Date(), 'yyyy-MM-dd HH:mm:ss') };
+    const product = products.find(p => p.barcode === barcode);
+    if (!product) return;
 
-                   // Also update the stock in the database state if stock is changed
-                  if (type === 'stock') {
-                        setDatabaseProducts(prevDbProducts =>
-                            prevDbProducts.map(dbProduct =>
-                                dbProduct.barcode === barcode ? { ...dbProduct, stock: updatedStock } : dbProduct
-                            )
-                        );
-                  }
-                  return updatedProduct;
-              }
-              return product;
-          })
+    if (type === 'count' && product.count === product.stock && product.stock !== 0) {
+      // Show confirmation dialog
+      setConfirmProductBarcode(barcode);
+      setConfirmAction('decrement');
+      setIsConfirmDialogOpen(true);
+    } else {
+       // Proceed with the decrement directly
+      setProducts(prevProducts =>
+        prevProducts.map(p => {
+          if (p.barcode === barcode) {
+            const updatedCount = type === 'count' && p.count > 0 ? p.count - 1 : p.count;
+            const updatedStock = type === 'stock' && p.stock > 0 ? p.stock - 1 : p.stock;
+            const updatedProduct = { ...p, count: updatedCount, stock: updatedStock, lastUpdated: format(new Date(), 'yyyy-MM-dd HH:mm:ss') };
+
+            // Also update the stock in the database state if stock is changed
+            if (type === 'stock') {
+              setDatabaseProducts(prevDbProducts =>
+                prevDbProducts.map(dbProduct =>
+                  dbProduct.barcode === barcode ? { ...dbProduct, stock: updatedStock } : dbProduct
+                )
+              );
+            }
+            return updatedProduct;
+          }
+          return p;
+        })
       );
-  }, [setDatabaseProducts]); // Ensure setDatabaseProducts is included if it's used
+    }
+  }, [products, setDatabaseProducts]);
+
+    const handleConfirmQuantityChange = () => {
+        if (confirmProductBarcode && confirmAction) {
+            executeQuantityChange(confirmProductBarcode, confirmAction);
+        }
+        setIsConfirmDialogOpen(false);
+        setConfirmProductBarcode(null);
+        setConfirmAction(null);
+    };
+
 
   const handleDelete = useCallback((barcode: string) => {
     setProducts(prevProducts => prevProducts.filter(product => product.barcode !== barcode));
@@ -468,6 +532,23 @@ export default function Home() {
         </Dialog>
     );
 
+     const renderConfirmationDialog = () => (
+         <AlertDialog open={isConfirmDialogOpen} onOpenChange={setIsConfirmDialogOpen}>
+            <AlertDialogContent>
+                <AlertDialogHeader>
+                <AlertDialogTitle>Confirmar Modificación</AlertDialogTitle>
+                <AlertDialogDescription>
+                    La cantidad contada coincide con el stock. ¿Estás seguro de que deseas modificar la cantidad?
+                </AlertDialogDescription>
+                </AlertDialogHeader>
+                <AlertDialogFooter>
+                <AlertDialogCancel onClick={() => setIsConfirmDialogOpen(false)}>Cancelar</AlertDialogCancel>
+                <AlertDialogAction onClick={handleConfirmQuantityChange}>Confirmar</AlertDialogAction>
+                </AlertDialogFooter>
+            </AlertDialogContent>
+        </AlertDialog>
+     );
+
 
   return (
     <div className="container mx-auto p-4">
@@ -485,7 +566,7 @@ export default function Home() {
               placeholder="Escanear o ingresar código de barras"
               value={barcode}
               onChange={(e) => setBarcode(e.target.value)}
-              className="mr-2 flex-grow bg-yellow-50 border-teal-300 focus:ring-teal-500 focus:border-teal-500 rounded-md shadow-sm"
+              className="mr-2 flex-grow bg-yellow-100 border-teal-300 focus:ring-teal-500 focus:border-teal-500 rounded-md shadow-sm"
               ref={barcodeInputRef}
               onKeyDown={handleKeyDown}
                aria-label="Código de barras"
@@ -519,7 +600,7 @@ export default function Home() {
                   <TableRow
                     key={product.barcode}
                     className={`hover:bg-gray-50 transition-colors duration-150 ${
-                      product.count === product.stock ? "bg-green-50" : ""
+                      product.count === product.stock && product.stock !== 0 ? "bg-green-50" : ""
                     }`}
                   >
                     <TableCell className="px-4 py-3 font-medium text-gray-900">{product.description}</TableCell>
@@ -604,8 +685,7 @@ export default function Home() {
 
             {renderQuantityDialog()}
             {renderStockDialog()}
+            {renderConfirmationDialog()}
     </div>
   );
 }
-
-    

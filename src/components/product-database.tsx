@@ -57,6 +57,7 @@ interface Product {
   provider: string;
   stock: number;
   count: number;
+  lastUpdated?: string; // Add lastUpdated property
 }
 
 const productSchema = z.object({
@@ -85,7 +86,7 @@ const DATABASE_NAME = "stockCounterDB";
 const OBJECT_STORE_NAME = "products";
 const DATABASE_VERSION = 1;
 
-const openDB = (): Promise<IDBDatabase> => {
+export const openDB = (): Promise<IDBDatabase> => {
   return new Promise((resolve, reject) => {
     const request = window.indexedDB.open(DATABASE_NAME, DATABASE_VERSION);
 
@@ -107,7 +108,7 @@ const openDB = (): Promise<IDBDatabase> => {
   });
 };
 
-const getAllProductsFromDB = async (): Promise<Product[]> => {
+export const getAllProductsFromDB = async (): Promise<Product[]> => {
   const db = await openDB();
   return new Promise((resolve, reject) => {
     const transaction = db.transaction(OBJECT_STORE_NAME, "readonly");
@@ -129,7 +130,7 @@ const getAllProductsFromDB = async (): Promise<Product[]> => {
   });
 };
 
-const addProductsToDB = async (products: Product[]): Promise<void> => {
+export const addProductsToDB = async (products: Product[]): Promise<void> => {
   return new Promise(async (resolve, reject) => {
     try {
       const db = await openDB();
@@ -155,7 +156,7 @@ const addProductsToDB = async (products: Product[]): Promise<void> => {
   });
 };
 
-const updateProductInDB = async (product: Product): Promise<void> => {
+export const updateProductInDB = async (product: Product): Promise<void> => {
   const db = await openDB();
   return new Promise((resolve, reject) => {
     const transaction = db.transaction(OBJECT_STORE_NAME, "readwrite");
@@ -177,7 +178,7 @@ const updateProductInDB = async (product: Product): Promise<void> => {
   });
 };
 
-const deleteProductFromDB = async (barcode: string): Promise<void> => {
+export const deleteProductFromDB = async (barcode: string): Promise<void> => {
   const db = await openDB();
   return new Promise((resolve, reject) => {
     const transaction = db.transaction(OBJECT_STORE_NAME, "readwrite");
@@ -199,7 +200,7 @@ const deleteProductFromDB = async (barcode: string): Promise<void> => {
   });
 };
 
-const clearDatabaseDB = async (): Promise<void> => {
+export const clearDatabaseDB = async (): Promise<void> => {
     return new Promise(async (resolve, reject) => {
         try {
             const db = await openDB();
@@ -240,38 +241,57 @@ async function fetchGoogleSheetData(sheetUrl: string): Promise<Product[]> {
     const sheetName = urlParts[urlParts.length - 1].split('=')[1];
 
     // Build the Google Sheets API URL
-    const apiUrl = `https://docs.google.com/spreadsheets/d/${spreadsheetId}/gviz/tq?tqx=out:json&sheet=${sheetName}`;
+    // Ensure the sheet is published to the web as CSV
+    const csvUrl = `https://docs.google.com/spreadsheets/d/${spreadsheetId}/gviz/tq?tqx=out:csv&sheet=${sheetName}`;
 
     try {
-        const response = await fetch(apiUrl, {
-            mode: 'cors', // Enable CORS
-        });
+        const response = await fetch(csvUrl);
 
         if (!response.ok) {
             throw new Error(`Failed to fetch data from Google Sheets: ${response.status} ${response.statusText}`);
         }
 
-        const text = await response.text();
+        const csvText = await response.text();
 
-        // Extract the JSON data from the response
-        const jsonString = text.substring(text.indexOf('(') + 1, text.lastIndexOf(')'));
-        const data = JSON.parse(jsonString);
+        // Parse the CSV data
+        const lines = csvText.split('\n');
+        // Remove quotes from header and trim spaces
+        const headers = lines[0].split(',').map(header => header.replace(/"/g, '').trim().toLowerCase());
+        const products: Product[] = [];
 
-        // Process the data to convert it into the desired format
-        const products: Product[] = data.table.rows.map((row: any) => {
-            const [barcode, description, provider, stock] = row.c.map((cell: any) => cell?.v);
-            return {
-                barcode: barcode?.toString() || '',
-                description: description?.toString() || '',
-                provider: provider?.toString() || '',
-                stock: parseInt(stock?.toString() || '0', 10) || 0,
-                count: 0,
-            };
-        });
+        for (let i = 1; i < lines.length; i++) {
+            const values = lines[i].split(',').map(value => value.replace(/"/g, '').trim());
+            const productData: any = {};
+            for (let j = 0; j < headers.length; j++) {
+                productData[headers[j]] = values[j];
+            }
+
+            const barcode = productData.barcode || '';
+            const description = productData.description || '';
+            const provider = productData.provider || 'Desconocido'; // Default provider if missing
+            const stock = parseInt(productData.stock, 10);
+
+            // Basic validation: ensure barcode and description are not empty
+            if (barcode && description) {
+                 products.push({
+                    barcode: barcode,
+                    description: description,
+                    provider: provider,
+                    stock: isNaN(stock) ? 0 : stock, // Default to 0 if stock is NaN
+                    count: 0, // Default count
+                });
+            } else {
+                console.warn(`Skipping row ${i + 1} due to missing barcode or description.`);
+            }
+        }
 
         return products;
     } catch (error: any) {
         console.error("Error fetching Google Sheet data", error);
+         // Check for CORS errors explicitly
+        if (error instanceof TypeError && error.message === 'Failed to fetch') {
+             throw new Error("CORS policy might be blocking the request. Ensure the Google Sheet is published to the web.");
+        }
         throw new Error(`Failed to fetch data from Google Sheets: ${error.message}`);
     }
 }
@@ -286,12 +306,11 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = ({
   const [openAlert, setOpenAlert] = useState(false);
   const [uploadProgress, setUploadProgress] = useState(0);
   const [isUploading, setIsUploading] = useState(false);
-  const fileInputRef = useRef<HTMLInputElement>(null);
   const [uploadComplete, setUploadComplete] = useState(false);
   const [totalProducts, setTotalProducts] = useState(0);
   const [productsLoaded, setProductsLoaded] = useState(0);
   const isMobile = useIsMobile();
-    const [googleSheetUrl, setGoogleSheetUrl] = useState("");
+  const [googleSheetUrl, setGoogleSheetUrl] = useState("");
 
 
   const productForm = useForm<ProductValues>({
@@ -306,7 +325,7 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = ({
 
   const { handleSubmit, reset } = productForm;
 
-  const loadInitialData = async () => {
+  const loadInitialData = useCallback(async () => {
     try {
       const products = await getAllProductsFromDB();
       setDatabaseProducts(products);
@@ -318,11 +337,11 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = ({
         description: "Failed to load products from database.",
       });
     }
-  };
+  }, [setDatabaseProducts, toast]);
 
   useEffect(() => {
     loadInitialData();
-  }, [setDatabaseProducts, toast]);
+  }, [loadInitialData]);
 
   const handleAddProductToDB = useCallback(async (data: ProductValues) => {
     const newProduct = { ...data, stock: Number(data.stock), count: 0 };
@@ -333,6 +352,8 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = ({
         title: "Producto agregado",
         description: `${data.description} ha sido agregado a la base de datos.`,
       });
+      reset(); // Reset form after successful submission
+      setOpen(false); // Close dialog after successful submission
     } catch (error) {
       console.error("Database operation failed", error);
       toast({
@@ -341,7 +362,8 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = ({
         description: "Failed to save product to database.",
       });
     }
-  }, [setDatabaseProducts, toast]);
+  }, [setDatabaseProducts, toast, reset]);
+
 
   const handleSaveProduct = useCallback(async (product: Product) => {
     try {
@@ -391,40 +413,86 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = ({
   );
 
     const handleLoadFromGoogleSheet = useCallback(async () => {
+        if (!googleSheetUrl) {
+            toast({
+                variant: "destructive",
+                title: "Error",
+                description: "Por favor, introduce la URL de la hoja de Google.",
+            });
+            return;
+        }
+
         setIsUploading(true);
         setUploadProgress(0);
         setUploadComplete(false);
         setProductsLoaded(0);
+        setTotalProducts(0); // Reset total products count
 
         try {
             const products = await fetchGoogleSheetData(googleSheetUrl);
             setTotalProducts(products.length);
 
-            for (let i = 0; i < products.length; i++) {
-                try {
-                    await addProductsToDB([products[i]]);
-                    setProductsLoaded((prev) => prev + 1);
-                    setUploadProgress(Math.round(((i + 1) / products.length) * 100));
-                    await new Promise(resolve => setTimeout(resolve, 0)); // Yield to the event loop
-                } catch (error: any) {
-                    console.error("Error adding product to IndexedDB", error);
+            if (products.length === 0) {
+                 toast({
+                    title: "No hay productos",
+                    description: "La hoja de cálculo está vacía o no tiene el formato correcto.",
+                });
+                setIsUploading(false);
+                return;
+            }
+
+
+            // Clear existing database before loading new data
+            // await clearDatabaseDB(); // Consider if this is the desired behavior
+
+            const db = await openDB();
+            const transaction = db.transaction(OBJECT_STORE_NAME, "readwrite");
+            const objectStore = transaction.objectStore(OBJECT_STORE_NAME);
+            let loadedCount = 0;
+
+            for (const product of products) {
+                 const request = objectStore.put(product);
+                 request.onsuccess = () => {
+                    loadedCount++;
+                    setProductsLoaded(loadedCount);
+                    setUploadProgress(Math.round((loadedCount / products.length) * 100));
+                };
+                 request.onerror = () => {
+                    console.error("Error adding product to IndexedDB", request.error);
                     toast({
                         variant: "destructive",
                         title: "Error",
-                        description: `Failed to add product to database: ${products[i].barcode}`,
+                        description: `Failed to add product to database: ${product.barcode}`,
                     });
-                    break; // Stop processing on error
-                }
+                    // Optionally stop the process on error
+                    // transaction.abort();
+                    // return;
+                };
             }
 
-            setIsUploading(false);
-            setUploadProgress(100);
-            setUploadComplete(true);
-            loadInitialData(); // Refresh data after upload
-            toast({
-                title: "Productos cargados",
-                description: `Se han cargado ${products.length} productos desde la hoja de cálculo.`,
-            });
+            transaction.oncomplete = () => {
+                db.close();
+                setIsUploading(false);
+                setUploadProgress(100);
+                setUploadComplete(true);
+                loadInitialData(); // Refresh data after upload
+                toast({
+                    title: "Productos cargados",
+                    description: `Se han cargado ${loadedCount} productos desde la hoja de cálculo.`,
+                });
+            };
+
+            transaction.onerror = () => {
+                 db.close();
+                setIsUploading(false);
+                console.error("Transaction error", transaction.error);
+                toast({
+                    variant: "destructive",
+                    title: "Error de transacción",
+                    description: "No se pudieron guardar todos los productos.",
+                });
+            };
+
         } catch (error: any) {
             setIsUploading(false);
             toast({
@@ -433,7 +501,7 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = ({
                 description: `Error loading data from Google Sheets: ${error.message}`,
             });
         }
-    }, [setDatabaseProducts, toast, googleSheetUrl]);
+    }, [setDatabaseProducts, toast, googleSheetUrl, loadInitialData]);
 
 
   const handleExportDatabase = useCallback(() => {
@@ -510,6 +578,7 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = ({
         description: `Producto con código de barras ${selectedProduct.barcode} ha sido actualizado.`,
       });
       setOpen(false); // close dialog
+      reset(); // Reset form after successful submission
     } catch (error) {
       console.error("Failed to update product", error);
       toast({
@@ -520,22 +589,19 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = ({
     }
   };
 
-  const handleDeleteConfirmation = (product: Product) => {
-    setSelectedProduct(product);
-    setOpenAlert(true);
-  };
-
-  const handleDeleteProduct = async () => {
+  const handleDeleteConfirmation = () => {
     if (!selectedProduct) return;
-
-    await handleDeleteProductFromDB(selectedProduct.barcode);
-    setOpenAlert(false);
+     handleDeleteProductFromDB(selectedProduct.barcode);
+     setOpen(false); // Close the edit dialog
+     setOpenAlert(false); // Close the confirmation dialog
   };
+
+
 
   return (
     <div>
       <div className="flex justify-between mb-4">
-        <Button onClick={() => setOpen(true)}>Agregar Producto</Button>
+        <Button onClick={() => { setSelectedProduct(null); reset(); setOpen(true); }}>Agregar Producto</Button>
         <div>
           <Button onClick={handleExportDatabase}>
             Exportar Base de Datos <FileDown className="ml-2 h-4 w-4" />
@@ -550,7 +616,7 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = ({
         <Input
           id="google-sheet-url"
           type="text"
-          placeholder="URL de la hoja de Google"
+          placeholder="URL de la hoja de Google publicada como CSV"
           value={googleSheetUrl}
           onChange={(e) => setGoogleSheetUrl(e.target.value)}
           className="mr-2"
@@ -558,7 +624,7 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = ({
         />
         <Button variant="secondary" disabled={isUploading} onClick={handleLoadFromGoogleSheet}>
             <Upload className="mr-2 h-4 w-4" />
-            Cargar
+            {isUploading ? 'Cargando...' : 'Cargar'}
         </Button>
       </div>
       {isUploading && (
@@ -569,38 +635,52 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = ({
           </p>
         </>
       )}
-      {uploadComplete && (
+      {uploadComplete && !isUploading && (
         <p className="text-sm text-green-500">
-          Carga completa!
+          Carga completa! Se cargaron {productsLoaded} productos.
         </p>
       )}
       <AlertDialog open={openAlert} onOpenChange={setOpenAlert}>
         <AlertDialogTrigger asChild>
-          <Button variant="destructive" onClick={handleClearDatabase}>Borrar Base de Datos</Button>
+          {/* The trigger is now inside the edit dialog */}
+          <span />
         </AlertDialogTrigger>
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>¿Estás seguro?</AlertDialogTitle>
-            <AlertDialogDescription>
-              Esta acción eliminará todos los productos de la base de datos.
-              Esta acción no se puede deshacer.
-            </AlertDialogDescription>
+             {selectedProduct && ( // Conditional rendering based on action type
+              <AlertDialogDescription>
+                {selectedProduct ?
+                `Esta acción eliminará el producto "${selectedProduct.description}" de la base de datos. Esta acción no se puede deshacer.`
+                 : "Esta acción eliminará todos los productos de la base de datos. Esta acción no se puede deshacer."
+                }
+              </AlertDialogDescription>
+             )}
+             {!selectedProduct && ( // Conditional rendering for clearing database
+                <AlertDialogDescription>
+                    Esta acción eliminará todos los productos de la base de datos. Esta acción no se puede deshacer.
+                </AlertDialogDescription>
+            )}
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel>Cancelar</AlertDialogCancel></AlertDialogFooter>
-           <Button variant="destructive" onClick={handleClearDatabase}>
-              Borrar
+            <AlertDialogCancel onClick={() => setOpenAlert(false)}>Cancelar</AlertDialogCancel>
+             <Button variant="destructive" onClick={selectedProduct ? handleDeleteConfirmation : handleClearDatabase}>
+              {selectedProduct ? "Eliminar Producto" : "Borrar Base de Datos"}
             </Button>
-         </AlertDialogContent>
+          </AlertDialogFooter>
+        </AlertDialogContent>
       </AlertDialog>
-      <ScrollArea>
+        {/* Button to trigger clearing the entire database */}
+      <Button variant="destructive" onClick={() => {setSelectedProduct(null); setOpenAlert(true)}}>Borrar Base de Datos</Button>
+
+      <ScrollArea className="h-[500px]">
         <Table>
           <TableCaption>Lista de productos en la base de datos.</TableCaption>
           <TableHeader>
             <TableRow>
               <TableHead style={{ width: '33%' }}>Código de Barras</TableHead>
               <TableHead style={{ width: '33%' }}>Descripción</TableHead>
-              
+              {/* <TableHead className="hidden sm:table-cell">Proveedor</TableHead> */}
               <TableHead style={{ width: '33%' }} className="text-right">Stock</TableHead>
             </TableRow>
           </TableHeader>
@@ -608,15 +688,20 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = ({
             {databaseProducts.map((product) => (
               <TableRow key={product.barcode}>
                 <TableCell
-                 style={{ width: '33%', cursor: 'pointer' }}
-                 onClick={() => handleOpenEditDialog(product)}
+                 style={{ width: '33%'}}
+
                 >
                   {product.barcode}
                 </TableCell>
-                <TableCell style={{ width: '33%' }}>
+                <TableCell
+                    style={{ width: '33%', cursor: 'pointer' }}
+                    onClick={() => handleOpenEditDialog(product)}
+                    >
                   {product.description}
                 </TableCell>
-                
+                {/* <TableCell className="hidden sm:table-cell">
+                  {product.provider}
+                </TableCell> */}
                 <TableCell style={{ width: '33%' }} className="text-right">
                   {product.stock}
                 </TableCell>
@@ -624,7 +709,7 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = ({
             ))}
             {databaseProducts.length === 0 && (
               <TableRow>
-                <TableCell colSpan={5} className="text-center">
+                <TableCell colSpan={3} className="text-center"> {/* Adjusted colSpan */}
                   No hay productos en la base de datos.
                 </TableCell>
               </TableRow>
@@ -654,6 +739,7 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = ({
                         type="text"
                         placeholder="Código de barras"
                         {...field}
+                        readOnly={!!selectedProduct} // Make barcode read-only when editing
                       />
                     </FormControl>
                     <FormMessage />
@@ -705,7 +791,8 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = ({
                         placeholder="Stock"
                         {...field}
                         onChange={(e) => {
-                          field.onChange(Number(e.target.value));
+                          const value = parseInt(e.target.value, 10);
+                          field.onChange(isNaN(value) ? "" : value); // Handle NaN, allow empty string for clearing
                         }}
                       />
                     </FormControl>
@@ -713,39 +800,25 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = ({
                   </FormItem>
                 )}
               />
-               <DialogFooter>
-              <Button type="submit">
-                  {selectedProduct ? "Guardar cambios" : "Guardar"}
-                </Button>
-                 {selectedProduct && (
-                  
-                  <Button variant="destructive" onClick={handleDeleteProduct}>
-                    Eliminar
-                  </Button>
-                 )}
+               <DialogFooter className="flex justify-between w-full">
+                    <Button type="submit">
+                      {selectedProduct ? "Guardar cambios" : "Guardar"}
+                    </Button>
+                    {selectedProduct && (
+                      <Button type="button" variant="destructive" onClick={() => setOpenAlert(true)}>
+                        <Trash className="mr-2 h-4 w-4" /> Eliminar
+                      </Button>
+                    )}
+                     <DialogClose asChild>
+                         <Button type="button" variant="secondary">Cancelar</Button>
+                    </DialogClose>
                 </DialogFooter>
             </form>
           </Form>
         </DialogContent>
       </Dialog>
-       <AlertDialog open={openAlert} onOpenChange={setOpenAlert}>
-         <AlertDialogContent>
-           <AlertDialogHeader>
-             <AlertDialogTitle>¿Estás seguro?</AlertDialogTitle>
-             <AlertDialogDescription>
-               Esta acción eliminará el producto de la base de datos.
-               Esta acción no se puede deshacer.
-             </AlertDialogDescription>
-           </AlertDialogHeader>
-           <AlertDialogFooter>
-             <AlertDialogCancel>Cancelar</AlertDialogCancel>
-             <Button variant="destructive" onClick={handleClearDatabase}>
-               Borrar
-             </Button>
-           </AlertDialogFooter>
-         </AlertDialogContent>
-       </AlertDialog>
     </div>
   );
 };
 
+    

@@ -88,17 +88,21 @@ export default function Home() {
   };
 
  const handleAddProduct = useCallback(async () => {
-    if (!barcode.trim()) { // Ensure barcode is not just whitespace
+    // Trim the barcode value immediately to remove potential leading/trailing whitespace or characters
+    const currentBarcode = barcode.trim();
+
+    if (!currentBarcode) { // Check if the trimmed barcode is empty
       toast({
         variant: "destructive",
         title: "Error",
         description: "Por favor, introduce un código de barras válido.",
       });
+      setBarcode(""); // Clear the input even if it was just whitespace
+      barcodeInputRef.current?.focus(); // Refocus
       return;
     }
-    const currentBarcode = barcode.trim(); // Use trimmed barcode
 
-    // 1. Check if already in the counting list
+    // 1. Check if already in the counting list using the trimmed barcode
     const existingProductIndex = products.findIndex((p) => p.barcode === currentBarcode);
     if (existingProductIndex !== -1) {
       // Product exists in counting list, increment count
@@ -116,8 +120,7 @@ export default function Home() {
         description: `${updatedProduct.description} cantidad aumentada a ${updatedProduct.count}.`,
       });
     } else {
-      // 2. Product not in counting list, look in the database state
-      // Ensure databaseProducts state is correctly populated before this lookup
+      // 2. Product not in counting list, look in the database state using the trimmed barcode
       const productFromDb = databaseProducts.find((p) => p.barcode === currentBarcode);
 
       if (productFromDb) {
@@ -127,6 +130,7 @@ export default function Home() {
           count: 1,         // Start count at 1 for the counting list
           lastUpdated: format(new Date(), 'yyyy-MM-dd HH:mm:ss'),
         };
+        // Add to top
         setProducts([newProductForList, ...products]);
         toast({
           title: "Producto agregado",
@@ -136,8 +140,8 @@ export default function Home() {
         // 3. Product not found in database state, add as new to both lists
         playBeep(); // Beep because it's unknown
         const newProductData = {
-          barcode: currentBarcode,
-          description: `Nuevo producto ${currentBarcode}`,
+          barcode: currentBarcode, // Use the trimmed barcode
+          description: `Producto desconocido ${currentBarcode}`, // Indicate it's unknown
           provider: "Desconocido",
           stock: 0,
           count: 0, // Base count for DB state representation is 0
@@ -148,17 +152,20 @@ export default function Home() {
         setDatabaseProducts(prevDbProducts => [...prevDbProducts, newProductData]);
 
         // Add to counting list state (with count 1)
+        // Add to top
         setProducts([{ ...newProductData, count: 1 }, ...products]);
 
         toast({
-          title: "Producto no encontrado",
-          description: `Producto ${currentBarcode} no encontrado. Agregado como nuevo al inventario y a la base de datos.`,
+          variant: "destructive", // Use destructive to highlight it wasn't found
+          title: "Producto desconocido",
+          description: `Producto ${currentBarcode} no encontrado en la base de datos. Agregado como nuevo.`,
         });
       }
     }
 
-    setBarcode(""); // Clear input
-    barcodeInputRef.current?.focus(); // Refocus
+    // Clear input and refocus AFTER all logic is done
+    setBarcode("");
+    barcodeInputRef.current?.focus();
 
   }, [barcode, products, databaseProducts, setDatabaseProducts, toast]);
 
@@ -204,6 +211,13 @@ export default function Home() {
                   dbProduct.barcode === barcode ? { ...dbProduct, stock: updatedStock } : dbProduct
                 )
               );
+              // Persist stock change to IndexedDB
+              const dbProductToUpdate = databaseProducts.find(dbP => dbP.barcode === barcode);
+              if (dbProductToUpdate) {
+                  import('@/components/product-database').then(({ updateProductInDB }) => {
+                    updateProductInDB({ ...dbProductToUpdate, stock: updatedStock });
+                  });
+              }
             }
             return updatedProduct;
           }
@@ -211,7 +225,7 @@ export default function Home() {
         })
       );
     }
-  }, [products, setDatabaseProducts]);
+  }, [products, databaseProducts, setDatabaseProducts]); // Added databaseProducts
 
   const handleDecrement = useCallback((barcode: string, type: 'count' | 'stock') => {
     const product = products.find(p => p.barcode === barcode);
@@ -238,6 +252,13 @@ export default function Home() {
                   dbProduct.barcode === barcode ? { ...dbProduct, stock: updatedStock } : dbProduct
                 )
               );
+               // Persist stock change to IndexedDB
+               const dbProductToUpdate = databaseProducts.find(dbP => dbP.barcode === barcode);
+               if (dbProductToUpdate) {
+                    import('@/components/product-database').then(({ updateProductInDB }) => {
+                       updateProductInDB({ ...dbProductToUpdate, stock: updatedStock });
+                     });
+               }
             }
             return updatedProduct;
           }
@@ -245,7 +266,7 @@ export default function Home() {
         })
       );
     }
-  }, [products, setDatabaseProducts]);
+  }, [products, databaseProducts, setDatabaseProducts]); // Added databaseProducts
 
     const handleConfirmQuantityChange = () => {
         if (confirmProductBarcode && confirmAction && (confirmAction === 'increment' || confirmAction === 'decrement')) {
@@ -303,6 +324,7 @@ export default function Home() {
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
     if (e.key === "Enter") {
+       e.preventDefault(); // Prevent default form submission if inside a form
       handleAddProduct();
     }
   };
@@ -326,18 +348,26 @@ export default function Home() {
     }, []);
 
     const handleStockChange = useCallback((barcode: string, newStock: number) => {
+        // Update stock in the counting list (products state)
         setProducts(prevProducts =>
             prevProducts.map(product =>
                 product.barcode === barcode ? { ...product, stock: newStock, lastUpdated: format(new Date(), 'yyyy-MM-dd HH:mm:ss') } : product
             )
         );
-        // Also update the stock in the database state
+        // Update stock in the database state (databaseProducts state)
         setDatabaseProducts(prevDbProducts =>
             prevDbProducts.map(dbProduct =>
                 dbProduct.barcode === barcode ? { ...dbProduct, stock: newStock } : dbProduct
             )
         );
-    }, [setDatabaseProducts]); // Include setDatabaseProducts dependency
+         // Persist stock change to IndexedDB
+         const productToUpdate = databaseProducts.find(p => p.barcode === barcode);
+         if (productToUpdate) {
+             import('@/components/product-database').then(({ updateProductInDB }) => {
+                 updateProductInDB({ ...productToUpdate, stock: newStock });
+             });
+         }
+    }, [databaseProducts, setDatabaseProducts]); // Include setDatabaseProducts dependency
 
     const getProductByBarcode = useCallback((barcode: string) => {
         return products.find((product) => product.barcode === barcode);
@@ -583,10 +613,10 @@ export default function Home() {
         <TabsContent value="Contador">
           <div className="flex items-center mb-4">
             <Input
-              type="number"
+              type="text" // Changed back to text to allow scanner input, trimming handles extra chars
               placeholder="Escanear o ingresar código de barras"
               value={barcode}
-              onChange={(e) => setBarcode(e.target.value)}
+              onChange={(e) => setBarcode(e.target.value)} // Let input handle value as is
               className="mr-2 flex-grow bg-yellow-100 border-teal-300 focus:ring-teal-500 focus:border-teal-500 rounded-md shadow-sm"
               ref={barcodeInputRef}
               onKeyDown={handleKeyDown}

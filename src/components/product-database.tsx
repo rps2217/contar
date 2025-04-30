@@ -163,10 +163,16 @@ export const addProductsToDB = async (products: Product[]): Promise<void> => {
                     checkCompletion(); // Still count it as processed
                     return;
                  }
-                const request = objectStore.put(product);
+                 // Ensure stock is a number before putting into DB
+                 const productToAdd = {
+                     ...product,
+                     stock: Number(product.stock) || 0, // Default to 0 if NaN or invalid
+                     count: Number(product.count) || 0 // Also ensure count is a number
+                 };
+                const request = objectStore.put(productToAdd);
                 request.onsuccess = checkCompletion;
                 request.onerror = (event) => {
-                    console.error("Error adding product to IndexedDB", (event.target as IDBRequest).error, product);
+                    console.error("Error adding product to IndexedDB", (event.target as IDBRequest).error, productToAdd);
                     checkCompletion(); // Still count it as processed
                 };
             });
@@ -196,7 +202,13 @@ export const updateProductInDB = async (product: Product): Promise<void> => {
   return new Promise((resolve, reject) => {
     const transaction = db.transaction(OBJECT_STORE_NAME, "readwrite");
     const objectStore = transaction.objectStore(OBJECT_STORE_NAME);
-    const request = objectStore.put(product);
+    // Ensure stock is a number before updating DB
+    const productToUpdate = {
+        ...product,
+        stock: Number(product.stock) || 0, // Default to 0 if NaN or invalid
+        count: Number(product.count) || 0 // Also ensure count is a number
+    };
+    const request = objectStore.put(productToUpdate);
 
     request.onsuccess = () => {
       resolve();
@@ -299,7 +311,12 @@ async function fetchGoogleSheetData(sheetUrl: string): Promise<Product[]> {
 
     let response: Response;
     try {
-        response = await fetch(csvExportUrl);
+        response = await fetch(csvExportUrl, {
+            mode: 'cors', // Ensure CORS is handled correctly if necessary
+            headers: {
+                'Accept': 'text/csv',
+            },
+        });
     } catch (error: any) {
         // Network errors (e.g., CORS if redirected unexpectedly, DNS issues)
         console.error("Network error fetching Google Sheet:", error);
@@ -372,6 +389,7 @@ async function fetchGoogleSheetData(sheetUrl: string): Promise<Product[]> {
             provider: provider,
             stock: isNaN(stock) ? 0 : stock, // Default to 0 if stock is not a number or missing
             count: 0, // Default count
+            // lastUpdated will be set when added/modified in the counter
         });
     }
     console.log(`Parsed ${products.length} products from CSV based on column position.`);
@@ -425,9 +443,11 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = ({
     }
   }, [setDatabaseProducts, toast]);
 
+  // Load initial data when the component mounts
   useEffect(() => {
     loadInitialData();
-  }, [loadInitialData]);
+  }, [loadInitialData]); // Dependency array includes loadInitialData
+
 
   const handleAddProductToDB = useCallback(async (data: ProductValues) => {
     const newProduct = { ...data, stock: Number(data.stock), count: 0 };
@@ -729,7 +749,7 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = ({
   return (
     <div>
       <div className="flex flex-wrap justify-between items-center mb-4 gap-2">
-        <Button onClick={() => { setSelectedProduct(null); reset(); setOpen(true); }}>Agregar Producto</Button>
+        <Button onClick={() => { setSelectedProduct(null); reset({barcode: "", description: "", provider: "", stock: 0}); setOpen(true); }}>Agregar Producto</Button>
         <div className="flex items-center gap-2">
            <Label htmlFor="search-product" className="sr-only">Buscar Producto</Label>
             <Input
@@ -821,9 +841,14 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = ({
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel onClick={() => setOpenAlert(false)}>Cancelar</AlertDialogCancel>
-            <Button variant="destructive" onClick={handleDeleteConfirmation}>
+             {/* Changed to AlertDialogAction */}
+            <AlertDialogAction
+                variant="destructive"
+                onClick={handleDeleteConfirmation}
+                className={alertAction === 'clearDatabase' ? "bg-red-600 hover:bg-red-700" : ""}
+             >
               {alertAction === 'deleteProduct' ? "Eliminar Producto" : "Borrar Base de Datos"}
-            </Button>
+            </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
@@ -837,7 +862,7 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = ({
             <TableRow>
               <TableHead className="w-[20%]">Código de Barras</TableHead>
               <TableHead className="w-[30%]">Descripción</TableHead>
-              <TableHead className="w-[25%] sm:table-cell">Proveedor</TableHead>
+              <TableHead className="w-[25%] hidden sm:table-cell">Proveedor</TableHead> {/* Hide Provider on small screens */}
               <TableHead className="w-[15%] text-right">Stock</TableHead>
               {/* Removed Actions column header */}
             </TableRow>
@@ -855,7 +880,7 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = ({
                     >
                   {product.description}
                 </TableCell>
-                 <TableCell className="w-[25%] sm:table-cell text-gray-600" aria-label="Proveedor">
+                 <TableCell className="w-[25%] hidden sm:table-cell text-gray-600" aria-label="Proveedor">
                   {product.provider}
                 </TableCell>
                 <TableCell className="w-[15%] text-right text-gray-600" aria-label="Stock">
@@ -952,7 +977,13 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = ({
                         onChange={(e) => {
                           // Ensure the value passed to the form state is a number or undefined
                            const value = e.target.value === '' ? undefined : parseInt(e.target.value, 10);
-                           field.onChange(isNaN(value as any) ? undefined : value);
+                           // Allow resetting to empty string which translates to undefined
+                           field.onChange(e.target.value === '' ? '' : (isNaN(value as any) ? field.value : value));
+                        }}
+                         onBlur={(e) => { // Ensure value is 0 if left empty
+                            if (e.target.value === '') {
+                                field.onChange(0);
+                            }
                         }}
                       />
                     </FormControl>

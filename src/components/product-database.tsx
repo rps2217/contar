@@ -12,7 +12,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { Button } from "@/components/ui/button";
-import { Trash, Upload, FileDown, Filter } from "lucide-react";
+import { Trash, Upload, FileDown, Filter, SheetIcon } from "lucide-react"; // Added SheetIcon
 import { useToast } from "@/hooks/use-toast";
 import {
   Dialog,
@@ -59,6 +59,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"; // Added Alert components
 
 interface Product {
   barcode: string;
@@ -142,48 +143,58 @@ export const getAllProductsFromDB = async (): Promise<Product[]> => {
 };
 
 export const addProductsToDB = async (products: Product[]): Promise<void> => {
-  return new Promise(async (resolve, reject) => {
-    try {
-      const db = await openDB();
-      const transaction = db.transaction(OBJECT_STORE_NAME, "readwrite");
-      const objectStore = transaction.objectStore(OBJECT_STORE_NAME);
-
-      let completedRequests = 0;
-      const totalRequests = products.length;
-
-      const checkCompletion = () => {
-        completedRequests++;
-        if (completedRequests === totalRequests) {
-          resolve(); // Resolve the main promise when all put requests are done
-        }
-      };
-
-      products.forEach(product => {
-        const request = objectStore.put(product);
-        request.onsuccess = checkCompletion;
-        request.onerror = () => {
-            console.error("Error adding product to IndexedDB", request.error);
-            // Optionally reject or continue, depending on desired behavior
-            checkCompletion(); // Ensure completion check even on error
-        };
-      });
-
-      transaction.oncomplete = () => {
-        console.log("Transaction completed for adding products.");
-        db.close();
-      };
-
-      transaction.onerror = () => {
-        console.error("Error adding products to IndexedDB", transaction.error);
-        db.close();
-        reject(transaction.error);
-      };
-    } catch (error) {
-       console.error("Failed to open DB for adding products", error);
-      reject(error);
+    if (!products || products.length === 0) {
+        return Promise.resolve();
     }
-  });
+
+    return new Promise(async (resolve, reject) => {
+        try {
+            const db = await openDB();
+            const transaction = db.transaction(OBJECT_STORE_NAME, "readwrite");
+            const objectStore = transaction.objectStore(OBJECT_STORE_NAME);
+            let completedRequests = 0;
+            const totalRequests = products.length;
+
+            const checkCompletion = () => {
+                completedRequests++;
+                if (completedRequests === totalRequests) {
+                    // Resolve *after* transaction completes for full certainty
+                }
+            };
+
+            products.forEach(product => {
+                 // Basic validation before adding
+                 if (!product || typeof product.barcode !== 'string' || product.barcode.trim() === '') {
+                    console.warn('Skipping invalid product:', product);
+                    checkCompletion(); // Still count it as processed
+                    return;
+                 }
+                const request = objectStore.put(product);
+                request.onsuccess = checkCompletion;
+                request.onerror = (event) => {
+                    console.error("Error adding product to IndexedDB", (event.target as IDBRequest).error, product);
+                    checkCompletion();
+                };
+            });
+
+            transaction.oncomplete = () => {
+                console.log(`Transaction completed for adding ${totalRequests} products.`);
+                db.close();
+                resolve(); // Resolve here ensures all writes are done
+            };
+
+            transaction.onerror = () => {
+                console.error("Transaction error adding products to IndexedDB", transaction.error);
+                db.close();
+                reject(transaction.error);
+            };
+        } catch (error) {
+            console.error("Failed to open DB for adding products", error);
+            reject(error);
+        }
+    });
 };
+
 
 export const updateProductInDB = async (product: Product): Promise<void> => {
   const db = await openDB();
@@ -257,157 +268,153 @@ export const clearDatabaseDB = async (): Promise<void> => {
     });
 };
 
-async function fetchGoogleSheetData(sheetUrl: string): Promise<Product[]> {
-    // Check if the URL is valid
+// Helper function to parse Google Sheet URL
+const parseGoogleSheetUrl = (sheetUrl: string): { spreadsheetId: string | null; gid: string } => {
     try {
-        new URL(sheetUrl);
+        new URL(sheetUrl); // Basic URL validation
     } catch (error) {
-        console.error("Invalid Google Sheet URL", error);
-        throw new Error("URL de Hoja de Google inválida");
+        console.error("Invalid Google Sheet URL provided", error);
+        throw new Error("URL de Hoja de Google inválida.");
     }
 
     const spreadsheetIdMatch = sheetUrl.match(/\/d\/([a-zA-Z0-9-_]+)\//);
     const sheetGidMatch = sheetUrl.match(/[#&]gid=([0-9]+)/);
 
-    if (!spreadsheetIdMatch || !spreadsheetIdMatch[1]) {
-        throw new Error("No se pudo extraer el ID de la hoja de cálculo de la URL.");
+    const spreadsheetId = spreadsheetIdMatch ? spreadsheetIdMatch[1] : null;
+    const gid = sheetGidMatch ? sheetGidMatch[1] : '0'; // Default to first sheet (gid=0)
+
+    return { spreadsheetId, gid };
+};
+
+// Fetches and parses data from a publicly accessible Google Sheet CSV export URL
+async function fetchGoogleSheetData(sheetUrl: string): Promise<Product[]> {
+    const { spreadsheetId, gid } = parseGoogleSheetUrl(sheetUrl);
+
+    if (!spreadsheetId) {
+        throw new Error("No se pudo extraer el ID de la hoja de cálculo de la URL. Asegúrese de que la URL sea correcta.");
     }
-    const spreadsheetId = spreadsheetIdMatch[1];
-    const gid = sheetGidMatch ? sheetGidMatch[1] : '0'; // Default to first sheet if gid is missing
 
-    // Build the Google Sheets API URL for CSV export
-    const csvUrl = `https://docs.google.com/spreadsheets/d/${spreadsheetId}/export?format=csv&gid=${gid}`;
+    // Construct the CSV export URL
+    // This requires the sheet to be publicly accessible ("Anyone with the link can view")
+    // It does *not* strictly require "Publish to the web", but public link sharing is needed.
+    const csvExportUrl = `https://docs.google.com/spreadsheets/d/${spreadsheetId}/export?format=csv&gid=${gid}`;
 
-    console.log("Attempting to fetch Google Sheet CSV from:", csvUrl);
+    console.log("Attempting to fetch Google Sheet CSV from:", csvExportUrl);
 
+    let response: Response;
     try {
-        const response = await fetch(csvUrl);
-
-        if (!response.ok) {
-             console.error(`Failed to fetch data: ${response.status} ${response.statusText}`);
-             const errorText = await response.text(); // Attempt to get more error details
-             console.error("Error response body:", errorText);
-            // Try to provide a more user-friendly error based on status
-             if (response.status === 404) {
-                 throw new Error(`Error al obtener datos: Hoja no encontrada o no publicada como CSV (Verifique la URL y la configuración de uso compartido).`);
-             } else if (response.status === 403) {
-                  throw new Error(`Error al obtener datos: Permiso denegado. Asegúrese de que la hoja esté publicada en la web como CSV.`);
-             }
-            throw new Error(`Error al obtener datos de Google Sheets: ${response.status} ${response.statusText}`);
-        }
-
-        const csvText = await response.text();
-        console.log("Successfully fetched CSV data.");
-
-        // Parse the CSV data
-        const lines = csvText.split(/\r?\n/); // Split by newline, handling Windows/Unix endings
-        if (lines.length < 1) {
-            console.warn("CSV data is empty or invalid.");
-            return [];
-        }
-
-        // Remove quotes from header, trim spaces, convert to lowercase for consistency
-        const headers = lines[0]
-                            .split(',')
-                            .map(header => header.replace(/^"|"$/g, '').trim().toLowerCase());
-
-        console.log("Processed CSV Headers:", headers); // Log processed headers
-        const products: Product[] = [];
-
-        // Define possible header names (English and Spanish)
-        const headerMappings: { [key: string]: string[] } = {
-            barcode: ['barcode', 'código de barras'],
-            description: ['description', 'descripción'],
-            provider: ['provider', 'proveedor'],
-            stock: ['stock']
-        };
-
-        const findHeaderIndex = (possibleNames: string[]): number => {
-            for (const name of possibleNames) {
-                const index = headers.indexOf(name);
-                if (index !== -1) {
-                    return index;
-                }
-            }
-            return -1; // Not found
-        };
-
-        // Ensure required headers are present (case-insensitive check for mapped names)
-        const requiredHeaders = ['barcode', 'description', 'stock']; // Provider is optional
-        for (const reqHeaderKey of requiredHeaders) {
-            const possibleNames = headerMappings[reqHeaderKey];
-            const found = possibleNames.some(name => headers.includes(name));
-            if (!found) {
-                 console.error(`Required header (English or Spanish) for "${reqHeaderKey}" not found in processed CSV headers: [${headers.join(', ')}]. Check Google Sheet headers.`);
-                 throw new Error(`Encabezado requerido para "${reqHeaderKey}" (Inglés o Español) no encontrado en el archivo CSV. Verifique los encabezados de la Hoja de Google.`);
-            }
-        }
-
-        const barcodeIndex = findHeaderIndex(headerMappings.barcode);
-        const descriptionIndex = findHeaderIndex(headerMappings.description);
-        const providerIndex = findHeaderIndex(headerMappings.provider); // Can be -1 if not present
-        const stockIndex = findHeaderIndex(headerMappings.stock);
-
-        // Double-check required indices were found (should be guaranteed by the check above, but good practice)
-        if (barcodeIndex === -1 || descriptionIndex === -1 || stockIndex === -1) {
-             throw new Error("No se pudieron encontrar todos los encabezados requeridos (código de barras, descripción, stock) en el archivo CSV.");
-        }
-
-
-        for (let i = 1; i < lines.length; i++) {
-            const line = lines[i].trim();
-            if (!line) continue; // Skip empty lines
-
-            // Basic CSV parsing, might need a more robust library for complex CSVs
-             // This simple split won't handle commas within quoted fields correctly
-             // Consider using a library like Papaparse for robust CSV parsing if needed
-            const values = line.split(',').map(value => value.replace(/^"|"$/g, '').trim());
-
-             // Check if number of values matches number of headers (basic validation)
-             if (values.length !== headers.length) {
-                 console.warn(`Skipping row ${i + 1} due to mismatched column count. Expected ${headers.length}, got ${values.length}. Line: "${line}"`);
-                 continue;
-             }
-
-            const barcode = values[barcodeIndex];
-            const description = values[descriptionIndex];
-            const provider = providerIndex !== -1 ? (values[providerIndex] || "Desconocido") : "Desconocido"; // Default provider
-            const stockStr = values[stockIndex];
-            const stock = parseInt(stockStr, 10);
-
-            // Basic validation
-            if (!barcode) {
-                console.warn(`Skipping row ${i + 1} due to missing barcode.`);
-                continue;
-            }
-            if (!description) {
-                 console.warn(`Skipping row ${i + 1} due to missing description.`);
-                continue;
-            }
-             if (isNaN(stock)) {
-                 console.warn(`Skipping row ${i + 1} due to invalid stock value: "${stockStr}". Setting stock to 0.`);
-             }
-
-             products.push({
-                barcode: barcode,
-                description: description,
-                provider: provider,
-                stock: isNaN(stock) ? 0 : stock, // Default to 0 if stock is NaN
-                count: 0, // Default count
-            });
-        }
-        console.log(`Parsed ${products.length} products from CSV.`);
-        return products;
+        response = await fetch(csvExportUrl);
     } catch (error: any) {
-        console.error("Error fetching or parsing Google Sheet data", error);
-         // Check for CORS errors explicitly (though less likely with direct CSV export URL)
-        if (error instanceof TypeError && error.message.toLowerCase().includes('fetch')) {
-             // This might indicate a network issue or CORS if the URL was incorrect/redirected unexpectedly
-             throw new Error("Error de red al intentar obtener la hoja. Verifique la URL y su conexión a Internet.");
-        }
-        // Re-throw original or specific error message
-        throw new Error(error.message || `Error al obtener datos de Google Sheets.`);
+        // Network errors (e.g., CORS if redirected unexpectedly, DNS issues)
+        console.error("Network error fetching Google Sheet:", error);
+        throw new Error("Error de red al intentar obtener la hoja. Verifique la URL, su conexión a Internet y la configuración de uso compartido de la hoja (debe ser accesible públicamente con el enlace).");
     }
+
+    if (!response.ok) {
+        console.error(`Failed to fetch Google Sheet data: ${response.status} ${response.statusText}`);
+        const errorText = await response.text().catch(() => "Could not read error response body."); // Attempt to get more details
+        console.error("Error response body:", errorText);
+
+        let userMessage = `Error ${response.status} al obtener datos de Google Sheets.`;
+        if (response.status === 400) {
+             userMessage += " Verifique que la URL y el GID sean correctos.";
+        } else if (response.status === 403) {
+             userMessage += " Acceso denegado. Asegúrese de que la hoja sea pública ('Cualquier persona con el enlace puede ver').";
+        } else if (response.status === 404) {
+             userMessage += " Hoja no encontrada. Verifique que la URL sea correcta.";
+        } else {
+            userMessage += ` ${response.statusText}. Verifique la URL y la configuración de uso compartido.`
+        }
+        throw new Error(userMessage);
+    }
+
+    const csvText = await response.text();
+    console.log("Successfully fetched CSV data.");
+
+    // --- CSV Parsing Logic ---
+    const lines = csvText.split(/\r?\n/);
+    if (lines.length < 1) {
+        console.warn("CSV data is empty or invalid.");
+        return [];
+    }
+
+    // Robust header processing: remove quotes, trim, lowercase
+    const headers = lines[0]
+                        .split(',')
+                        .map(header => header.replace(/^"|"$/g, '').trim().toLowerCase());
+    console.log("Processed CSV Headers:", headers);
+
+    const headerMappings: { [key: string]: string[] } = {
+        barcode: ['barcode', 'código de barras'],
+        description: ['description', 'descripción'],
+        provider: ['provider', 'proveedor'],
+        stock: ['stock']
+    };
+
+    // Find header indices based on possible names
+    const findHeaderIndex = (possibleNames: string[]): number => {
+        for (const name of possibleNames) {
+            const index = headers.indexOf(name);
+            if (index !== -1) return index;
+        }
+        return -1;
+    };
+
+    const barcodeIndex = findHeaderIndex(headerMappings.barcode);
+    const descriptionIndex = findHeaderIndex(headerMappings.description);
+    const providerIndex = findHeaderIndex(headerMappings.provider);
+    const stockIndex = findHeaderIndex(headerMappings.stock);
+
+    // Validate required headers
+    const requiredHeaders = ['barcode', 'description', 'stock'];
+    for (const reqHeaderKey of requiredHeaders) {
+        const possibleNames = headerMappings[reqHeaderKey];
+        const found = possibleNames.some(name => headers.includes(name));
+        if (!found) {
+             console.error(`Required header for "${reqHeaderKey}" (English or Spanish: ${possibleNames.join('/')}) not found in processed CSV headers: [${headers.join(', ')}]. Check Google Sheet headers.`);
+             throw new Error(`Encabezado requerido para "${reqHeaderKey}" (ej. ${possibleNames.join('/')}) no encontrado en el CSV. Verifique los encabezados de la Hoja de Google.`);
+        }
+    }
+
+    // Parse data rows
+    const products: Product[] = [];
+    for (let i = 1; i < lines.length; i++) {
+        const line = lines[i].trim();
+        if (!line) continue; // Skip empty lines
+
+        // Basic CSV split - might fail with commas inside quotes
+        const values = line.split(',').map(value => value.replace(/^"|"$/g, '').trim());
+
+        if (values.length !== headers.length) {
+            console.warn(`Skipping row ${i + 1} due to mismatched column count. Expected ${headers.length}, got ${values.length}. Line: "${line}"`);
+            continue;
+        }
+
+        const barcode = values[barcodeIndex];
+        const description = values[descriptionIndex];
+        const provider = providerIndex !== -1 ? (values[providerIndex] || "Desconocido") : "Desconocido";
+        const stockStr = values[stockIndex];
+        const stock = parseInt(stockStr, 10);
+
+        if (!barcode) {
+            console.warn(`Skipping row ${i + 1}: Missing barcode.`);
+            continue;
+        }
+         if (!description) {
+            console.warn(`Skipping row ${i + 1} (Barcode: ${barcode}): Missing description.`);
+            continue; // Or assign default description?
+        }
+
+        products.push({
+            barcode: barcode,
+            description: description,
+            provider: provider,
+            stock: isNaN(stock) ? 0 : stock, // Default to 0 if stock is not a number
+            count: 0, // Default count
+        });
+    }
+    console.log(`Parsed ${products.length} products from CSV.`);
+    return products;
 }
 
 export const ProductDatabase: React.FC<ProductDatabaseProps> = ({
@@ -428,7 +435,7 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = ({
   const [googleSheetUrl, setGoogleSheetUrl] = useState("");
   const [searchTerm, setSearchTerm] = useState("");
   const [selectedProviderFilter, setSelectedProviderFilter] = useState<string>("all"); // 'all' means no filter
-
+  const [showSheetInfoAlert, setShowSheetInfoAlert] = useState(false); // State for sheet info alert
 
   const productForm = useForm<ProductValues>({
     resolver: zodResolver(productSchema),
@@ -471,12 +478,16 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = ({
       });
       reset(); // Reset form after successful submission
       setOpen(false); // Close dialog after successful submission
-    } catch (error) {
+    } catch (error: any) {
       console.error("Database operation failed", error);
+       let errorMessage = "Error al guardar el producto en la base de datos.";
+      if (error.name === 'ConstraintError') {
+        errorMessage = `El producto con código de barras ${newProduct.barcode} ya existe.`;
+      }
       toast({
         variant: "destructive",
         title: "Error",
-        description: "Error al guardar el producto en la base de datos.",
+        description: errorMessage,
       });
     }
   }, [setDatabaseProducts, toast, reset]);
@@ -544,6 +555,8 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = ({
         setUploadComplete(false);
         setProductsLoaded(0);
         setTotalProducts(0); // Reset total products count
+        setShowSheetInfoAlert(true); // Show info alert when starting load
+
 
         try {
             const products = await fetchGoogleSheetData(googleSheetUrl);
@@ -551,19 +564,16 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = ({
 
             if (products.length === 0) {
                  toast({
-                    title: "No hay productos",
-                    description: "La hoja de cálculo está vacía o no tiene el formato correcto.",
-                });
-                setIsUploading(false);
-                return;
+                    variant: "destructive", // Use destructive variant for potential issues
+                    title: "No se encontraron productos",
+                    description: "La hoja de cálculo está vacía, no tiene el formato correcto o no es accesible.",
+                 });
+                 setIsUploading(false);
+                 return;
             }
 
 
-            // Clear existing database before loading new data? - Decided against auto-clear
-            // Consider adding a confirmation dialog if you want to clear first.
-            // await clearDatabaseDB();
-
-             // Define chunk size
+            // Define chunk size for adding to DB
             const CHUNK_SIZE = 200;
             let currentChunk = 0;
 
@@ -573,20 +583,34 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = ({
                 const chunk = products.slice(start, end);
 
                 if (chunk.length > 0) {
-                    await addProductsToDB(chunk);
-                    const loadedCount = Math.min(productsLoaded + chunk.length, totalProducts);
-                    setProductsLoaded(loadedCount);
-                    setUploadProgress(Math.round((loadedCount / totalProducts) * 100));
-                    currentChunk++;
-                     // Use setTimeout to yield to the main thread and allow UI updates
-                    setTimeout(processChunk, 0);
+                     try {
+                        await addProductsToDB(chunk);
+                        const loadedCount = Math.min(productsLoaded + chunk.length, totalProducts);
+                        setProductsLoaded(loadedCount);
+                        setUploadProgress(Math.round((loadedCount / totalProducts) * 100));
+                        currentChunk++;
+                        // Use setTimeout to yield to the main thread and allow UI updates
+                        setTimeout(processChunk, 50); // Increased timeout slightly
+                     } catch (dbError) {
+                        console.error("Error adding chunk to DB:", dbError);
+                        setIsUploading(false);
+                        toast({
+                            variant: "destructive",
+                            title: "Error de base de datos",
+                            description: "Ocurrió un error al guardar los productos. Verifique la consola para más detalles.",
+                            duration: 9000,
+                        });
+                        // Optionally stop processing further chunks on DB error
+                        return;
+                     }
                 } else {
                     // All chunks processed
                     setIsUploading(false);
                     setUploadComplete(true);
+                    setShowSheetInfoAlert(false); // Hide info alert on completion
                     loadInitialData(); // Refresh data after upload
                     toast({
-                        title: "Productos cargados",
+                        title: "Carga completa",
                         description: `Se han cargado ${products.length} productos desde la hoja de cálculo.`,
                     });
                 }
@@ -598,15 +622,16 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = ({
 
         } catch (error: any) {
             setIsUploading(false);
+            setShowSheetInfoAlert(false); // Hide info alert on error
             console.error("Error during Google Sheet load process:", error);
             toast({
                 variant: "destructive",
                 title: "Error de carga",
-                description: error.message || `Error al cargar datos desde Google Sheets.`,
+                description: error.message || `Error desconocido al cargar datos desde Google Sheets. Verifique la URL, la configuración de uso compartido y la consola del navegador para más detalles.`,
                 duration: 9000, // Show longer for potentially complex errors
             });
         }
-    }, [setDatabaseProducts, toast, googleSheetUrl, loadInitialData, productsLoaded, totalProducts]);
+    }, [googleSheetUrl, toast, loadInitialData, productsLoaded, totalProducts, setDatabaseProducts]); // Added setDatabaseProducts
 
 
   const handleExportDatabase = useCallback(() => {
@@ -768,8 +793,8 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = ({
         </Label>
         <Input
           id="google-sheet-url"
-          type="text"
-          placeholder="URL de la hoja de Google publicada como CSV"
+          type="url" // Use type="url" for better semantics/validation
+          placeholder="URL de la Hoja de Google (pública con enlace)"
           value={googleSheetUrl}
           onChange={(e) => setGoogleSheetUrl(e.target.value)}
           className="flex-grow min-w-[200px]"
@@ -780,17 +805,31 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = ({
             {isUploading ? 'Cargando...' : 'Cargar'}
         </Button>
       </div>
+
+      {/* Informational Alert for Google Sheet Loading */}
+      {showSheetInfoAlert && (
+         <Alert className="mb-4 bg-blue-50 border-blue-300 text-blue-800">
+             <SheetIcon className="h-5 w-5 text-blue-600" /> {/* Added SheetIcon */}
+             <AlertTitle className="font-semibold">Cargando desde Google Sheet</AlertTitle>
+             <AlertDescription>
+                 Asegúrese de que la hoja de cálculo de Google esté compartida como{" "}
+                 <span className="font-medium">"Cualquier persona con el enlace puede ver"</span>{" "}
+                 para que la carga funcione correctamente. Los encabezados esperados (en inglés o español) son: código de barras/barcode, descripción/description, stock. Proveedor/provider es opcional.
+             </AlertDescription>
+         </Alert>
+      )}
+
       {isUploading && (
         <>
-          <Progress value={uploadProgress} className="mb-4" />
-          <p className="text-sm text-blue-500">
-            Cargando {productsLoaded} de {totalProducts} productos...
+          <Progress value={uploadProgress} className="mb-1 h-2" /> {/* Reduced height */}
+          <p className="text-sm text-blue-600 mb-4 text-center">
+            Cargando {productsLoaded} de {totalProducts} productos... ({uploadProgress}%)
           </p>
         </>
       )}
       {uploadComplete && !isUploading && (
-        <p className="text-sm text-green-500">
-          Carga completa! Se cargaron {productsLoaded} productos.
+        <p className="text-sm text-green-600 mb-4 text-center">
+          ¡Carga completa! Se cargaron {productsLoaded} productos.
         </p>
       )}
       <AlertDialog open={openAlert} onOpenChange={setOpenAlert}>
@@ -818,7 +857,7 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = ({
         {/* Button to trigger clearing the entire database */}
       <Button variant="destructive" onClick={triggerClearDatabaseAlert}>Borrar Base de Datos</Button>
 
-      <ScrollArea className="h-[calc(100vh-400px)] mt-4 border rounded-lg">
+      <ScrollArea className="h-[calc(100vh-450px)] mt-4 border rounded-lg"> {/* Adjusted height */}
         <Table>
           <TableCaption>Lista de productos en la base de datos.</TableCaption>
            <TableHeader className="sticky top-0 bg-background z-10">
@@ -966,6 +1005,3 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = ({
     </div>
   );
 };
-
-
-    

@@ -305,17 +305,20 @@ async function fetchGoogleSheetData(sheetUrl: string): Promise<Product[]> {
             return [];
         }
 
-        // Remove quotes from header and trim spaces, convert to lowercase for consistency
-        const headers = lines[0].split(',').map(header => header.replace(/^"|"$/g, '').trim().toLowerCase());
-        console.log("CSV Headers:", headers);
+        // Remove quotes from header, trim spaces, convert to lowercase for consistency
+        const headers = lines[0]
+                            .split(',')
+                            .map(header => header.replace(/^"|"$/g, '').trim().toLowerCase());
+
+        console.log("Processed CSV Headers:", headers); // Log processed headers
         const products: Product[] = [];
 
-        // Ensure required headers are present
+        // Ensure required headers are present (case-insensitive check)
         const requiredHeaders = ['barcode', 'description', 'stock']; // Provider is optional
         for (const reqHeader of requiredHeaders) {
             if (!headers.includes(reqHeader)) {
-                 console.error(`Required header "${reqHeader}" not found in CSV.`);
-                throw new Error(`Encabezado requerido "${reqHeader}" no encontrado en el archivo CSV.`);
+                console.error(`Required header "${reqHeader}" not found in processed CSV headers: [${headers.join(', ')}]. Check Google Sheet headers.`);
+                throw new Error(`Encabezado requerido "${reqHeader}" no encontrado en el archivo CSV. Verifique los encabezados de la Hoja de Google (se esperan: barcode, description, stock).`);
             }
         }
 
@@ -334,10 +337,11 @@ async function fetchGoogleSheetData(sheetUrl: string): Promise<Product[]> {
              // Consider using a library like Papaparse for robust CSV parsing if needed
             const values = line.split(',').map(value => value.replace(/^"|"$/g, '').trim());
 
-            if (values.length < requiredHeaders.length) {
-                console.warn(`Skipping row ${i + 1} due to insufficient columns.`);
-                continue;
-            }
+             // Check if number of values matches number of headers (basic validation)
+             if (values.length !== headers.length) {
+                 console.warn(`Skipping row ${i + 1} due to mismatched column count. Expected ${headers.length}, got ${values.length}. Line: "${line}"`);
+                 continue;
+             }
 
             const barcode = values[barcodeIndex];
             const description = values[descriptionIndex];
@@ -371,7 +375,7 @@ async function fetchGoogleSheetData(sheetUrl: string): Promise<Product[]> {
     } catch (error: any) {
         console.error("Error fetching or parsing Google Sheet data", error);
          // Check for CORS errors explicitly (though less likely with direct CSV export URL)
-        if (error instanceof TypeError && error.message.includes('fetch')) {
+        if (error instanceof TypeError && error.message.toLowerCase().includes('fetch')) {
              // This might indicate a network issue or CORS if the URL was incorrect/redirected unexpectedly
              throw new Error("Error de red al intentar obtener la hoja. Verifique la URL y su conexión a Internet.");
         }
@@ -533,18 +537,38 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = ({
             // Consider adding a confirmation dialog if you want to clear first.
             // await clearDatabaseDB();
 
-            await addProductsToDB(products); // Use the bulk add function
+             // Define chunk size
+            const CHUNK_SIZE = 200;
+            let currentChunk = 0;
 
-            // Update progress - since addProductsToDB handles bulk, we show 100% on success
-            setProductsLoaded(products.length);
-            setUploadProgress(100);
-            setIsUploading(false);
-            setUploadComplete(true);
-            loadInitialData(); // Refresh data after upload
-            toast({
-                title: "Productos cargados",
-                description: `Se han cargado ${products.length} productos desde la hoja de cálculo.`,
-            });
+            const processChunk = async () => {
+                const start = currentChunk * CHUNK_SIZE;
+                const end = start + CHUNK_SIZE;
+                const chunk = products.slice(start, end);
+
+                if (chunk.length > 0) {
+                    await addProductsToDB(chunk);
+                    const loadedCount = Math.min(productsLoaded + chunk.length, totalProducts);
+                    setProductsLoaded(loadedCount);
+                    setUploadProgress(Math.round((loadedCount / totalProducts) * 100));
+                    currentChunk++;
+                     // Use setTimeout to yield to the main thread and allow UI updates
+                    setTimeout(processChunk, 0);
+                } else {
+                    // All chunks processed
+                    setIsUploading(false);
+                    setUploadComplete(true);
+                    loadInitialData(); // Refresh data after upload
+                    toast({
+                        title: "Productos cargados",
+                        description: `Se han cargado ${products.length} productos desde la hoja de cálculo.`,
+                    });
+                }
+            };
+
+            // Start processing the first chunk
+            processChunk();
+
 
         } catch (error: any) {
             setIsUploading(false);
@@ -556,7 +580,7 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = ({
                 duration: 9000, // Show longer for potentially complex errors
             });
         }
-    }, [setDatabaseProducts, toast, googleSheetUrl, loadInitialData]);
+    }, [setDatabaseProducts, toast, googleSheetUrl, loadInitialData, productsLoaded, totalProducts]);
 
 
   const handleExportDatabase = useCallback(() => {
@@ -784,20 +808,21 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = ({
               <TableRow key={product.barcode} className="hover:bg-gray-50">
                 <TableCell
                  className="w-[25%] font-medium"
-
+                 aria-label="Código de Barras"
                 >
                   {product.barcode}
                 </TableCell>
                 <TableCell
                     className="w-[35%] cursor-pointer hover:text-teal-700 hover:underline"
                     onClick={() => handleOpenEditDialog(product)}
+                     aria-label={`Editar producto ${product.description}`}
                     >
                   {product.description}
                 </TableCell>
-                 <TableCell className="hidden sm:table-cell w-[25%] text-gray-600">
+                 <TableCell className="hidden sm:table-cell w-[25%] text-gray-600" aria-label="Proveedor">
                   {product.provider}
                 </TableCell>
-                <TableCell className="w-[15%] text-right text-gray-600">
+                <TableCell className="w-[15%] text-right text-gray-600" aria-label="Stock">
                   {product.stock}
                 </TableCell>
               </TableRow>

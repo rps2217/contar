@@ -1,3 +1,4 @@
+
 "use client";
 
 import { useState, useCallback, useRef, useEffect } from "react";
@@ -11,7 +12,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { Button } from "@/components/ui/button";
-import { Trash, Upload, FileDown } from "lucide-react";
+import { Trash, Upload, FileDown, Filter } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import {
   Dialog,
@@ -50,6 +51,13 @@ import {
 } from "@/components/ui/alert-dialog";
 import { Progress } from "@/components/ui/progress";
 import { useIsMobile } from "@/hooks/use-mobile";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 
 interface Product {
   barcode: string;
@@ -98,7 +106,9 @@ export const openDB = (): Promise<IDBDatabase> => {
     request.onupgradeneeded = (event: IDBVersionChangeEvent) => {
       const db = (event.target as IDBOpenDBRequest).result;
       if (!db.objectStoreNames.contains(OBJECT_STORE_NAME)) {
-        db.createObjectStore(OBJECT_STORE_NAME, { keyPath: "barcode" });
+        const store = db.createObjectStore(OBJECT_STORE_NAME, { keyPath: "barcode" });
+        // Add index for provider for potential filtering optimizations
+        store.createIndex("provider", "provider", { unique: false });
       }
     };
 
@@ -137,20 +147,38 @@ export const addProductsToDB = async (products: Product[]): Promise<void> => {
       const transaction = db.transaction(OBJECT_STORE_NAME, "readwrite");
       const objectStore = transaction.objectStore(OBJECT_STORE_NAME);
 
+      let completedRequests = 0;
+      const totalRequests = products.length;
+
+      const checkCompletion = () => {
+        completedRequests++;
+        if (completedRequests === totalRequests) {
+          resolve(); // Resolve the main promise when all put requests are done
+        }
+      };
+
       products.forEach(product => {
-        objectStore.put(product);
+        const request = objectStore.put(product);
+        request.onsuccess = checkCompletion;
+        request.onerror = () => {
+            console.error("Error adding product to IndexedDB", request.error);
+            // Optionally reject or continue, depending on desired behavior
+            checkCompletion(); // Ensure completion check even on error
+        };
       });
 
       transaction.oncomplete = () => {
+        console.log("Transaction completed for adding products.");
         db.close();
-        resolve();
       };
 
       transaction.onerror = () => {
         console.error("Error adding products to IndexedDB", transaction.error);
+        db.close();
         reject(transaction.error);
       };
     } catch (error) {
+       console.error("Failed to open DB for adding products", error);
       reject(error);
     }
   });
@@ -209,6 +237,7 @@ export const clearDatabaseDB = async (): Promise<void> => {
             const request = objectStore.clear();
 
             request.onsuccess = () => {
+                 console.log("Database cleared successfully.");
                 resolve();
             };
 
@@ -221,6 +250,7 @@ export const clearDatabaseDB = async (): Promise<void> => {
                 db.close();
             };
         } catch (error) {
+             console.error("Failed to open DB for clearing", error);
             reject(error);
         }
     });
@@ -232,67 +262,121 @@ async function fetchGoogleSheetData(sheetUrl: string): Promise<Product[]> {
         new URL(sheetUrl);
     } catch (error) {
         console.error("Invalid Google Sheet URL", error);
-        throw new Error("Invalid Google Sheet URL");
+        throw new Error("URL de Hoja de Google inválida");
     }
 
-    // Extract the spreadsheet ID and sheet name from the URL
-    const urlParts = sheetUrl.split('/');
-    const spreadsheetId = urlParts[5];
-    const sheetName = urlParts[urlParts.length - 1].split('=')[1];
+    const spreadsheetIdMatch = sheetUrl.match(/\/d\/([a-zA-Z0-9-_]+)\//);
+    const sheetGidMatch = sheetUrl.match(/[#&]gid=([0-9]+)/);
 
-    // Build the Google Sheets API URL
-    // Ensure the sheet is published to the web as CSV
-    const csvUrl = `https://docs.google.com/spreadsheets/d/${spreadsheetId}/gviz/tq?tqx=out:csv&sheet=${sheetName}`;
+    if (!spreadsheetIdMatch || !spreadsheetIdMatch[1]) {
+        throw new Error("No se pudo extraer el ID de la hoja de cálculo de la URL.");
+    }
+    const spreadsheetId = spreadsheetIdMatch[1];
+    const gid = sheetGidMatch ? sheetGidMatch[1] : '0'; // Default to first sheet if gid is missing
+
+    // Build the Google Sheets API URL for CSV export
+    const csvUrl = `https://docs.google.com/spreadsheets/d/${spreadsheetId}/export?format=csv&gid=${gid}`;
+
+    console.log("Attempting to fetch Google Sheet CSV from:", csvUrl);
 
     try {
         const response = await fetch(csvUrl);
 
         if (!response.ok) {
-            throw new Error(`Failed to fetch data from Google Sheets: ${response.status} ${response.statusText}`);
+             console.error(`Failed to fetch data: ${response.status} ${response.statusText}`);
+             const errorText = await response.text(); // Attempt to get more error details
+             console.error("Error response body:", errorText);
+            // Try to provide a more user-friendly error based on status
+             if (response.status === 404) {
+                 throw new Error(`Error al obtener datos: Hoja no encontrada o no publicada como CSV (Verifique la URL y la configuración de uso compartido).`);
+             } else if (response.status === 403) {
+                  throw new Error(`Error al obtener datos: Permiso denegado. Asegúrese de que la hoja esté publicada en la web como CSV.`);
+             }
+            throw new Error(`Error al obtener datos de Google Sheets: ${response.status} ${response.statusText}`);
         }
 
         const csvText = await response.text();
+        console.log("Successfully fetched CSV data.");
 
         // Parse the CSV data
-        const lines = csvText.split('\n');
-        // Remove quotes from header and trim spaces
-        const headers = lines[0].split(',').map(header => header.replace(/"/g, '').trim().toLowerCase());
+        const lines = csvText.split(/\r?\n/); // Split by newline, handling Windows/Unix endings
+        if (lines.length < 1) {
+            console.warn("CSV data is empty or invalid.");
+            return [];
+        }
+
+        // Remove quotes from header and trim spaces, convert to lowercase for consistency
+        const headers = lines[0].split(',').map(header => header.replace(/^"|"$/g, '').trim().toLowerCase());
+        console.log("CSV Headers:", headers);
         const products: Product[] = [];
 
-        for (let i = 1; i < lines.length; i++) {
-            const values = lines[i].split(',').map(value => value.replace(/"/g, '').trim());
-            const productData: any = {};
-            for (let j = 0; j < headers.length; j++) {
-                productData[headers[j]] = values[j];
-            }
-
-            const barcode = productData.barcode || '';
-            const description = productData.description || '';
-            const provider = productData.provider || 'Desconocido'; // Default provider if missing
-            const stock = parseInt(productData.stock, 10);
-
-            // Basic validation: ensure barcode and description are not empty
-            if (barcode && description) {
-                 products.push({
-                    barcode: barcode,
-                    description: description,
-                    provider: provider,
-                    stock: isNaN(stock) ? 0 : stock, // Default to 0 if stock is NaN
-                    count: 0, // Default count
-                });
-            } else {
-                console.warn(`Skipping row ${i + 1} due to missing barcode or description.`);
+        // Ensure required headers are present
+        const requiredHeaders = ['barcode', 'description', 'stock']; // Provider is optional
+        for (const reqHeader of requiredHeaders) {
+            if (!headers.includes(reqHeader)) {
+                 console.error(`Required header "${reqHeader}" not found in CSV.`);
+                throw new Error(`Encabezado requerido "${reqHeader}" no encontrado en el archivo CSV.`);
             }
         }
 
+        const barcodeIndex = headers.indexOf('barcode');
+        const descriptionIndex = headers.indexOf('description');
+        const providerIndex = headers.indexOf('provider'); // Can be -1 if not present
+        const stockIndex = headers.indexOf('stock');
+
+
+        for (let i = 1; i < lines.length; i++) {
+            const line = lines[i].trim();
+            if (!line) continue; // Skip empty lines
+
+            // Basic CSV parsing, might need a more robust library for complex CSVs
+             // This simple split won't handle commas within quoted fields correctly
+             // Consider using a library like Papaparse for robust CSV parsing if needed
+            const values = line.split(',').map(value => value.replace(/^"|"$/g, '').trim());
+
+            if (values.length < requiredHeaders.length) {
+                console.warn(`Skipping row ${i + 1} due to insufficient columns.`);
+                continue;
+            }
+
+            const barcode = values[barcodeIndex];
+            const description = values[descriptionIndex];
+            const provider = providerIndex !== -1 ? (values[providerIndex] || "Desconocido") : "Desconocido"; // Default provider
+            const stockStr = values[stockIndex];
+            const stock = parseInt(stockStr, 10);
+
+            // Basic validation
+            if (!barcode) {
+                console.warn(`Skipping row ${i + 1} due to missing barcode.`);
+                continue;
+            }
+            if (!description) {
+                 console.warn(`Skipping row ${i + 1} due to missing description.`);
+                continue;
+            }
+             if (isNaN(stock)) {
+                 console.warn(`Skipping row ${i + 1} due to invalid stock value: "${stockStr}". Setting stock to 0.`);
+             }
+
+             products.push({
+                barcode: barcode,
+                description: description,
+                provider: provider,
+                stock: isNaN(stock) ? 0 : stock, // Default to 0 if stock is NaN
+                count: 0, // Default count
+            });
+        }
+        console.log(`Parsed ${products.length} products from CSV.`);
         return products;
     } catch (error: any) {
-        console.error("Error fetching Google Sheet data", error);
-         // Check for CORS errors explicitly
-        if (error instanceof TypeError && error.message === 'Failed to fetch') {
-             throw new Error("CORS policy might be blocking the request. Ensure the Google Sheet is published to the web.");
+        console.error("Error fetching or parsing Google Sheet data", error);
+         // Check for CORS errors explicitly (though less likely with direct CSV export URL)
+        if (error instanceof TypeError && error.message.includes('fetch')) {
+             // This might indicate a network issue or CORS if the URL was incorrect/redirected unexpectedly
+             throw new Error("Error de red al intentar obtener la hoja. Verifique la URL y su conexión a Internet.");
         }
-        throw new Error(`Failed to fetch data from Google Sheets: ${error.message}`);
+        // Re-throw original or specific error message
+        throw new Error(error.message || `Error al obtener datos de Google Sheets.`);
     }
 }
 
@@ -304,6 +388,7 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = ({
   const [open, setOpen] = useState(false);
   const [selectedProduct, setSelectedProduct] = useState<Product | null>(null);
   const [openAlert, setOpenAlert] = useState(false);
+  const [alertAction, setAlertAction] = useState<'deleteProduct' | 'clearDatabase' | null>(null);
   const [uploadProgress, setUploadProgress] = useState(0);
   const [isUploading, setIsUploading] = useState(false);
   const [uploadComplete, setUploadComplete] = useState(false);
@@ -311,6 +396,8 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = ({
   const [productsLoaded, setProductsLoaded] = useState(0);
   const isMobile = useIsMobile();
   const [googleSheetUrl, setGoogleSheetUrl] = useState("");
+  const [searchTerm, setSearchTerm] = useState("");
+  const [selectedProviderFilter, setSelectedProviderFilter] = useState<string>("all"); // 'all' means no filter
 
 
   const productForm = useForm<ProductValues>({
@@ -334,7 +421,7 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = ({
       toast({
         variant: "destructive",
         title: "Error",
-        description: "Failed to load products from database.",
+        description: "Error al cargar productos de la base de datos.",
       });
     }
   }, [setDatabaseProducts, toast]);
@@ -359,7 +446,7 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = ({
       toast({
         variant: "destructive",
         title: "Error",
-        description: "Failed to save product to database.",
+        description: "Error al guardar el producto en la base de datos.",
       });
     }
   }, [setDatabaseProducts, toast, reset]);
@@ -383,7 +470,7 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = ({
       toast({
         variant: "destructive",
         title: "Error",
-        description: "Failed to update product in database.",
+        description: "Error al actualizar el producto en la base de datos.",
       });
     }
   }, [setDatabaseProducts, toast]);
@@ -405,7 +492,7 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = ({
         toast({
           variant: "destructive",
           title: "Error",
-          description: "Failed to delete product from database.",
+          description: "Error al eliminar el producto de la base de datos.",
         });
       }
     },
@@ -442,63 +529,31 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = ({
             }
 
 
-            // Clear existing database before loading new data
-            // await clearDatabaseDB(); // Consider if this is the desired behavior
+            // Clear existing database before loading new data? - Decided against auto-clear
+            // Consider adding a confirmation dialog if you want to clear first.
+            // await clearDatabaseDB();
 
-            const db = await openDB();
-            const transaction = db.transaction(OBJECT_STORE_NAME, "readwrite");
-            const objectStore = transaction.objectStore(OBJECT_STORE_NAME);
-            let loadedCount = 0;
+            await addProductsToDB(products); // Use the bulk add function
 
-            for (const product of products) {
-                 const request = objectStore.put(product);
-                 request.onsuccess = () => {
-                    loadedCount++;
-                    setProductsLoaded(loadedCount);
-                    setUploadProgress(Math.round((loadedCount / products.length) * 100));
-                };
-                 request.onerror = () => {
-                    console.error("Error adding product to IndexedDB", request.error);
-                    toast({
-                        variant: "destructive",
-                        title: "Error",
-                        description: `Failed to add product to database: ${product.barcode}`,
-                    });
-                    // Optionally stop the process on error
-                    // transaction.abort();
-                    // return;
-                };
-            }
-
-            transaction.oncomplete = () => {
-                db.close();
-                setIsUploading(false);
-                setUploadProgress(100);
-                setUploadComplete(true);
-                loadInitialData(); // Refresh data after upload
-                toast({
-                    title: "Productos cargados",
-                    description: `Se han cargado ${loadedCount} productos desde la hoja de cálculo.`,
-                });
-            };
-
-            transaction.onerror = () => {
-                 db.close();
-                setIsUploading(false);
-                console.error("Transaction error", transaction.error);
-                toast({
-                    variant: "destructive",
-                    title: "Error de transacción",
-                    description: "No se pudieron guardar todos los productos.",
-                });
-            };
+            // Update progress - since addProductsToDB handles bulk, we show 100% on success
+            setProductsLoaded(products.length);
+            setUploadProgress(100);
+            setIsUploading(false);
+            setUploadComplete(true);
+            loadInitialData(); // Refresh data after upload
+            toast({
+                title: "Productos cargados",
+                description: `Se han cargado ${products.length} productos desde la hoja de cálculo.`,
+            });
 
         } catch (error: any) {
             setIsUploading(false);
+            console.error("Error during Google Sheet load process:", error);
             toast({
                 variant: "destructive",
-                title: "Error",
-                description: `Error loading data from Google Sheets: ${error.message}`,
+                title: "Error de carga",
+                description: error.message || `Error al cargar datos desde Google Sheets.`,
+                duration: 9000, // Show longer for potentially complex errors
             });
         }
     }, [setDatabaseProducts, toast, googleSheetUrl, loadInitialData]);
@@ -519,8 +574,8 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = ({
     const headers = ["Barcode", "Description", "Provider", "Stock"];
     const rows = data.map((product) => [
       product.barcode,
-      product.description,
-      product.provider,
+      `"${product.description.replace(/"/g, '""')}"`, // Handle quotes in description
+      `"${product.provider.replace(/"/g, '""')}"`, // Handle quotes in provider
       product.stock,
     ]);
 
@@ -540,13 +595,14 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = ({
         description:
           "Todos los productos han sido eliminados de la base de datos.",
       });
-      setOpenAlert(false);
+      setOpenAlert(false); // Close the confirmation dialog
+      setAlertAction(null); // Reset alert action
     } catch (error) {
       console.error("Failed to clear database", error);
       toast({
         variant: "destructive",
         title: "Error",
-        description: "Failed to clear database.",
+        description: "Error al borrar la base de datos.",
       });
     }
   }, [setDatabaseProducts, toast]);
@@ -584,33 +640,80 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = ({
       toast({
         variant: "destructive",
         title: "Error",
-        description: "Failed to update product in database.",
+        description: "Error al actualizar el producto en la base de datos.",
       });
     }
   };
 
   const handleDeleteConfirmation = () => {
-    if (!selectedProduct) return;
-     handleDeleteProductFromDB(selectedProduct.barcode);
-     setOpen(false); // Close the edit dialog
-     setOpenAlert(false); // Close the confirmation dialog
+    if (alertAction === 'deleteProduct' && selectedProduct) {
+      handleDeleteProductFromDB(selectedProduct.barcode);
+      setOpen(false); // Close the edit dialog if open
+    } else if (alertAction === 'clearDatabase') {
+      handleClearDatabase();
+    }
+    setOpenAlert(false); // Close the confirmation dialog
+    setAlertAction(null); // Reset alert action
   };
 
+  const triggerDeleteProductAlert = () => {
+      if (!selectedProduct) return;
+      setAlertAction('deleteProduct');
+      setOpenAlert(true);
+  };
+
+  const triggerClearDatabaseAlert = () => {
+      setAlertAction('clearDatabase');
+      setOpenAlert(true);
+  };
+
+  const filteredProducts = databaseProducts.filter(product => {
+      const matchesSearch = searchTerm === "" ||
+                            product.barcode.toLowerCase().includes(searchTerm.toLowerCase()) ||
+                            product.description.toLowerCase().includes(searchTerm.toLowerCase());
+      const matchesProvider = selectedProviderFilter === 'all' || product.provider === selectedProviderFilter;
+
+      return matchesSearch && matchesProvider;
+  });
+
+  const providerOptions = ["all", ...Array.from(new Set(databaseProducts.map(p => p.provider)))];
 
 
   return (
     <div>
-      <div className="flex justify-between mb-4">
+      <div className="flex flex-wrap justify-between items-center mb-4 gap-2">
         <Button onClick={() => { setSelectedProduct(null); reset(); setOpen(true); }}>Agregar Producto</Button>
-        <div>
-          <Button onClick={handleExportDatabase}>
-            Exportar Base de Datos <FileDown className="ml-2 h-4 w-4" />
+        <div className="flex items-center gap-2">
+           <Label htmlFor="search-product" className="sr-only">Buscar Producto</Label>
+            <Input
+                id="search-product"
+                type="text"
+                placeholder="Buscar por código o descripción..."
+                value={searchTerm}
+                onChange={(e) => setSearchTerm(e.target.value)}
+                className="max-w-xs"
+            />
+            <Select value={selectedProviderFilter} onValueChange={setSelectedProviderFilter}>
+                <SelectTrigger className="w-[180px]">
+                    <Filter className="mr-2 h-4 w-4" />
+                    <SelectValue placeholder="Filtrar proveedor" />
+                </SelectTrigger>
+                <SelectContent>
+                    {providerOptions.map(provider => (
+                        <SelectItem key={provider} value={provider}>
+                            {provider === 'all' ? 'Todos los proveedores' : provider}
+                        </SelectItem>
+                    ))}
+                </SelectContent>
+            </Select>
+          <Button onClick={handleExportDatabase} variant="outline">
+            Exportar <FileDown className="ml-2 h-4 w-4" />
           </Button>
         </div>
       </div>
 
-      <div className="flex items-center mb-4">
-        <Label htmlFor="google-sheet-url" className="mr-2">
+      <div className="flex flex-wrap items-center mb-4 gap-2">
+        <Label htmlFor="google-sheet-url" className="shrink-0">
           Cargar desde Google Sheet:
         </Label>
         <Input
@@ -619,7 +722,7 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = ({
           placeholder="URL de la hoja de Google publicada como CSV"
           value={googleSheetUrl}
           onChange={(e) => setGoogleSheetUrl(e.target.value)}
-          className="mr-2"
+          className="flex-grow min-w-[200px]"
           disabled={isUploading}
         />
         <Button variant="secondary" disabled={isUploading} onClick={handleLoadFromGoogleSheet}>
@@ -641,76 +744,68 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = ({
         </p>
       )}
       <AlertDialog open={openAlert} onOpenChange={setOpenAlert}>
-        <AlertDialogTrigger asChild>
-          {/* The trigger is now inside the edit dialog */}
-          <span />
-        </AlertDialogTrigger>
+        {/* Trigger is handled programmatically */}
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>¿Estás seguro?</AlertDialogTitle>
-             {selectedProduct && ( // Conditional rendering based on action type
-              <AlertDialogDescription>
-                {selectedProduct ?
+            <AlertDialogDescription>
+              {alertAction === 'deleteProduct' && selectedProduct ?
                 `Esta acción eliminará el producto "${selectedProduct.description}" de la base de datos. Esta acción no se puede deshacer.`
-                 : "Esta acción eliminará todos los productos de la base de datos. Esta acción no se puede deshacer."
+                 : alertAction === 'clearDatabase' ?
+                 "Esta acción eliminará todos los productos de la base de datos. Esta acción no se puede deshacer."
+                 : "Esta acción no se puede deshacer." // Default message
                 }
-              </AlertDialogDescription>
-             )}
-             {!selectedProduct && ( // Conditional rendering for clearing database
-                <AlertDialogDescription>
-                    Esta acción eliminará todos los productos de la base de datos. Esta acción no se puede deshacer.
-                </AlertDialogDescription>
-            )}
+            </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel onClick={() => setOpenAlert(false)}>Cancelar</AlertDialogCancel>
-             <Button variant="destructive" onClick={selectedProduct ? handleDeleteConfirmation : handleClearDatabase}>
-              {selectedProduct ? "Eliminar Producto" : "Borrar Base de Datos"}
+            <Button variant="destructive" onClick={handleDeleteConfirmation}>
+              {alertAction === 'deleteProduct' ? "Eliminar Producto" : "Borrar Base de Datos"}
             </Button>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
         {/* Button to trigger clearing the entire database */}
-      <Button variant="destructive" onClick={() => {setSelectedProduct(null); setOpenAlert(true)}}>Borrar Base de Datos</Button>
+      <Button variant="destructive" onClick={triggerClearDatabaseAlert}>Borrar Base de Datos</Button>
 
-      <ScrollArea className="h-[500px]">
+      <ScrollArea className="h-[calc(100vh-400px)] mt-4 border rounded-lg">
         <Table>
           <TableCaption>Lista de productos en la base de datos.</TableCaption>
-          <TableHeader>
+           <TableHeader className="sticky top-0 bg-background z-10">
             <TableRow>
-              <TableHead style={{ width: '33%' }}>Código de Barras</TableHead>
-              <TableHead style={{ width: '33%' }}>Descripción</TableHead>
-              {/* <TableHead className="hidden sm:table-cell">Proveedor</TableHead> */}
-              <TableHead style={{ width: '33%' }} className="text-right">Stock</TableHead>
+              <TableHead className="w-[25%]">Código de Barras</TableHead>
+              <TableHead className="w-[35%]">Descripción</TableHead>
+              <TableHead className="hidden sm:table-cell w-[25%]">Proveedor</TableHead>
+              <TableHead className="w-[15%] text-right">Stock</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
-            {databaseProducts.map((product) => (
-              <TableRow key={product.barcode}>
+            {filteredProducts.map((product) => (
+              <TableRow key={product.barcode} className="hover:bg-gray-50">
                 <TableCell
-                 style={{ width: '33%'}}
+                 className="w-[25%] font-medium"
 
                 >
                   {product.barcode}
                 </TableCell>
                 <TableCell
-                    style={{ width: '33%', cursor: 'pointer' }}
+                    className="w-[35%] cursor-pointer hover:text-teal-700 hover:underline"
                     onClick={() => handleOpenEditDialog(product)}
                     >
                   {product.description}
                 </TableCell>
-                {/* <TableCell className="hidden sm:table-cell">
+                 <TableCell className="hidden sm:table-cell w-[25%] text-gray-600">
                   {product.provider}
-                </TableCell> */}
-                <TableCell style={{ width: '33%' }} className="text-right">
+                </TableCell>
+                <TableCell className="w-[15%] text-right text-gray-600">
                   {product.stock}
                 </TableCell>
               </TableRow>
             ))}
-            {databaseProducts.length === 0 && (
+            {filteredProducts.length === 0 && (
               <TableRow>
-                <TableCell colSpan={3} className="text-center"> {/* Adjusted colSpan */}
-                  No hay productos en la base de datos.
+                <TableCell colSpan={isMobile ? 3 : 4} className="text-center py-10 text-gray-500">
+                  {databaseProducts.length > 0 ? "No hay productos que coincidan con la búsqueda/filtro." : "No hay productos en la base de datos."}
                 </TableCell>
               </TableRow>
             )}
@@ -800,17 +895,17 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = ({
                   </FormItem>
                 )}
               />
-               <DialogFooter className="flex justify-between w-full">
+               <DialogFooter className="flex justify-between w-full pt-4">
                     <Button type="submit">
                       {selectedProduct ? "Guardar cambios" : "Guardar"}
                     </Button>
                     {selectedProduct && (
-                      <Button type="button" variant="destructive" onClick={() => setOpenAlert(true)}>
+                      <Button type="button" variant="destructive" onClick={triggerDeleteProductAlert}>
                         <Trash className="mr-2 h-4 w-4" /> Eliminar
                       </Button>
                     )}
                      <DialogClose asChild>
-                         <Button type="button" variant="secondary">Cancelar</Button>
+                         <Button type="button" variant="outline">Cancelar</Button>
                     </DialogClose>
                 </DialogFooter>
             </form>

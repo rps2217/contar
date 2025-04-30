@@ -60,7 +60,7 @@ const initialProducts: Product[] = [
 export default function Home() {
   const [barcode, setBarcode] = useState("");
   const [products, setProducts] = useState<Product[]>([]);
-  const [databaseProducts, setDatabaseProducts] = useState<Product[]>(initialProducts);
+  const [databaseProducts, setDatabaseProducts] = useState<Product[]>([]);
   const { toast } = useToast();
   const barcodeInputRef = useRef<HTMLInputElement>(null);
   const [openQuantity, setOpenQuantity] = useState(false);
@@ -74,8 +74,23 @@ export default function Home() {
   }, []);
 
   const playBeep = () => {
-    const audio = new Audio('/beep.mp3'); // Path to the beep sound file
-    audio.play();
+      // Check if AudioContext is supported
+    if (typeof window !== 'undefined' && (window.AudioContext || (window as any).webkitAudioContext)) {
+        const audioCtx = new (window.AudioContext || (window as any).webkitAudioContext)();
+        const oscillator = audioCtx.createOscillator();
+        oscillator.type = 'sine'; // Sine wave for a simple beep
+        oscillator.frequency.setValueAtTime(440, audioCtx.currentTime); // A4 pitch
+        oscillator.connect(audioCtx.destination);
+        oscillator.start();
+        // Stop the beep after a short duration
+        setTimeout(() => {
+            oscillator.stop();
+            audioCtx.close(); // Close the context to free resources
+        }, 100); // 100 milliseconds duration
+    } else {
+        console.warn("AudioContext not supported in this browser.");
+        // Fallback or do nothing if AudioContext is not supported
+    }
   };
 
   const handleAddProduct = useCallback(async () => {
@@ -88,28 +103,8 @@ export default function Home() {
       return;
     }
 
-    //let productInfo = databaseProducts.find((p) => p.barcode === barcode);
-    let productInfo = databaseProducts.find((p) => p.barcode === barcode);
-
-    if (!productInfo) {
-      playBeep();
-      productInfo = {
-        barcode: barcode,
-        description: `Nuevo producto ${barcode}`,
-        provider: "Desconocido",
-        stock: 0,
-        count: 0,
-        lastUpdated: '',
-      };
-      setDatabaseProducts(prevProducts => [...prevProducts, productInfo!]);
-      toast({
-        title: "Producto no encontrado",
-        description: `Producto con código de barras ${barcode} no encontrado. Se ha creado un nuevo producto en la base de datos.`,
-      });
-    }
-
-    const existingProductIndex = products.findIndex((p) => p.barcode === productInfo!.barcode);
-
+    // Find product in the current list first
+    const existingProductIndex = products.findIndex((p) => p.barcode === barcode);
     if (existingProductIndex !== -1) {
       const updatedProducts = [...products];
       updatedProducts[existingProductIndex] = {
@@ -117,51 +112,98 @@ export default function Home() {
         count: updatedProducts[existingProductIndex].count + 1,
         lastUpdated: format(new Date(), 'yyyy-MM-dd HH:mm:ss'),
       };
+      // Move the updated product to the top
       setProducts([updatedProducts[existingProductIndex], ...products.slice(0, existingProductIndex), ...products.slice(existingProductIndex + 1)]);
+       toast({
+        title: "Cantidad aumentada",
+        description: `${updatedProducts[existingProductIndex].description} cantidad aumentada a ${updatedProducts[existingProductIndex].count}.`,
+      });
 
     } else {
-      setProducts([{ ...productInfo!, count: 1, lastUpdated: format(new Date(), 'yyyy-MM-dd HH:mm:ss') }, ...products]);
+        // If not in current list, find in database
+        let productInfo = databaseProducts.find((p) => p.barcode === barcode);
+
+        if (!productInfo) {
+          playBeep();
+          productInfo = {
+            barcode: barcode,
+            description: `Nuevo producto ${barcode}`,
+            provider: "Desconocido",
+            stock: 0, // Default stock to 0 for unknown products
+            count: 1, // Start count at 1
+            lastUpdated: format(new Date(), 'yyyy-MM-dd HH:mm:ss'),
+          };
+          // Add the new product to the database state as well
+          setDatabaseProducts(prevDbProducts => [...prevDbProducts, { ...productInfo, count: 0 }]); // Add to DB with count 0
+          toast({
+            title: "Producto no encontrado",
+            description: `Producto con código ${barcode} no encontrado en la base de datos. Se ha agregado a la lista y a la base de datos.`,
+          });
+           setProducts([productInfo, ...products]);
+        } else {
+           setProducts([{ ...productInfo, count: 1, lastUpdated: format(new Date(), 'yyyy-MM-dd HH:mm:ss') }, ...products]);
+             toast({
+                title: "Producto agregado",
+                description: `${productInfo.description} agregado al inventario.`,
+            });
+        }
     }
+
 
     setBarcode("");
     if (barcodeInputRef.current) {
       barcodeInputRef.current.focus();
     }
-    toast({
-      title: "Producto agregado",
-      description: `${productInfo!.description} agregado al inventario.`,
-    });
+
   }, [barcode, databaseProducts, products, toast]);
 
   const handleIncrement = useCallback((barcode: string, type: 'count' | 'stock') => {
       setProducts(prevProducts =>
           prevProducts.map(product => {
               if (product.barcode === barcode) {
-                  if (type === 'count') {
-                      return { ...product, count: product.count + 1,  lastUpdated: format(new Date(), 'yyyy-MM-dd HH:mm:ss') };
-                  } else if (type === 'stock') {
-                      return { ...product, stock: product.stock + 1, lastUpdated: format(new Date(), 'yyyy-MM-dd HH:mm:ss') };
+                  const updatedCount = type === 'count' ? product.count + 1 : product.count;
+                  const updatedStock = type === 'stock' ? product.stock + 1 : product.stock;
+                  const updatedProduct = { ...product, count: updatedCount, stock: updatedStock, lastUpdated: format(new Date(), 'yyyy-MM-dd HH:mm:ss') };
+
+                    // Also update the stock in the database state if stock is changed
+                  if (type === 'stock') {
+                        setDatabaseProducts(prevDbProducts =>
+                            prevDbProducts.map(dbProduct =>
+                                dbProduct.barcode === barcode ? { ...dbProduct, stock: updatedStock } : dbProduct
+                            )
+                        );
                   }
+
+                  return updatedProduct;
               }
               return product;
           })
       );
-  }, []);
+  }, [setDatabaseProducts]); // Ensure setDatabaseProducts is included if it's used
+
 
   const handleDecrement = useCallback((barcode: string, type: 'count' | 'stock') => {
       setProducts(prevProducts =>
           prevProducts.map(product => {
               if (product.barcode === barcode) {
-                  if (type === 'count' && product.count > 0) {
-                      return { ...product, count: product.count - 1, lastUpdated: format(new Date(), 'yyyy-MM-dd HH:mm:ss') };
-                  } else if (type === 'stock' && product.stock > 0) {
-                      return { ...product, stock: product.stock - 1, lastUpdated: format(new Date(), 'yyyy-MM-dd HH:mm:ss') };
+                  const updatedCount = type === 'count' && product.count > 0 ? product.count - 1 : product.count;
+                  const updatedStock = type === 'stock' && product.stock > 0 ? product.stock - 1 : product.stock;
+                  const updatedProduct = { ...product, count: updatedCount, stock: updatedStock, lastUpdated: format(new Date(), 'yyyy-MM-dd HH:mm:ss') };
+
+                   // Also update the stock in the database state if stock is changed
+                  if (type === 'stock') {
+                        setDatabaseProducts(prevDbProducts =>
+                            prevDbProducts.map(dbProduct =>
+                                dbProduct.barcode === barcode ? { ...dbProduct, stock: updatedStock } : dbProduct
+                            )
+                        );
                   }
+                  return updatedProduct;
               }
               return product;
           })
       );
-  }, []);
+  }, [setDatabaseProducts]); // Ensure setDatabaseProducts is included if it's used
 
   const handleDelete = useCallback((barcode: string) => {
     setProducts(prevProducts => prevProducts.filter(product => product.barcode !== barcode));
@@ -223,7 +265,13 @@ export default function Home() {
                 product.barcode === barcode ? { ...product, stock: newStock, lastUpdated: format(new Date(), 'yyyy-MM-dd HH:mm:ss') } : product
             )
         );
-    }, []);
+        // Also update the stock in the database state
+        setDatabaseProducts(prevDbProducts =>
+            prevDbProducts.map(dbProduct =>
+                dbProduct.barcode === barcode ? { ...dbProduct, stock: newStock } : dbProduct
+            )
+        );
+    }, [setDatabaseProducts]); // Include setDatabaseProducts dependency
 
     const getProductByBarcode = useCallback((barcode: string) => {
         return products.find((product) => product.barcode === barcode);
@@ -236,6 +284,7 @@ export default function Home() {
     const handleCloseStockDialog = () => {
         setOpenStock(false);
     };
+
 
   const handleStartEditingStock = (barcode: string) => {
     setSelectedProductBarcode(barcode);
@@ -274,16 +323,10 @@ export default function Home() {
 
     const renderQuantityDialog = () => (
         <Dialog open={openQuantity} onOpenChange={setOpenQuantity}>
-            <DialogContent className="sm:max-w-[425px] bg-white text-black border-red-500">
+            <DialogContent className="sm:max-w-[425px] bg-white text-black border-teal-500 rounded-lg shadow-lg">
                 <DialogHeader>
-                    <DialogTitle>
-                        <span style={{
-                            display: 'flex',
-                            alignItems: 'center',
-                            justifyContent: 'center',
-                            gap: '10px',
-                            color: 'black'
-                        }}>
+                    <DialogTitle className="text-center text-xl font-semibold text-gray-800">
+                        <span className="flex items-center justify-center gap-2">
                             <svg
                                 xmlns="http://www.w3.org/2000/svg"
                                 width="24"
@@ -294,67 +337,57 @@ export default function Home() {
                                 strokeWidth="2"
                                 strokeLinecap="round"
                                 strokeLinejoin="round"
-                                className="lucide lucide-package"
-                                style={{ color: 'black' }}
+                                className="lucide lucide-boxes h-6 w-6 text-teal-600"
                             >
-                                <rect width="18" height="18" x="3" y="3" rx="2" ry="2" />
-                                <path d="m12 18-6-4.76M12 18l6-4.76M12 18V7.76" />
+                                <path d="M21 8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16Z"/>
+                                <path d="m3.3 8 8.7 5 8.7-5"/>
+                                <path d="M12 22V12"/>
                             </svg>
-                            Quantity
+                            Ajustar Cantidad
                         </span>
                     </DialogTitle>
-                    <DialogDescription style={{ color: 'black' }}>
-                        Ajuste la cantidad manualmente.
+                    <DialogDescription className="text-center text-gray-600 mt-1">
+                        Ajuste la cantidad contada manualmente.
                     </DialogDescription>
                 </DialogHeader>
-                <div className="grid gap-4 py-4">
-                    <div className="flex justify-between items-center">
+                <div className="grid gap-4 py-6">
+                    <div className="flex justify-around items-center">
                         <Button
                             size="lg"
-                            style={{
-                                padding: '20px',
-                                borderRadius: '10px',
-                                backgroundColor: '#6B7280', // Gray-500
-                                color: 'white',
-                                fontSize: '1.5rem'
-                            }}
+                            className="p-6 rounded-full bg-red-500 hover:bg-red-600 text-white text-2xl shadow-md transition-transform transform hover:scale-105"
                             onClick={() => {
                                 if (selectedProductBarcode) {
                                     handleDecrement(selectedProductBarcode, 'count');
                                 }
                             }}
+                            aria-label="Disminuir cantidad"
                         >
-                            <Minus className="h-8 w-8" />
+                            <Minus className="h-10 w-10" />
                         </Button>
 
                         {selectedProductBarcode && (
-                            <div className="text-4xl font-bold mx-4">
-                                {getProductByBarcode(selectedProductBarcode)?.count}
+                            <div className="text-6xl font-bold mx-6 text-gray-800 tabular-nums">
+                                {getProductByBarcode(selectedProductBarcode)?.count ?? 0}
                             </div>
                         )}
 
                         <Button
                             size="lg"
-                            style={{
-                                padding: '20px',
-                                borderRadius: '10px',
-                                backgroundColor: '#6B7280', // Gray-500
-                                color: 'white',
-                                fontSize: '1.5rem'
-                            }}
+                            className="p-6 rounded-full bg-green-500 hover:bg-green-600 text-white text-2xl shadow-md transition-transform transform hover:scale-105"
                             onClick={() => {
                                 if (selectedProductBarcode) {
                                     handleIncrement(selectedProductBarcode, 'count');
                                 }
                             }}
+                             aria-label="Aumentar cantidad"
                         >
-                            <Plus className="h-8 w-8" />
+                            <Plus className="h-10 w-10" />
                         </Button>
                     </div>
                 </div>
-                <DialogFooter>
+                <DialogFooter className="mt-4">
                     <DialogClose asChild>
-                        <Button type="button" variant="secondary" style={{ backgroundColor: 'white', color: 'black' }} onClick={handleCloseQuantityDialog}>
+                        <Button type="button" variant="outline" className="border-gray-300 text-gray-700 hover:bg-gray-100" onClick={handleCloseQuantityDialog}>
                             Cerrar
                         </Button>
                     </DialogClose>
@@ -364,18 +397,12 @@ export default function Home() {
     );
 
     const renderStockDialog = () => (
-        <Dialog open={openStock} onOpenChange={setOpenStock}>
-            <DialogContent className="sm:max-w-[425px] bg-white text-black border-red-500">
+         <Dialog open={openStock} onOpenChange={setOpenStock}>
+            <DialogContent className="sm:max-w-[425px] bg-white text-black border-teal-500 rounded-lg shadow-lg">
                 <DialogHeader>
-                    <DialogTitle>
-                        <span style={{
-                            display: 'flex',
-                            alignItems: 'center',
-                            justifyContent: 'center',
-                            gap: '10px',
-                            color: 'black'
-                        }}>
-                            <svg
+                    <DialogTitle className="text-center text-xl font-semibold text-gray-800">
+                        <span className="flex items-center justify-center gap-2">
+                             <svg
                                 xmlns="http://www.w3.org/2000/svg"
                                 width="24"
                                 height="24"
@@ -385,68 +412,54 @@ export default function Home() {
                                 strokeWidth="2"
                                 strokeLinecap="round"
                                 strokeLinejoin="round"
-                                className="lucide lucide-package"
-                                style={{ color: 'black' }}
-                            >
-                                <rect width="18" height="18" x="3" y="3" rx="2" ry="2" />
-                                <path d="m12 18-6-4.76M12 18l6-4.76M12 18V7.76" />
-                            </svg>
+                                className="lucide lucide-archive h-6 w-6 text-teal-600" >
+                                    <rect width="20" height="5" x="2" y="3" rx="1"/><path d="M4 8v11a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8"/><path d="M10 12h4"/>
+                             </svg>
                             Ajustar Stock
                         </span>
                     </DialogTitle>
-                    <DialogDescription style={{ color: 'black' }}>
-                        Ajuste el stock manualmente.
+                    <DialogDescription className="text-center text-gray-600 mt-1">
+                        Ajuste el stock del producto manualmente.
                     </DialogDescription>
                 </DialogHeader>
-                <div className="grid gap-4 py-4">
-                    <div className="flex justify-between items-center">
-
-                          <Button
+                <div className="grid gap-4 py-6">
+                    <div className="flex justify-around items-center">
+                        <Button
                             size="lg"
-                            style={{
-                                padding: '20px',
-                                borderRadius: '10px',
-                                backgroundColor: '#6B7280', // Gray-500
-                                color: 'white',
-                                fontSize: '1.5rem'
-                            }}
+                             className="p-6 rounded-full bg-red-500 hover:bg-red-600 text-white text-2xl shadow-md transition-transform transform hover:scale-105"
                             onClick={() => {
                                 if (selectedProductBarcode) {
                                     handleDecrement(selectedProductBarcode, 'stock');
                                 }
                             }}
+                             aria-label="Disminuir stock"
                         >
-                            <Minus className="h-8 w-8" />
+                            <Minus className="h-10 w-10" />
                         </Button>
 
                         {selectedProductBarcode && (
-                            <div className="text-4xl font-bold mx-4">
-                                {getProductByBarcode(selectedProductBarcode)?.stock}
+                             <div className="text-6xl font-bold mx-6 text-gray-800 tabular-nums">
+                                {getProductByBarcode(selectedProductBarcode)?.stock ?? 0}
                             </div>
                         )}
 
                         <Button
                             size="lg"
-                            style={{
-                                padding: '20px',
-                                borderRadius: '10px',
-                                backgroundColor: '#6B7280', // Gray-500
-                                color: 'white',
-                                fontSize: '1.5rem'
-                            }}
+                             className="p-6 rounded-full bg-green-500 hover:bg-green-600 text-white text-2xl shadow-md transition-transform transform hover:scale-105"
                             onClick={() => {
                                 if (selectedProductBarcode) {
                                     handleIncrement(selectedProductBarcode, 'stock');
                                 }
                             }}
+                            aria-label="Aumentar stock"
                         >
-                            <Plus className="h-8 w-8" />
+                            <Plus className="h-10 w-10" />
                         </Button>
                     </div>
                 </div>
-                <DialogFooter>
+                <DialogFooter className="mt-4">
                     <DialogClose asChild>
-                        <Button type="button" variant="secondary" style={{ backgroundColor: 'white', color: 'black' }} onClick={handleCloseStockDialog}>
+                         <Button type="button" variant="outline" className="border-gray-300 text-gray-700 hover:bg-gray-100" onClick={handleCloseStockDialog}>
                             Cerrar
                         </Button>
                     </DialogClose>
@@ -458,102 +471,118 @@ export default function Home() {
 
   return (
     <div className="container mx-auto p-4">
-      <h1 className="text-2xl font-bold mb-4 text-center">StockCounter Pro</h1>
+      <h1 className="text-2xl font-bold mb-4 text-center text-gray-700">StockCounter Pro</h1>
 
-      <Tabs defaultValue="Contador" className="w-full md:w-[600px] mx-auto">
-        <TabsList>
-          <TabsTrigger value="Contador" style={{ backgroundColor: "#E3F2FD", color: "#008080" }}>Contador de Existencias</TabsTrigger>
-          <TabsTrigger value="Base de Datos" style={{ backgroundColor: "#E3F2FD", color: "#008080" }}>Base de Datos</TabsTrigger>
+      <Tabs defaultValue="Contador" className="w-full md:w-[800px] lg:w-[1000px] mx-auto">
+        <TabsList className="grid w-full grid-cols-2 bg-gray-100 p-1 rounded-lg mb-4">
+          <TabsTrigger value="Contador" className="data-[state=active]:bg-teal-600 data-[state=active]:text-white data-[state=inactive]:text-gray-600 py-2 px-4 rounded-md transition-colors duration-200">Contador de Existencias</TabsTrigger>
+          <TabsTrigger value="Base de Datos" className="data-[state=active]:bg-teal-600 data-[state=active]:text-white data-[state=inactive]:text-gray-600 py-2 px-4 rounded-md transition-colors duration-200">Base de Datos</TabsTrigger>
         </TabsList>
         <TabsContent value="Contador">
           <div className="flex items-center mb-4">
             <Input
               type="number"
-              placeholder="Código de barras"
+              placeholder="Escanear o ingresar código de barras"
               value={barcode}
               onChange={(e) => setBarcode(e.target.value)}
-              className="mr-2 bg-yellow-50"
+              className="mr-2 flex-grow bg-yellow-50 border-teal-300 focus:ring-teal-500 focus:border-teal-500 rounded-md shadow-sm"
               ref={barcodeInputRef}
               onKeyDown={handleKeyDown}
+               aria-label="Código de barras"
             />
             <Button
               onClick={handleAddProduct}
-              variant="secondary"
-              style={{ backgroundColor: "#008080", color: "white" }}
+              className="bg-teal-600 hover:bg-teal-700 text-white rounded-md shadow-sm px-5 py-2 transition-colors duration-200"
             >
               Agregar
             </Button>
           </div>
 
-          <ScrollArea>
+          <ScrollArea className="h-[calc(100vh-280px)] border rounded-lg shadow-sm">
             <Table>
-              <TableCaption>Inventario de productos escaneados.</TableCaption>
-              <TableHeader>
+              <TableCaption className="py-3 text-sm text-gray-500">Inventario de productos escaneados.</TableCaption>
+              <TableHeader className="bg-gray-50 sticky top-0 z-10">
                 <TableRow>
-                  <TableHead>Descripción</TableHead>
-                  <TableHead className="hidden sm:table-cell">
+                  <TableHead className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider w-2/5">Descripción</TableHead>
+                  <TableHead className="hidden sm:table-cell px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider w-1/5">
                     Proveedor
                   </TableHead>
-                  <TableHead>Stock</TableHead>
-                  <TableHead className="text-right">Cantidad</TableHead>
-                      <TableHead className="hidden sm:table-cell">Última Actualización</TableHead>
-                  <TableHead className="text-center sm:table-cell hidden">Acciones</TableHead>
+                  <TableHead className="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider w-[10%]">Stock</TableHead>
+                  <TableHead className="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider w-[10%]">Cantidad</TableHead>
+                   <TableHead className="hidden sm:table-cell px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider w-1/5">Última Actualización</TableHead>
+                   <TableHead className="hidden sm:table-cell px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider w-[5%]">Validación</TableHead>
+                  <TableHead className="text-center sm:table-cell hidden px-4 py-3 text-xs font-medium text-gray-500 uppercase tracking-wider w-[15%]">Acciones</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {products.map((product) => (
                   <TableRow
                     key={product.barcode}
-                    className={
-                      product.count === product.stock ? "bg-green-100" : ""
-                    }
+                    className={`hover:bg-gray-50 transition-colors duration-150 ${
+                      product.count === product.stock ? "bg-green-50" : ""
+                    }`}
                   >
-                    <TableCell>{product.description}</TableCell>
-                    <TableCell className="hidden sm:table-cell">
+                    <TableCell className="px-4 py-3 font-medium text-gray-900">{product.description}</TableCell>
+                    <TableCell className="hidden sm:table-cell px-4 py-3 text-gray-600">
                       {product.provider}
                     </TableCell>
                       <TableCell
-                                  className="cursor-pointer"
+                                  className="px-4 py-3 text-center text-gray-600 cursor-pointer hover:text-teal-700 hover:font-semibold"
                                   onClick={() => handleOpenStockDialog(product.barcode)}
+                                  aria-label={`Editar stock para ${product.description}`}
                               >
                                   {product.stock}
                       </TableCell>
                     <TableCell
-                      className="text-right cursor-pointer"
+                      className="px-4 py-3 text-center text-gray-600 cursor-pointer hover:text-teal-700 hover:font-semibold"
                       onClick={() => handleOpenQuantityDialog(product.barcode)}
+                       aria-label={`Editar cantidad para ${product.description}`}
                     >
                       {product.count}
                     </TableCell>
-                      <TableCell className="hidden sm:table-cell">{product.lastUpdated}</TableCell>
-                    <TableCell className="text-center sm:table-cell hidden">
-                      <Button
-                        onClick={() => handleDecrement(product.barcode, 'count')}
-                        size="icon"
-                        variant="outline"
-                      >
-                        <Minus className="h-4 w-4" />
-                      </Button>
-                      <Button
-                        onClick={() => handleIncrement(product.barcode, 'count')}
-                        size="icon"
-                        variant="outline"
-                      >
-                        <Plus className="h-4 w-4" />
-                      </Button>
-                      <Button
-                        onClick={() => handleDelete(product.barcode)}
-                        size="icon"
-                        variant="destructive"
-                      >
-                        <Trash className="h-4 w-4" />
-                      </Button>
+                     <TableCell className="hidden sm:table-cell px-4 py-3 text-gray-500 text-xs">{product.lastUpdated}</TableCell>
+                      <TableCell className="hidden sm:table-cell px-4 py-3 text-center">
+                          {product.count === product.stock && product.stock !== 0 ? (
+                              <span className="text-green-600 font-semibold">OK</span>
+                          ) : null}
+                      </TableCell>
+                    <TableCell className="text-center sm:table-cell hidden px-4 py-3">
+                       <div className="flex justify-center items-center space-x-1">
+                          <Button
+                            onClick={() => handleDecrement(product.barcode, 'count')}
+                            size="icon"
+                             variant="ghost"
+                             className="text-gray-500 hover:text-red-600 hover:bg-red-100 rounded-full w-8 h-8"
+                             aria-label={`Disminuir cantidad para ${product.description}`}
+                          >
+                            <Minus className="h-4 w-4" />
+                          </Button>
+                          <Button
+                            onClick={() => handleIncrement(product.barcode, 'count')}
+                             size="icon"
+                             variant="ghost"
+                             className="text-gray-500 hover:text-green-600 hover:bg-green-100 rounded-full w-8 h-8"
+                             aria-label={`Aumentar cantidad para ${product.description}`}
+                          >
+                            <Plus className="h-4 w-4" />
+                          </Button>
+                          <Button
+                            onClick={() => handleDelete(product.barcode)}
+                            size="icon"
+                            variant="ghost"
+                             className="text-red-500 hover:text-red-700 hover:bg-red-100 rounded-full w-8 h-8"
+                             aria-label={`Eliminar ${product.description}`}
+                          >
+                            <Trash className="h-4 w-4" />
+                          </Button>
+                       </div>
                     </TableCell>
                   </TableRow>
                 ))}
                 {products.length === 0 && (
                   <TableRow>
-                    <TableCell colSpan={4} className="text-center">
-                      No hay productos agregados.
+                    <TableCell colSpan={7} className="text-center px-4 py-10 text-gray-500">
+                      No hay productos agregados al inventario. Escanea un código de barras para empezar.
                     </TableCell>
                   </TableRow>
                 )}
@@ -561,8 +590,8 @@ export default function Home() {
             </Table>
           </ScrollArea>
 
-          <div className="mt-4 flex justify-between items-center">
-            <Button onClick={handleExport}>Exportar</Button>
+          <div className="mt-4 flex justify-end items-center">
+            <Button onClick={handleExport} className="bg-blue-600 hover:bg-blue-700 text-white rounded-md shadow-sm px-5 py-2 transition-colors duration-200">Exportar Inventario</Button>
           </div>
         </TabsContent>
         <TabsContent value="Base de Datos">
@@ -579,4 +608,4 @@ export default function Home() {
   );
 }
 
-
+    

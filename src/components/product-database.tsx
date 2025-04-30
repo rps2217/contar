@@ -296,7 +296,6 @@ async function fetchGoogleSheetData(sheetUrl: string): Promise<Product[]> {
 
     // Construct the CSV export URL
     // This requires the sheet to be publicly accessible ("Anyone with the link can view")
-    // It does *not* strictly require "Publish to the web", but public link sharing is needed.
     const csvExportUrl = `https://docs.google.com/spreadsheets/d/${spreadsheetId}/export?format=csv&gid=${gid}`;
 
     console.log("Attempting to fetch Google Sheet CSV from:", csvExportUrl);
@@ -331,77 +330,42 @@ async function fetchGoogleSheetData(sheetUrl: string): Promise<Product[]> {
     const csvText = await response.text();
     console.log("Successfully fetched CSV data.");
 
-    // --- CSV Parsing Logic ---
+    // --- CSV Parsing Logic - Rely on Column Position ---
     const lines = csvText.split(/\r?\n/);
     if (lines.length < 1) {
         console.warn("CSV data is empty or invalid.");
         return [];
     }
 
-    // Robust header processing: remove quotes, trim, lowercase
-    const headers = lines[0]
-                        .split(',')
-                        .map(header => header.replace(/^"|"$/g, '').trim().toLowerCase());
-    console.log("Processed CSV Headers:", headers);
-
-    const headerMappings: { [key: string]: string[] } = {
-        barcode: ['barcode', 'código de barras', 'codigo'], // Added 'codigo'
-        description: ['description', 'descripción', 'producto'], // Added 'producto'
-        provider: ['provider', 'proveedor', 'laboratorio'], // Added 'laboratorio'
-        stock: ['stock', 'stock final'] // Added 'stock final'
-    };
-
-    // Find header indices based on possible names
-    const findHeaderIndex = (possibleNames: string[]): number => {
-        for (const name of possibleNames) {
-            const index = headers.indexOf(name);
-            if (index !== -1) return index;
-        }
-        return -1;
-    };
-
-    const barcodeIndex = findHeaderIndex(headerMappings.barcode);
-    const descriptionIndex = findHeaderIndex(headerMappings.description);
-    const providerIndex = findHeaderIndex(headerMappings.provider);
-    const stockIndex = findHeaderIndex(headerMappings.stock);
-
-    // Validate required headers
-    const requiredHeaders = ['barcode', 'description', 'stock'];
-    for (const reqHeaderKey of requiredHeaders) {
-        const possibleNames = headerMappings[reqHeaderKey];
-        const found = possibleNames.some(name => headers.includes(name));
-        if (!found) {
-             console.error(`Required header for "${reqHeaderKey}" (English or Spanish: ${possibleNames.join('/')}) not found in processed CSV headers: [${headers.join(', ')}]. Check Google Sheet headers.`);
-             throw new Error(`Encabezado requerido para "${reqHeaderKey}" (ej. ${possibleNames.join('/')}) no encontrado en el CSV. Verifique los encabezados de la Hoja de Google.`);
-        }
-    }
-
-    // Parse data rows
+    // Skip header row (lines[0]) as we are using position
     const products: Product[] = [];
-    for (let i = 1; i < lines.length; i++) {
+    const expectedColumnCount = 4; // Barcode, Description, Provider, Stock
+
+    for (let i = 1; i < lines.length; i++) { // Start from 1 to skip header
         const line = lines[i].trim();
         if (!line) continue; // Skip empty lines
 
-        // Basic CSV split - might fail with commas inside quotes
+        // Basic CSV split - might fail with commas inside quotes, handle carefully
         const values = line.split(',').map(value => value.replace(/^"|"$/g, '').trim());
 
-        if (values.length !== headers.length) {
-            console.warn(`Skipping row ${i + 1} due to mismatched column count. Expected ${headers.length}, got ${values.length}. Line: "${line}"`);
+        if (values.length < 3) { // Need at least barcode, description, stock
+            console.warn(`Skipping row ${i + 1}: Insufficient columns. Expected at least 3, got ${values.length}. Line: "${line}"`);
             continue;
         }
 
-        const barcode = values[barcodeIndex];
-        const description = values[descriptionIndex];
-        const provider = providerIndex !== -1 ? (values[providerIndex] || "Desconocido") : "Desconocido";
-        const stockStr = values[stockIndex];
+        const barcode = values[0]; // Column 1 (index 0)
+        const description = values[1]; // Column 2 (index 1)
+        // Provider is optional or might be empty
+        const provider = values.length > 2 && values[2] ? values[2] : "Desconocido"; // Column 3 (index 2) or default
+        const stockStr = values.length > 3 ? values[3] : '0'; // Column 4 (index 3) or default to '0'
         const stock = parseInt(stockStr, 10);
 
         if (!barcode) {
-            console.warn(`Skipping row ${i + 1}: Missing barcode.`);
+            console.warn(`Skipping row ${i + 1}: Missing barcode in column 1.`);
             continue;
         }
          if (!description) {
-            console.warn(`Skipping row ${i + 1} (Barcode: ${barcode}): Missing description.`);
+            console.warn(`Skipping row ${i + 1} (Barcode: ${barcode}): Missing description in column 2.`);
             continue; // Or assign default description?
         }
 
@@ -409,11 +373,11 @@ async function fetchGoogleSheetData(sheetUrl: string): Promise<Product[]> {
             barcode: barcode,
             description: description,
             provider: provider,
-            stock: isNaN(stock) ? 0 : stock, // Default to 0 if stock is not a number
+            stock: isNaN(stock) ? 0 : stock, // Default to 0 if stock is not a number or missing
             count: 0, // Default count
         });
     }
-    console.log(`Parsed ${products.length} products from CSV.`);
+    console.log(`Parsed ${products.length} products from CSV based on column position.`);
     return products;
 }
 
@@ -814,7 +778,8 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = ({
              <AlertDescription>
                  Asegúrese de que la hoja de cálculo de Google esté compartida como{" "}
                  <span className="font-medium">"Cualquier persona con el enlace puede ver"</span>{" "}
-                 para que la carga funcione correctamente. Los encabezados esperados (en inglés o español) son: código de barras/barcode/codigo, descripción/description/producto, stock/stock final. Proveedor/provider/laboratorio es opcional.
+                 para que la carga funcione correctamente. Los datos se leerán por posición de columna:{" "}
+                 <span className="font-medium">Col 1: Código de Barras, Col 2: Descripción, Col 3: Proveedor (opcional), Col 4: Stock (opcional, 0 por defecto)</span>.
              </AlertDescription>
          </Alert>
       )}

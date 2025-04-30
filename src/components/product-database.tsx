@@ -345,10 +345,10 @@ async function fetchGoogleSheetData(sheetUrl: string): Promise<Product[]> {
     console.log("Processed CSV Headers:", headers);
 
     const headerMappings: { [key: string]: string[] } = {
-        barcode: ['barcode', 'código de barras'],
-        description: ['description', 'descripción'],
-        provider: ['provider', 'proveedor'],
-        stock: ['stock']
+        barcode: ['barcode', 'código de barras', 'codigo'], // Added 'codigo'
+        description: ['description', 'descripción', 'producto'], // Added 'producto'
+        provider: ['provider', 'proveedor', 'laboratorio'], // Added 'laboratorio'
+        stock: ['stock', 'stock final'] // Added 'stock final'
     };
 
     // Find header indices based on possible names
@@ -814,7 +814,7 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = ({
              <AlertDescription>
                  Asegúrese de que la hoja de cálculo de Google esté compartida como{" "}
                  <span className="font-medium">"Cualquier persona con el enlace puede ver"</span>{" "}
-                 para que la carga funcione correctamente. Los encabezados esperados (en inglés o español) son: código de barras/barcode, descripción/description, stock. Proveedor/provider es opcional.
+                 para que la carga funcione correctamente. Los encabezados esperados (en inglés o español) son: código de barras/barcode/codigo, descripción/description/producto, stock/stock final. Proveedor/provider/laboratorio es opcional.
              </AlertDescription>
          </Alert>
       )}

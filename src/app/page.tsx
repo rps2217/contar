@@ -83,8 +83,11 @@ export default function Home() {
 
   // State for confirmation dialog
   const [isConfirmDialogOpen, setIsConfirmDialogOpen] = useState(false);
-  const [confirmAction, setConfirmAction] = useState<'increment' | 'decrement' | null>(null);
+  const [confirmAction, setConfirmAction] = useState<'increment' | 'decrement' | 'delete' | null>(null);
   const [confirmProductBarcode, setConfirmProductBarcode] = useState<string | null>(null);
+  const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false);
+  const [productToDelete, setProductToDelete] = useState<Product | null>(null);
+
 
   useEffect(() => {
     barcodeInputRef.current?.focus();
@@ -260,7 +263,7 @@ export default function Home() {
   }, [products, setDatabaseProducts]);
 
     const handleConfirmQuantityChange = () => {
-        if (confirmProductBarcode && confirmAction) {
+        if (confirmProductBarcode && confirmAction && (confirmAction === 'increment' || confirmAction === 'decrement')) {
             executeQuantityChange(confirmProductBarcode, confirmAction);
         }
         setIsConfirmDialogOpen(false);
@@ -269,9 +272,23 @@ export default function Home() {
     };
 
 
-  const handleDelete = useCallback((barcode: string) => {
-    setProducts(prevProducts => prevProducts.filter(product => product.barcode !== barcode));
-  }, []);
+    const handleDelete = useCallback((product: Product) => {
+        setProductToDelete(product);
+        setIsDeleteDialogOpen(true); // Open the delete confirmation dialog
+    }, []);
+
+    const confirmDelete = useCallback(() => {
+        if (productToDelete) {
+            setProducts(prevProducts => prevProducts.filter(p => p.barcode !== productToDelete.barcode));
+            toast({
+                title: "Producto eliminado",
+                description: `${productToDelete.description} ha sido eliminado del inventario.`,
+            });
+        }
+        setIsDeleteDialogOpen(false);
+        setProductToDelete(null);
+    }, [productToDelete, toast]);
+
 
   const handleExport = useCallback(() => {
     const csvData = convertToCSV(products);
@@ -387,7 +404,7 @@ export default function Home() {
 
     const renderQuantityDialog = () => (
         <Dialog open={openQuantity} onOpenChange={setOpenQuantity}>
-            <DialogContent className="sm:max-w-[425px] bg-white text-black border-teal-500 rounded-lg shadow-lg">
+            <DialogContent className="sm:max-w-[425px] bg-white text-black border-teal-500 rounded-lg shadow-lg p-6">
                 <DialogHeader>
                     <DialogTitle className="text-center text-xl font-semibold text-gray-800">
                         <span className="flex items-center justify-center gap-2">
@@ -418,7 +435,7 @@ export default function Home() {
                     <div className="flex justify-around items-center">
                         <Button
                             size="lg"
-                            className="p-6 rounded-full bg-red-500 hover:bg-red-600 text-white text-2xl shadow-md transition-transform transform hover:scale-105"
+                            className="p-6 rounded-full bg-red-500 hover:bg-red-600 text-white text-2xl shadow-md transition-transform transform hover:scale-105 w-20 h-20 flex items-center justify-center"
                             onClick={() => {
                                 if (selectedProductBarcode) {
                                     handleDecrement(selectedProductBarcode, 'count');
@@ -437,7 +454,7 @@ export default function Home() {
 
                         <Button
                             size="lg"
-                            className="p-6 rounded-full bg-green-500 hover:bg-green-600 text-white text-2xl shadow-md transition-transform transform hover:scale-105"
+                            className="p-6 rounded-full bg-green-500 hover:bg-green-600 text-white text-2xl shadow-md transition-transform transform hover:scale-105 w-20 h-20 flex items-center justify-center"
                             onClick={() => {
                                 if (selectedProductBarcode) {
                                     handleIncrement(selectedProductBarcode, 'count');
@@ -462,7 +479,7 @@ export default function Home() {
 
     const renderStockDialog = () => (
          <Dialog open={openStock} onOpenChange={setOpenStock}>
-            <DialogContent className="sm:max-w-[425px] bg-white text-black border-teal-500 rounded-lg shadow-lg">
+            <DialogContent className="sm:max-w-[425px] bg-white text-black border-teal-500 rounded-lg shadow-lg p-6">
                 <DialogHeader>
                     <DialogTitle className="text-center text-xl font-semibold text-gray-800">
                         <span className="flex items-center justify-center gap-2">
@@ -490,7 +507,7 @@ export default function Home() {
                     <div className="flex justify-around items-center">
                         <Button
                             size="lg"
-                             className="p-6 rounded-full bg-red-500 hover:bg-red-600 text-white text-2xl shadow-md transition-transform transform hover:scale-105"
+                             className="p-6 rounded-full bg-red-500 hover:bg-red-600 text-white text-2xl shadow-md transition-transform transform hover:scale-105 w-20 h-20 flex items-center justify-center"
                             onClick={() => {
                                 if (selectedProductBarcode) {
                                     handleDecrement(selectedProductBarcode, 'stock');
@@ -509,7 +526,7 @@ export default function Home() {
 
                         <Button
                             size="lg"
-                             className="p-6 rounded-full bg-green-500 hover:bg-green-600 text-white text-2xl shadow-md transition-transform transform hover:scale-105"
+                             className="p-6 rounded-full bg-green-500 hover:bg-green-600 text-white text-2xl shadow-md transition-transform transform hover:scale-105 w-20 h-20 flex items-center justify-center"
                             onClick={() => {
                                 if (selectedProductBarcode) {
                                     handleIncrement(selectedProductBarcode, 'stock');
@@ -548,6 +565,25 @@ export default function Home() {
             </AlertDialogContent>
         </AlertDialog>
      );
+
+     const renderDeleteConfirmationDialog = () => (
+        <AlertDialog open={isDeleteDialogOpen} onOpenChange={setIsDeleteDialogOpen}>
+            <AlertDialogContent>
+                <AlertDialogHeader>
+                    <AlertDialogTitle>Confirmar Eliminación</AlertDialogTitle>
+                    <AlertDialogDescription>
+                        ¿Estás seguro de que deseas eliminar el producto "{productToDelete?.description}" del inventario?
+                    </AlertDialogDescription>
+                </AlertDialogHeader>
+                <AlertDialogFooter>
+                    <AlertDialogCancel onClick={() => setIsDeleteDialogOpen(false)}>Cancelar</AlertDialogCancel>
+                    <AlertDialogAction onClick={confirmDelete} className="bg-red-600 hover:bg-red-700 text-white">
+                        Eliminar
+                    </AlertDialogAction>
+                </AlertDialogFooter>
+            </AlertDialogContent>
+        </AlertDialog>
+    );
 
 
   return (
@@ -603,7 +639,13 @@ export default function Home() {
                       product.count === product.stock && product.stock !== 0 ? "bg-green-50" : ""
                     }`}
                   >
-                    <TableCell className="px-4 py-3 font-medium text-gray-900">{product.description}</TableCell>
+                    <TableCell
+                        className="px-4 py-3 font-medium text-gray-900 cursor-pointer hover:text-red-600 hover:underline"
+                        onClick={() => handleDelete(product)}
+                        aria-label={`Eliminar ${product.description}`}
+                    >
+                      {product.description}
+                    </TableCell>
                     <TableCell className="hidden sm:table-cell px-4 py-3 text-gray-600">
                       {product.provider}
                     </TableCell>
@@ -647,15 +689,7 @@ export default function Home() {
                           >
                             <Plus className="h-4 w-4" />
                           </Button>
-                          <Button
-                            onClick={() => handleDelete(product.barcode)}
-                            size="icon"
-                            variant="ghost"
-                             className="text-red-500 hover:text-red-700 hover:bg-red-100 rounded-full w-8 h-8"
-                             aria-label={`Eliminar ${product.description}`}
-                          >
-                            <Trash className="h-4 w-4" />
-                          </Button>
+                          {/* Remove Trash button here as click on description handles delete */}
                        </div>
                     </TableCell>
                   </TableRow>
@@ -686,6 +720,7 @@ export default function Home() {
             {renderQuantityDialog()}
             {renderStockDialog()}
             {renderConfirmationDialog()}
+            {renderDeleteConfirmationDialog()}
     </div>
   );
 }

@@ -41,6 +41,7 @@ import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import {
   AlertDialog,
+  AlertDialogAction,
   AlertDialogCancel,
   AlertDialogContent,
   AlertDialogDescription,
@@ -313,19 +314,44 @@ async function fetchGoogleSheetData(sheetUrl: string): Promise<Product[]> {
         console.log("Processed CSV Headers:", headers); // Log processed headers
         const products: Product[] = [];
 
-        // Ensure required headers are present (case-insensitive check)
+        // Define possible header names (English and Spanish)
+        const headerMappings: { [key: string]: string[] } = {
+            barcode: ['barcode', 'código de barras'],
+            description: ['description', 'descripción'],
+            provider: ['provider', 'proveedor'],
+            stock: ['stock']
+        };
+
+        const findHeaderIndex = (possibleNames: string[]): number => {
+            for (const name of possibleNames) {
+                const index = headers.indexOf(name);
+                if (index !== -1) {
+                    return index;
+                }
+            }
+            return -1; // Not found
+        };
+
+        // Ensure required headers are present (case-insensitive check for mapped names)
         const requiredHeaders = ['barcode', 'description', 'stock']; // Provider is optional
-        for (const reqHeader of requiredHeaders) {
-            if (!headers.includes(reqHeader)) {
-                console.error(`Required header "${reqHeader}" not found in processed CSV headers: [${headers.join(', ')}]. Check Google Sheet headers.`);
-                throw new Error(`Encabezado requerido "${reqHeader}" no encontrado en el archivo CSV. Verifique los encabezados de la Hoja de Google (se esperan: barcode, description, stock).`);
+        for (const reqHeaderKey of requiredHeaders) {
+            const possibleNames = headerMappings[reqHeaderKey];
+            const found = possibleNames.some(name => headers.includes(name));
+            if (!found) {
+                 console.error(`Required header (English or Spanish) for "${reqHeaderKey}" not found in processed CSV headers: [${headers.join(', ')}]. Check Google Sheet headers.`);
+                 throw new Error(`Encabezado requerido para "${reqHeaderKey}" (Inglés o Español) no encontrado en el archivo CSV. Verifique los encabezados de la Hoja de Google.`);
             }
         }
 
-        const barcodeIndex = headers.indexOf('barcode');
-        const descriptionIndex = headers.indexOf('description');
-        const providerIndex = headers.indexOf('provider'); // Can be -1 if not present
-        const stockIndex = headers.indexOf('stock');
+        const barcodeIndex = findHeaderIndex(headerMappings.barcode);
+        const descriptionIndex = findHeaderIndex(headerMappings.description);
+        const providerIndex = findHeaderIndex(headerMappings.provider); // Can be -1 if not present
+        const stockIndex = findHeaderIndex(headerMappings.stock);
+
+        // Double-check required indices were found (should be guaranteed by the check above, but good practice)
+        if (barcodeIndex === -1 || descriptionIndex === -1 || stockIndex === -1) {
+             throw new Error("No se pudieron encontrar todos los encabezados requeridos (código de barras, descripción, stock) en el archivo CSV.");
+        }
 
 
         for (let i = 1; i < lines.length; i++) {
@@ -797,9 +823,9 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = ({
           <TableCaption>Lista de productos en la base de datos.</TableCaption>
            <TableHeader className="sticky top-0 bg-background z-10">
             <TableRow>
-              <TableHead className="w-[25%]">Código de Barras</TableHead>
-              <TableHead className="w-[35%]">Descripción</TableHead>
-              <TableHead className="hidden sm:table-cell w-[25%]">Proveedor</TableHead>
+              <TableHead className="w-[20%]">Código de Barras</TableHead>
+              <TableHead className="w-[30%]">Descripción</TableHead>
+              <TableHead className="w-[25%] sm:table-cell">Proveedor</TableHead>
               <TableHead className="w-[15%] text-right">Stock</TableHead>
             </TableRow>
           </TableHeader>
@@ -807,19 +833,19 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = ({
             {filteredProducts.map((product) => (
               <TableRow key={product.barcode} className="hover:bg-gray-50">
                 <TableCell
-                 className="w-[25%] font-medium"
+                 className="w-[20%] font-medium"
                  aria-label="Código de Barras"
                 >
                   {product.barcode}
                 </TableCell>
                 <TableCell
-                    className="w-[35%] cursor-pointer hover:text-teal-700 hover:underline"
+                    className="w-[30%] cursor-pointer hover:text-teal-700 hover:underline"
                     onClick={() => handleOpenEditDialog(product)}
                      aria-label={`Editar producto ${product.description}`}
                     >
                   {product.description}
                 </TableCell>
-                 <TableCell className="hidden sm:table-cell w-[25%] text-gray-600" aria-label="Proveedor">
+                 <TableCell className="w-[25%] sm:table-cell text-gray-600" aria-label="Proveedor">
                   {product.provider}
                 </TableCell>
                 <TableCell className="w-[15%] text-right text-gray-600" aria-label="Stock">
@@ -940,5 +966,6 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = ({
     </div>
   );
 };
+
 
     

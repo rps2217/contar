@@ -40,34 +40,8 @@ import {
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog"
 import { format } from 'date-fns';
+import type { Product } from '@/types/product'; // Import Product type
 
-interface Product {
-  barcode: string;
-  description: string;
-  provider: string;
-  stock: number;
-  count: number;
-  lastUpdated?: string; // Add lastUpdated property
-}
-
-const initialProducts: Product[] = [
-  {
-    barcode: "12345",
-    description: "Paracetamol 500mg",
-    provider: "Genfar",
-    stock: 100,
-    count: 0,
-    lastUpdated: '',
-  },
-  {
-    barcode: "67890",
-    description: "Amoxicilina 250mg",
-    provider: "MK",
-    stock: 50,
-    count: 0,
-    lastUpdated: '',
-  },
-];
 
 export default function Home() {
   const [barcode, setBarcode] = useState("");
@@ -76,7 +50,7 @@ export default function Home() {
   const { toast } = useToast();
   const barcodeInputRef = useRef<HTMLInputElement>(null);
   const [openQuantity, setOpenQuantity] = useState(false);
-    const [openStock, setOpenStock] = useState(false);
+  const [openStock, setOpenStock] = useState(false);
   const [selectedProductBarcode, setSelectedProductBarcode] = useState<string | null>(null);
   const [editingStockBarcode, setEditingStockBarcode] = useState<string | null>(null);
   const [newStockValue, setNewStockValue] = useState<string>("");
@@ -113,69 +87,80 @@ export default function Home() {
     }
   };
 
-  const handleAddProduct = useCallback(async () => {
-    if (!barcode) {
+ const handleAddProduct = useCallback(async () => {
+    if (!barcode.trim()) { // Ensure barcode is not just whitespace
       toast({
         variant: "destructive",
         title: "Error",
-        description: "Por favor, introduce un código de barras.",
+        description: "Por favor, introduce un código de barras válido.",
       });
       return;
     }
+    const currentBarcode = barcode.trim(); // Use trimmed barcode
 
-    // Find product in the current list first
-    const existingProductIndex = products.findIndex((p) => p.barcode === barcode);
+    // 1. Check if already in the counting list
+    const existingProductIndex = products.findIndex((p) => p.barcode === currentBarcode);
     if (existingProductIndex !== -1) {
+      // Product exists in counting list, increment count
       const updatedProducts = [...products];
-      updatedProducts[existingProductIndex] = {
+      const updatedProduct = {
         ...updatedProducts[existingProductIndex],
         count: updatedProducts[existingProductIndex].count + 1,
         lastUpdated: format(new Date(), 'yyyy-MM-dd HH:mm:ss'),
       };
-      // Move the updated product to the top
-      setProducts([updatedProducts[existingProductIndex], ...products.slice(0, existingProductIndex), ...products.slice(existingProductIndex + 1)]);
-       toast({
+      updatedProducts[existingProductIndex] = updatedProduct;
+      // Move to top
+      setProducts([updatedProduct, ...products.slice(0, existingProductIndex), ...products.slice(existingProductIndex + 1)]);
+      toast({
         title: "Cantidad aumentada",
-        description: `${updatedProducts[existingProductIndex].description} cantidad aumentada a ${updatedProducts[existingProductIndex].count}.`,
+        description: `${updatedProduct.description} cantidad aumentada a ${updatedProduct.count}.`,
       });
-
     } else {
-        // If not in current list, find in database
-        let productInfo = databaseProducts.find((p) => p.barcode === barcode);
+      // 2. Product not in counting list, look in the database state
+      // Ensure databaseProducts state is correctly populated before this lookup
+      const productFromDb = databaseProducts.find((p) => p.barcode === currentBarcode);
 
-        if (!productInfo) {
-          playBeep();
-          productInfo = {
-            barcode: barcode,
-            description: `Nuevo producto ${barcode}`,
-            provider: "Desconocido",
-            stock: 0, // Default stock to 0 for unknown products
-            count: 1, // Start count at 1
-            lastUpdated: format(new Date(), 'yyyy-MM-dd HH:mm:ss'),
-          };
-          // Add the new product to the database state as well
-          setDatabaseProducts(prevDbProducts => [...prevDbProducts, { ...productInfo, count: 0 }]); // Add to DB with count 0
-          toast({
-            title: "Producto no encontrado",
-            description: `Producto con código ${barcode} no encontrado en la base de datos. Se ha agregado a la lista y a la base de datos.`,
-          });
-           setProducts([productInfo, ...products]);
-        } else {
-           setProducts([{ ...productInfo, count: 1, lastUpdated: format(new Date(), 'yyyy-MM-dd HH:mm:ss') }, ...products]);
-             toast({
-                title: "Producto agregado",
-                description: `${productInfo.description} agregado al inventario.`,
-            });
-        }
+      if (productFromDb) {
+        // Product found in database state, add it to the counting list
+        const newProductForList = {
+          ...productFromDb, // Use all data from DB record (includes description, provider, stock)
+          count: 1,         // Start count at 1 for the counting list
+          lastUpdated: format(new Date(), 'yyyy-MM-dd HH:mm:ss'),
+        };
+        setProducts([newProductForList, ...products]);
+        toast({
+          title: "Producto agregado",
+          description: `${newProductForList.description} agregado al inventario desde la base de datos.`,
+        });
+      } else {
+        // 3. Product not found in database state, add as new to both lists
+        playBeep(); // Beep because it's unknown
+        const newProductData = {
+          barcode: currentBarcode,
+          description: `Nuevo producto ${currentBarcode}`,
+          provider: "Desconocido",
+          stock: 0,
+          count: 0, // Base count for DB state representation is 0
+          lastUpdated: format(new Date(), 'yyyy-MM-dd HH:mm:ss'),
+        };
+
+        // Add to database state (ProductDatabase component listens and updates IndexedDB)
+        setDatabaseProducts(prevDbProducts => [...prevDbProducts, newProductData]);
+
+        // Add to counting list state (with count 1)
+        setProducts([{ ...newProductData, count: 1 }, ...products]);
+
+        toast({
+          title: "Producto no encontrado",
+          description: `Producto ${currentBarcode} no encontrado. Agregado como nuevo al inventario y a la base de datos.`,
+        });
+      }
     }
 
+    setBarcode(""); // Clear input
+    barcodeInputRef.current?.focus(); // Refocus
 
-    setBarcode("");
-    if (barcodeInputRef.current) {
-      barcodeInputRef.current.focus();
-    }
-
-  }, [barcode, databaseProducts, products, toast]);
+  }, [barcode, products, databaseProducts, setDatabaseProducts, toast]);
 
 
   const executeQuantityChange = useCallback((barcode: string, action: 'increment' | 'decrement') => {
@@ -305,8 +290,8 @@ export default function Home() {
     const headers = ["Barcode", "Description", "Provider", "Stock", "Count", "Last Updated"];
     const rows = data.map((product) => [
       product.barcode,
-      product.description,
-      product.provider,
+      `"${product.description.replace(/"/g, '""')}"`, // Handle quotes in description
+      `"${product.provider.replace(/"/g, '""')}"`, // Handle quotes in provider
       product.stock,
       product.count,
       product.lastUpdated,

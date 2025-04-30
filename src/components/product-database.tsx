@@ -12,7 +12,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { Button } from "@/components/ui/button";
-import { Trash, Upload, FileDown, Filter, SheetIcon } from "lucide-react"; // Added SheetIcon
+import { Trash, Upload, FileDown, Filter, SheetIcon, Edit, Save } from "lucide-react"; // Added Edit, Save
 import { useToast } from "@/hooks/use-toast";
 import {
   Dialog,
@@ -59,16 +59,9 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"; // Added Alert components
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import type { Product } from '@/types/product'; // Import Product type
 
-interface Product {
-  barcode: string;
-  description: string;
-  provider: string;
-  stock: number;
-  count: number;
-  lastUpdated?: string; // Add lastUpdated property
-}
 
 const productSchema = z.object({
   barcode: z.string().min(1, {
@@ -89,7 +82,7 @@ type ProductValues = z.infer<typeof productSchema>;
 
 interface ProductDatabaseProps {
   databaseProducts: Product[];
-  setDatabaseProducts: (products: Product[]) => void;
+  setDatabaseProducts: (products: Product[] | ((prevProducts: Product[]) => Product[])) => void; // Allow functional updates
 }
 
 const DATABASE_NAME = "stockCounterDB";
@@ -148,8 +141,9 @@ export const addProductsToDB = async (products: Product[]): Promise<void> => {
     }
 
     return new Promise(async (resolve, reject) => {
+        let db: IDBDatabase | null = null;
         try {
-            const db = await openDB();
+            db = await openDB();
             const transaction = db.transaction(OBJECT_STORE_NAME, "readwrite");
             const objectStore = transaction.objectStore(OBJECT_STORE_NAME);
             let completedRequests = 0;
@@ -173,23 +167,24 @@ export const addProductsToDB = async (products: Product[]): Promise<void> => {
                 request.onsuccess = checkCompletion;
                 request.onerror = (event) => {
                     console.error("Error adding product to IndexedDB", (event.target as IDBRequest).error, product);
-                    checkCompletion();
+                    checkCompletion(); // Still count it as processed
                 };
             });
 
             transaction.oncomplete = () => {
                 console.log(`Transaction completed for adding ${totalRequests} products.`);
-                db.close();
+                db?.close(); // Use optional chaining
                 resolve(); // Resolve here ensures all writes are done
             };
 
             transaction.onerror = () => {
                 console.error("Transaction error adding products to IndexedDB", transaction.error);
-                db.close();
+                db?.close(); // Use optional chaining
                 reject(transaction.error);
             };
         } catch (error) {
             console.error("Failed to open DB for adding products", error);
+             db?.close(); // Use optional chaining in case of error during open
             reject(error);
         }
     });
@@ -242,8 +237,9 @@ export const deleteProductFromDB = async (barcode: string): Promise<void> => {
 
 export const clearDatabaseDB = async (): Promise<void> => {
     return new Promise(async (resolve, reject) => {
+        let db: IDBDatabase | null = null;
         try {
-            const db = await openDB();
+            db = await openDB();
             const transaction = db.transaction(OBJECT_STORE_NAME, "readwrite");
             const objectStore = transaction.objectStore(OBJECT_STORE_NAME);
             const request = objectStore.clear();
@@ -259,10 +255,11 @@ export const clearDatabaseDB = async (): Promise<void> => {
             };
 
             transaction.oncomplete = () => {
-                db.close();
+                db?.close();
             };
         } catch (error) {
              console.error("Failed to open DB for clearing", error);
+             db?.close();
             reject(error);
         }
     });
@@ -348,8 +345,8 @@ async function fetchGoogleSheetData(sheetUrl: string): Promise<Product[]> {
         // Basic CSV split - might fail with commas inside quotes, handle carefully
         const values = line.split(',').map(value => value.replace(/^"|"$/g, '').trim());
 
-        if (values.length < 3) { // Need at least barcode, description, stock
-            console.warn(`Skipping row ${i + 1}: Insufficient columns. Expected at least 3, got ${values.length}. Line: "${line}"`);
+        if (values.length < 2) { // Need at least barcode, description
+            console.warn(`Skipping row ${i + 1}: Insufficient columns. Expected at least 2, got ${values.length}. Line: "${line}"`);
             continue;
         }
 
@@ -417,6 +414,7 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = ({
     try {
       const products = await getAllProductsFromDB();
       setDatabaseProducts(products);
+      console.log("Loaded initial data from DB:", products.length, "items"); // Debug log
     } catch (error) {
       console.error("Failed to load products from IndexedDB", error);
       toast({
@@ -435,7 +433,8 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = ({
     const newProduct = { ...data, stock: Number(data.stock), count: 0 };
     try {
       await addProductsToDB([newProduct]);
-      setDatabaseProducts((prevProducts) => [...prevProducts, newProduct]);
+      // Use functional update for setDatabaseProducts for reliability
+      setDatabaseProducts(prevProducts => [...prevProducts, newProduct]);
       toast({
         title: "Producto agregado",
         description: `${data.description} ha sido agregado a la base de datos.`,
@@ -460,6 +459,7 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = ({
   const handleSaveProduct = useCallback(async (product: Product) => {
     try {
       await updateProductInDB(product);
+       // Use functional update
       setDatabaseProducts(prevProducts =>
         prevProducts.map(p =>
           p.barcode === product.barcode ? product : p
@@ -484,10 +484,10 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = ({
     async (barcode: string) => {
       try {
         await deleteProductFromDB(barcode);
-        const updatedProducts = databaseProducts.filter(
-          (p) => p.barcode !== barcode
+         // Use functional update
+        setDatabaseProducts(prevProducts =>
+          prevProducts.filter((p) => p.barcode !== barcode)
         );
-        setDatabaseProducts(updatedProducts);
         toast({
           title: "Producto eliminado",
           description: `Producto con código de barras ${barcode} ha sido eliminado de la base de datos.`,
@@ -501,7 +501,7 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = ({
         });
       }
     },
-    [databaseProducts, setDatabaseProducts, toast]
+    [setDatabaseProducts, toast] // Removed databaseProducts from dependency array
   );
 
     const handleLoadFromGoogleSheet = useCallback(async () => {
@@ -523,10 +523,10 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = ({
 
 
         try {
-            const products = await fetchGoogleSheetData(googleSheetUrl);
-            setTotalProducts(products.length);
+            const productsFromSheet = await fetchGoogleSheetData(googleSheetUrl);
+            setTotalProducts(productsFromSheet.length);
 
-            if (products.length === 0) {
+            if (productsFromSheet.length === 0) {
                  toast({
                     variant: "destructive", // Use destructive variant for potential issues
                     title: "No se encontraron productos",
@@ -539,22 +539,24 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = ({
 
             // Define chunk size for adding to DB
             const CHUNK_SIZE = 200;
-            let currentChunk = 0;
+            let currentChunkIndex = 0;
+            let processedCount = 0;
 
             const processChunk = async () => {
-                const start = currentChunk * CHUNK_SIZE;
+                const start = currentChunkIndex * CHUNK_SIZE;
                 const end = start + CHUNK_SIZE;
-                const chunk = products.slice(start, end);
+                const chunk = productsFromSheet.slice(start, end);
 
                 if (chunk.length > 0) {
                      try {
                         await addProductsToDB(chunk);
-                        const loadedCount = Math.min(productsLoaded + chunk.length, totalProducts);
-                        setProductsLoaded(loadedCount);
-                        setUploadProgress(Math.round((loadedCount / totalProducts) * 100));
-                        currentChunk++;
+                        processedCount += chunk.length;
+                        setProductsLoaded(processedCount); // Update UI state
+                        setUploadProgress(Math.round((processedCount / totalProducts) * 100));
+                        currentChunkIndex++;
                         // Use setTimeout to yield to the main thread and allow UI updates
-                        setTimeout(processChunk, 50); // Increased timeout slightly
+                        // Adjust timeout if needed, 0 might be sufficient
+                        setTimeout(processChunk, 10); // Short timeout for UI responsiveness
                      } catch (dbError) {
                         console.error("Error adding chunk to DB:", dbError);
                         setIsUploading(false);
@@ -572,10 +574,11 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = ({
                     setIsUploading(false);
                     setUploadComplete(true);
                     setShowSheetInfoAlert(false); // Hide info alert on completion
-                    loadInitialData(); // Refresh data after upload
+                    // --- Crucial: Update the component's state after DB operations ---
+                    await loadInitialData(); // Refresh state from IndexedDB
                     toast({
                         title: "Carga completa",
-                        description: `Se han cargado ${products.length} productos desde la hoja de cálculo.`,
+                        description: `Se han cargado ${totalProducts} productos desde la hoja de cálculo.`,
                     });
                 }
             };
@@ -595,7 +598,7 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = ({
                 duration: 9000, // Show longer for potentially complex errors
             });
         }
-    }, [googleSheetUrl, toast, loadInitialData, productsLoaded, totalProducts, setDatabaseProducts]); // Added setDatabaseProducts
+    }, [googleSheetUrl, toast, loadInitialData]); // Removed unnecessary dependencies
 
 
   const handleExportDatabase = useCallback(() => {
@@ -628,14 +631,12 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = ({
   const handleClearDatabase = useCallback(async () => {
     try {
       await clearDatabaseDB();
-      setDatabaseProducts([]);
+      setDatabaseProducts([]); // Clear the component state immediately
       toast({
         title: "Base de datos borrada",
         description:
           "Todos los productos han sido eliminados de la base de datos.",
       });
-      setOpenAlert(false); // Close the confirmation dialog
-      setAlertAction(null); // Reset alert action
     } catch (error) {
       console.error("Failed to clear database", error);
       toast({
@@ -643,12 +644,16 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = ({
         title: "Error",
         description: "Error al borrar la base de datos.",
       });
+    } finally {
+         setOpenAlert(false); // Close the confirmation dialog
+         setAlertAction(null); // Reset alert action
     }
   }, [setDatabaseProducts, toast]);
 
   const handleOpenEditDialog = (product: Product) => {
     setSelectedProduct(product);
-    productForm.reset(product); // populate form with product data
+    // Ensure stock is treated as a number for the form
+    productForm.reset({ ...product, stock: Number(product.stock) });
     setOpen(true);
   };
 
@@ -658,11 +663,12 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = ({
     const updatedProduct = {
       ...selectedProduct,
       ...values,
-      stock: Number(values.stock),
+      stock: Number(values.stock), // Ensure stock is saved as a number
     };
 
     try {
       await updateProductInDB(updatedProduct);
+      // Use functional update
       setDatabaseProducts((prevProducts) =>
         prevProducts.map((p) =>
           p.barcode === selectedProduct.barcode ? updatedProduct : p
@@ -674,6 +680,7 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = ({
       });
       setOpen(false); // close dialog
       reset(); // Reset form after successful submission
+      setSelectedProduct(null); // Clear selected product
     } catch (error) {
       console.error("Failed to update product", error);
       toast({
@@ -688,8 +695,9 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = ({
     if (alertAction === 'deleteProduct' && selectedProduct) {
       handleDeleteProductFromDB(selectedProduct.barcode);
       setOpen(false); // Close the edit dialog if open
+      setSelectedProduct(null); // Clear selected product
     } else if (alertAction === 'clearDatabase') {
-      handleClearDatabase();
+      handleClearDatabase(); // Call the clear function
     }
     setOpenAlert(false); // Close the confirmation dialog
     setAlertAction(null); // Reset alert action
@@ -831,15 +839,13 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = ({
               <TableHead className="w-[30%]">Descripción</TableHead>
               <TableHead className="w-[25%] sm:table-cell">Proveedor</TableHead>
               <TableHead className="w-[15%] text-right">Stock</TableHead>
+              {/* Removed Actions column header */}
             </TableRow>
           </TableHeader>
           <TableBody>
             {filteredProducts.map((product) => (
               <TableRow key={product.barcode} className="hover:bg-gray-50">
-                <TableCell
-                 className="w-[20%] font-medium"
-                 aria-label="Código de Barras"
-                >
+                <TableCell className="w-[20%] font-medium" aria-label="Código de Barras">
                   {product.barcode}
                 </TableCell>
                 <TableCell
@@ -855,6 +861,7 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = ({
                 <TableCell className="w-[15%] text-right text-gray-600" aria-label="Stock">
                   {product.stock}
                 </TableCell>
+                 {/* Removed Actions cell */}
               </TableRow>
             ))}
             {filteredProducts.length === 0 && (
@@ -877,6 +884,7 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = ({
             </DialogDescription>
           </DialogHeader>
           <Form {...productForm}>
+            {/* Pass the correct handler based on whether we are editing or adding */}
             <form onSubmit={handleSubmit(selectedProduct ? handleEditProduct : handleAddProductToDB)} className="space-y-4">
               <FormField
                 control={productForm.control}
@@ -940,9 +948,11 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = ({
                         type="number"
                         placeholder="Stock"
                         {...field}
+                        value={field.value ?? ''} // Handle potential null/undefined for input
                         onChange={(e) => {
-                          const value = parseInt(e.target.value, 10);
-                          field.onChange(isNaN(value) ? "" : value); // Handle NaN, allow empty string for clearing
+                          // Ensure the value passed to the form state is a number or undefined
+                           const value = e.target.value === '' ? undefined : parseInt(e.target.value, 10);
+                           field.onChange(isNaN(value as any) ? undefined : value);
                         }}
                       />
                     </FormControl>
@@ -960,7 +970,7 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = ({
                       </Button>
                     )}
                      <DialogClose asChild>
-                         <Button type="button" variant="outline">Cancelar</Button>
+                         <Button type="button" variant="outline" onClick={() => { setOpen(false); setSelectedProduct(null); reset(); }}>Cancelar</Button>
                     </DialogClose>
                 </DialogFooter>
             </form>

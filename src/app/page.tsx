@@ -641,9 +641,9 @@ export default function Home() {
                   </TableHead>
                   <TableHead className="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider w-[10%]">Stock</TableHead>
                   <TableHead className="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider w-[10%]">Cantidad</TableHead>
-                   <TableHead className="hidden sm:table-cell px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider w-1/5">Última Actualización</TableHead>
-                   <TableHead className="hidden sm:table-cell px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider w-[5%]">Validación</TableHead>
-                  <TableHead className="text-center sm:table-cell hidden px-4 py-3 text-xs font-medium text-gray-500 uppercase tracking-wider w-[15%]">Acciones</TableHead>
+                   <TableHead className="hidden md:table-cell px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider w-1/5">Última Actualización</TableHead>
+                   <TableHead className="hidden md:table-cell px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider w-[5%]">Validación</TableHead>
+                  <TableHead className="text-center hidden md:table-cell px-4 py-3 text-xs font-medium text-gray-500 uppercase tracking-wider w-[15%]">Acciones</TableHead> {/* Adjusted hidden class */}
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -678,13 +678,13 @@ export default function Home() {
                     >
                       {product.count}
                     </TableCell>
-                     <TableCell className="hidden sm:table-cell px-4 py-3 text-gray-500 text-xs">{product.lastUpdated}</TableCell>
-                      <TableCell className="hidden sm:table-cell px-4 py-3 text-center">
+                     <TableCell className="hidden md:table-cell px-4 py-3 text-gray-500 text-xs">{product.lastUpdated}</TableCell>
+                      <TableCell className="hidden md:table-cell px-4 py-3 text-center">
                           {product.count === product.stock && product.stock !== 0 ? (
                               <span className="text-green-600 font-semibold">OK</span>
                           ) : null}
                       </TableCell>
-                    <TableCell className="text-center sm:table-cell hidden px-4 py-3">
+                    <TableCell className="text-center hidden md:table-cell px-4 py-3"> {/* Adjusted hidden class */}
                        <div className="flex justify-center items-center space-x-1">
                           <Button
                             onClick={() => handleDecrement(product.barcode, 'count')}

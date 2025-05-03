@@ -1,4 +1,3 @@
-
 "use client";
 
 import { useState, useCallback, useRef, useEffect } from "react";
@@ -93,7 +92,7 @@ const DATABASE_VERSION = 1; // Increment if schema changes
 
 export const openDB = (): Promise<IDBDatabase> => {
   return new Promise((resolve, reject) => {
-    if (!window.indexedDB) {
+    if (typeof window === 'undefined' || !window.indexedDB) {
       reject(new Error("IndexedDB not supported by this browser."));
       return;
     }
@@ -257,7 +256,7 @@ const parseGoogleSheetUrl = (sheetUrl: string): { spreadsheetId: string | null; 
     const spreadsheetIdMatch = sheetUrl.match(/\/d\/([a-zA-Z0-9-_]+)\//);
     const sheetGidMatch = sheetUrl.match(/[#&]gid=([0-9]+)/);
     const spreadsheetId = spreadsheetIdMatch ? spreadsheetIdMatch[1] : null;
-    const gid = sheetGidMatch ? sheetGidMatch[1] : '0';
+    const gid = sheetGidMatch ? sheetGidMatch[1] : '0'; // Default to first sheet (gid=0) if not specified
     return { spreadsheetId, gid };
 };
 
@@ -266,23 +265,34 @@ async function fetchGoogleSheetData(sheetUrl: string): Promise<Product[]> {
     if (!spreadsheetId) {
         throw new Error("No se pudo extraer el ID de la hoja de cálculo de la URL.");
     }
+
+    // Construct the public CSV export URL
     const csvExportUrl = `https://docs.google.com/spreadsheets/d/${spreadsheetId}/export?format=csv&gid=${gid}`;
     console.log("Fetching Google Sheet CSV from:", csvExportUrl);
 
     let response: Response;
     try {
-        response = await fetch(csvExportUrl); // Removed CORS mode, often not needed for public sheets
+        // Fetch the data. No CORS mode needed if the sheet is public.
+        response = await fetch(csvExportUrl);
     } catch (error: any) {
         console.error("Network error fetching Google Sheet:", error);
-        throw new Error("Error de red al obtener la hoja. Verifique la URL, su conexión y la configuración de uso compartido (debe ser pública).");
+        // Provide more specific error guidance
+        let userMessage = "Error de red al obtener la hoja. ";
+        if (error.message?.includes('Failed to fetch')) {
+            userMessage += "Verifique su conexión a internet y la URL.";
+        } else {
+            userMessage += `Detalle: ${error.message}`;
+        }
+        throw new Error(userMessage);
     }
 
     if (!response.ok) {
         const errorText = await response.text().catch(() => "Could not read error response body.");
         console.error(`Failed to fetch Google Sheet data: ${response.status} ${response.statusText}`, errorText);
-        let userMessage = `Error ${response.status} al obtener datos.`;
-        if (response.status === 403) userMessage += " Asegúrese de que la hoja sea pública ('Cualquier persona con el enlace').";
-        else if (response.status === 404) userMessage += " Hoja no encontrada.";
+        let userMessage = `Error ${response.status} al obtener datos. `;
+        if (response.status === 400) userMessage += "Verifique la URL y asegúrese de que el ID de la hoja (gid) sea correcto.";
+        else if (response.status === 403) userMessage += "Asegúrese de que la hoja sea pública ('Cualquier persona con el enlace puede ver').";
+        else if (response.status === 404) userMessage += "Hoja no encontrada. Verifique la URL.";
         else userMessage += ` ${response.statusText}.`;
         throw new Error(userMessage);
     }
@@ -290,47 +300,51 @@ async function fetchGoogleSheetData(sheetUrl: string): Promise<Product[]> {
     const csvText = await response.text();
     console.log("Successfully fetched CSV data.");
 
-    // --- CSV Parsing Logic - Rely on Column Position ---
+    // --- Robust CSV Parsing Logic - Rely on Column Position ---
+    // Handle different line endings (\n or \r\n)
     const lines = csvText.split(/\r?\n/);
-    if (lines.length < 1) {
-        console.warn("CSV data is empty or invalid.");
+    if (lines.length < 2) { // Need at least header + one data row
+        console.warn("CSV data is empty or has only headers.");
         return [];
     }
 
     const products: Product[] = [];
-    for (let i = 1; i < lines.length; i++) { // Start from 1 to skip header row
+    // Start from 1 to skip the header row
+    for (let i = 1; i < lines.length; i++) {
         const line = lines[i].trim();
-        if (!line) continue;
+        if (!line) continue; // Skip empty lines
 
         // Basic CSV split - assumes comma separator and handles simple quotes
+        // This parser is basic. For complex CSVs (e.g., commas within quoted fields), a library is better.
         const values = line.split(',').map(value => value.replace(/^"|"$/g, '').trim());
 
-        if (values.length < 2) { // Need at least barcode, description
-            console.warn(`Skipping row ${i + 1}: Insufficient columns. Line: "${line}"`);
+        // Expected columns by position:
+        // 0: Barcode
+        // 1: Description
+        // 2: Provider (optional)
+        // 3: Stock (optional)
+
+        if (values.length < 1) { // Need at least barcode
+            console.warn(`Skipping row ${i + 1}: Insufficient columns. Found ${values.length}, expected at least 1. Line: "${line}"`);
             continue;
         }
 
         const barcode = values[0];
-        const description = values[1];
-        const provider = values.length > 2 && values[2] ? values[2] : "Desconocido";
-        const stockStr = values.length > 3 ? values[3] : '0';
+        const description = values.length > 1 ? values[1] : `Producto ${barcode}`; // Default if missing
+        const provider = values.length > 2 && values[2] ? values[2] : "Desconocido"; // Default if missing
+        const stockStr = values.length > 3 ? values[3] : '0'; // Default stock to '0' if missing
         const stock = parseInt(stockStr, 10);
 
         if (!barcode) {
             console.warn(`Skipping row ${i + 1}: Missing barcode.`);
             continue;
         }
-        if (!description) {
-            console.warn(`Skipping row ${i + 1} (Barcode: ${barcode}): Missing description.`);
-            // Consider adding a default description if needed: description = `Producto ${barcode}`;
-            // continue; // Or skip if description is mandatory
-        }
 
         products.push({
             barcode: barcode,
-            description: description || `Producto ${barcode}`, // Provide default if empty
+            description: description,
             provider: provider,
-            stock: isNaN(stock) ? 0 : stock,
+            stock: isNaN(stock) ? 0 : stock, // Handle if stock parsing fails, default to 0
             count: 0, // Default count when loading from sheet
             // lastUpdated: not set here, will be set on interaction
         });
@@ -338,6 +352,7 @@ async function fetchGoogleSheetData(sheetUrl: string): Promise<Product[]> {
     console.log(`Parsed ${products.length} products from CSV based on column position.`);
     return products;
 }
+
 
 
 // --- React Component ---
@@ -387,7 +402,9 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = ({
   }, [setDatabaseProducts, toast]); // Dependencies for useCallback
 
   useEffect(() => {
-    loadInitialData();
+    if (typeof window !== 'undefined') {
+        loadInitialData();
+    }
   }, [loadInitialData]); // Run loadInitialData once on mount
 
 
@@ -395,59 +412,78 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = ({
 
   const handleAddOrUpdateProduct = useCallback(async (data: ProductValues) => {
     const isUpdating = !!selectedProduct; // Check if we are updating
-    const productData = {
+    const productData: Product = {
         ...data,
-        barcode: isUpdating ? selectedProduct.barcode : data.barcode, // Keep original barcode on update
-        stock: Number(data.stock) || 0,
-        count: isUpdating ? selectedProduct.count : 0 // Preserve count if updating, else 0
+        barcode: isUpdating ? selectedProduct.barcode : data.barcode.trim(), // Trim barcode on add
+        description: data.description.trim(), // Trim description
+        provider: data.provider.trim(), // Trim provider
+        stock: Number(data.stock) || 0, // Ensure stock is a number
+        count: isUpdating ? selectedProduct.count : 0, // Preserve count if updating, else 0
+        lastUpdated: new Date().toISOString() // Add or update timestamp
     };
 
-    try {
-      await addProductsToDB([productData]); // Use addProductsToDB (uses 'put') for both add/update
-      // Use functional update for reliability
-      setDatabaseProducts(prevProducts => {
-         const existingIndex = prevProducts.findIndex(p => p.barcode === productData.barcode);
-         if (existingIndex > -1) {
-             // Update existing product
-             const updatedProducts = [...prevProducts];
-             updatedProducts[existingIndex] = productData;
-             return updatedProducts;
-         } else {
-             // Add new product
-             return [...prevProducts, productData];
-         }
-      });
-
-      toast({
-        title: isUpdating ? "Producto Actualizado" : "Producto Agregado",
-        description: `${productData.description} ha sido ${isUpdating ? 'actualizado' : 'agregado'}.`,
-      });
-      reset({ barcode: "", description: "", provider: "", stock: 0 }); // Reset form fully
-      setOpen(false); // Close dialog
-      setSelectedProduct(null); // Clear selected product after update/add
-    } catch (error: any) {
-      console.error("Database operation failed", error);
-      let errorMessage = `Error al ${isUpdating ? 'actualizar' : 'guardar'} el producto.`;
-      if (error.name === 'ConstraintError' && !isUpdating) {
-        errorMessage = `El producto con código de barras ${productData.barcode} ya existe.`;
-      }
-      toast({ variant: "destructive", title: "Error", description: errorMessage });
+    if (!productData.barcode) {
+        toast({ variant: "destructive", title: "Error", description: "El código de barras no puede estar vacío." });
+        return;
     }
-  }, [selectedProduct, setDatabaseProducts, toast, reset]);
+     if (!productData.description) {
+        toast({ variant: "destructive", title: "Error", description: "La descripción no puede estar vacía." });
+        return;
+    }
+    // Provider can be empty, default is handled if needed elsewhere
+
+    try {
+        await addProductsToDB([productData]); // Use addProductsToDB (uses 'put') for both add/update
+        // Use functional update for reliability
+        setDatabaseProducts(prevProducts => {
+            const existingIndex = prevProducts.findIndex(p => p.barcode === productData.barcode);
+            if (existingIndex > -1) {
+                // Update existing product
+                const updatedProducts = [...prevProducts];
+                updatedProducts[existingIndex] = productData;
+                return updatedProducts;
+            } else {
+                // Add new product
+                return [...prevProducts, productData];
+            }
+        });
+
+        toast({
+            title: isUpdating ? "Producto Actualizado" : "Producto Agregado",
+            description: `${productData.description} ha sido ${isUpdating ? 'actualizado' : 'agregado'}.`,
+        });
+        reset({ barcode: "", description: "", provider: "", stock: 0 }); // Reset form fully
+        setOpen(false); // Close dialog
+        setSelectedProduct(null); // Clear selected product after update/add
+    } catch (error: any) {
+        console.error("Database operation failed", error);
+        let errorMessage = `Error al ${isUpdating ? 'actualizar' : 'guardar'} el producto.`;
+        if (error.name === 'ConstraintError' && !isUpdating) {
+            errorMessage = `El producto con código de barras ${productData.barcode} ya existe.`;
+        } else if (error.message) {
+             errorMessage += ` Detalle: ${error.message}`;
+        }
+        toast({ variant: "destructive", title: "Error", description: errorMessage, duration: 9000 });
+    }
+}, [selectedProduct, setDatabaseProducts, toast, reset]);
 
 
   const handleDeleteProduct = useCallback(async (barcode: string) => {
+      if (!barcode) {
+          console.error("Delete cancelled: No barcode provided.");
+          return; // Should not happen if triggered correctly
+      }
       try {
         await deleteProductFromDB(barcode);
         // Use functional update for setDatabaseProducts
         setDatabaseProducts(prevProducts => prevProducts.filter(p => p.barcode !== barcode));
         toast({
           title: "Producto Eliminado",
-          description: `El producto ha sido eliminado.`,
+          description: `El producto con código ${barcode} ha sido eliminado.`,
         });
-      } catch (error) {
+      } catch (error: any) {
         console.error("Failed to delete product from database", error);
-        toast({ variant: "destructive", title: "Error", description: "Error al eliminar el producto." });
+        toast({ variant: "destructive", title: "Error", description: `Error al eliminar el producto: ${error.message}` });
       } finally {
           setOpenAlert(false); // Close confirmation dialog
           setAlertAction(null);
@@ -463,9 +499,9 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = ({
       await clearDatabaseDB();
       setDatabaseProducts([]); // Clear component state immediately
       toast({ title: "Base de Datos Borrada", description: "Todos los productos han sido eliminados." });
-    } catch (error) {
+    } catch (error: any) {
       console.error("Failed to clear database", error);
-      toast({ variant: "destructive", title: "Error", description: "Error al borrar la base de datos." });
+      toast({ variant: "destructive", title: "Error", description: `Error al borrar la base de datos: ${error.message}` });
     } finally {
         setOpenAlert(false);
         setAlertAction(null);
@@ -482,6 +518,11 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = ({
   };
 
   const triggerDeleteProductAlert = (product: Product) => {
+      if (!product) {
+         console.error("Cannot delete: product data is missing.");
+         toast({ variant: "destructive", title: "Error Interno", description: "No se pueden obtener los datos del producto para eliminar." });
+         return;
+      }
       setProductToDelete(product); // Set the product to be deleted
       setAlertAction('deleteProduct');
       setOpenAlert(true); // Open confirmation dialog
@@ -492,7 +533,7 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = ({
       setOpenAlert(true);
   };
 
- handleDeleteConfirmation = () => {
+ const handleDeleteConfirmation = () => {
     if (alertAction === 'deleteProduct' && productToDelete) {
       handleDeleteProduct(productToDelete.barcode); // Pass barcode to delete handler
     } else if (alertAction === 'clearDatabase') {
@@ -515,68 +556,125 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = ({
         setUploadComplete(false);
         setProductsLoaded(0);
         setTotalProductsToLoad(0);
-        setShowSheetInfoAlert(true);
+        setShowSheetInfoAlert(true); // Show info alert immediately
+
+        let db: IDBDatabase | null = null;
+        let transaction: IDBTransaction | null = null;
+        let objectStore: IDBObjectStore | null = null;
+        const CHUNK_SIZE = 200; // Process products in chunks
+        let productsFromSheet: Product[] = [];
 
         try {
             console.log("Starting Google Sheet data fetch...");
-            const productsFromSheet = await fetchGoogleSheetData(googleSheetUrl);
+            productsFromSheet = await fetchGoogleSheetData(googleSheetUrl);
             console.log(`Fetched ${productsFromSheet.length} products from sheet.`);
             setTotalProductsToLoad(productsFromSheet.length);
 
             if (productsFromSheet.length === 0) {
-                 toast({ variant: "destructive", title: "Sin Productos", description: "La hoja está vacía, no tiene el formato correcto o no es accesible." });
+                 toast({ title: "Hoja Vacía o Inválida", description: "No se encontraron productos válidos en la hoja. Verifique el formato y el acceso.", variant: "destructive" });
                  setIsUploading(false);
                  setShowSheetInfoAlert(false);
                  return;
             }
 
-            // Process in chunks
-            const CHUNK_SIZE = 200;
+            db = await openDB();
+            transaction = db.transaction(OBJECT_STORE_NAME, "readwrite");
+            objectStore = transaction.objectStore(OBJECT_STORE_NAME);
             let processedCount = 0;
 
-            for (let i = 0; i < productsFromSheet.length; i += CHUNK_SIZE) {
-                const chunk = productsFromSheet.slice(i, i + CHUNK_SIZE);
-                console.log(`Processing chunk ${i / CHUNK_SIZE + 1} with ${chunk.length} products.`);
-                try {
-                    await addProductsToDB(chunk); // Add/update chunk in IndexedDB
-                    processedCount += chunk.length;
-                    setProductsLoaded(processedCount);
-                    const progress = Math.round((processedCount / totalProductsToLoad) * 100);
-                    setUploadProgress(progress);
-                    console.log(`Progress: ${progress}% (${processedCount}/${totalProductsToLoad})`);
-                    // Yield to the main thread briefly to allow UI updates
-                    await new Promise(resolve => setTimeout(resolve, 10));
-                } catch (dbError) {
-                    console.error("Error adding chunk to DB:", dbError);
-                    setIsUploading(false);
-                    setShowSheetInfoAlert(false);
-                    toast({ variant: "destructive", title: "Error de Base de Datos", description: "Ocurrió un error al guardar. Verifique la consola.", duration: 9000 });
-                    return; // Stop processing on DB error
-                }
+            transaction.oncomplete = () => {
+                console.log("IndexedDB Transaction completed successfully.");
+                setIsUploading(false);
+                setUploadComplete(true);
+                loadInitialData(); // Refresh UI state from DB
+                toast({ title: "Carga Completa", description: `Se cargaron/actualizaron ${processedCount} productos.` });
+                // No need to close db here, transaction handles it implicitly
+            };
+
+            transaction.onerror = (event) => {
+                console.error("IndexedDB Transaction error:", (event.target as IDBTransaction).error);
+                setIsUploading(false);
+                setShowSheetInfoAlert(false);
+                toast({ variant: "destructive", title: "Error de Base de Datos", description: "Ocurrió un error durante la transacción al guardar.", duration: 9000 });
+                // No need to close db here
+            };
+
+             transaction.onabort = (event) => {
+                 console.error("IndexedDB Transaction aborted:", (event.target as IDBTransaction).error);
+                 setIsUploading(false);
+                 setShowSheetInfoAlert(false);
+                 toast({ variant: "destructive", title: "Carga Abortada", description: "La carga de datos fue abortada debido a un error.", duration: 9000 });
+             };
+
+
+            // Process products sequentially using the transaction
+            for (const product of productsFromSheet) {
+                 if (!objectStore || !transaction) { // Should not happen if transaction active
+                     throw new Error("Transaction or ObjectStore became invalid during processing.");
+                 }
+                 // Basic validation before putting
+                 const productToAdd = {
+                    ...product,
+                    stock: Number(product.stock) || 0,
+                    count: Number(product.count) || 0,
+                 };
+                 if (typeof productToAdd.barcode !== 'string' || !productToAdd.barcode.trim()) {
+                     console.warn("Skipping product with invalid barcode:", productToAdd);
+                     continue; // Skip this product
+                 }
+
+                 const request = objectStore.put(productToAdd);
+                 request.onerror = (event) => {
+                     // Log specific error, but don't necessarily stop the whole process unless transaction aborts
+                     console.error("Error putting product to IndexedDB:", (event.target as IDBRequest).error, productToAdd);
+                 };
+                 request.onsuccess = () => {
+                     processedCount++;
+                     setProductsLoaded(processedCount);
+                     const progress = totalProductsToLoad > 0 ? Math.round((processedCount / totalProductsToLoad) * 100) : 0;
+                     setUploadProgress(progress);
+                 };
+
+                 // Yield slightly if processing many items to keep UI responsive, but within the transaction
+                 if (processedCount % CHUNK_SIZE === 0) {
+                      console.log(`Processed ${processedCount}/${totalProductsToLoad}...`);
+                      // Brief yield, but careful not to let transaction time out
+                      // await new Promise(resolve => setTimeout(resolve, 5)); // Use cautiously
+                 }
             }
 
-            // --- Load successful ---
-            setIsUploading(false);
-            setUploadComplete(true);
-            setShowSheetInfoAlert(false);
-            await loadInitialData(); // Refresh state from IndexedDB *after* all DB ops are done
-            toast({ title: "Carga Completa", description: `Se cargaron/actualizaron ${totalProductsToLoad} productos.` });
+             // If loop completes, the transaction.oncomplete will fire.
 
         } catch (error: any) {
-            setIsUploading(false);
-            setShowSheetInfoAlert(false);
             console.error("Error during Google Sheet load process:", error);
+            setIsUploading(false); // Ensure UI state is reset
+            setShowSheetInfoAlert(false);
             toast({ variant: "destructive", title: "Error de Carga", description: error.message || "Error desconocido al cargar. Verifique URL, permisos y consola.", duration: 9000 });
+            // Abort transaction if it's still active and an external error occurred
+             if (transaction && transaction.readyState === "active") {
+                 try {
+                     transaction.abort();
+                 } catch (abortError) {
+                     console.error("Error aborting transaction:", abortError);
+                 }
+             }
         } finally {
-             // Ensure uploading state is always reset
-             setIsUploading(false);
+            // Ensure UI state is consistent regardless of success/failure
+            setIsUploading(false);
+             // Don't hide info alert immediately on error, let user see it
+             // setShowSheetInfoAlert(false); // Removed from here
+             // DB closing is handled by transaction completion/error/abort
         }
-    }, [googleSheetUrl, toast, loadInitialData, setDatabaseProducts]); // Ensure all necessary dependencies are listed
+    }, [googleSheetUrl, toast, loadInitialData, setDatabaseProducts]); // Dependencies
 
 
   // --- Export and Filtering ---
 
   const handleExportDatabase = useCallback(() => {
+    if (databaseProducts.length === 0) {
+      toast({ title: "Base de Datos Vacía", description: "No hay productos para exportar." });
+      return;
+    }
     const csvData = convertToCSV(databaseProducts);
     const blob = new Blob([csvData], { type: "text/csv;charset=utf-8;" });
     const link = document.createElement("a");
@@ -585,15 +683,15 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = ({
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
-  }, [databaseProducts]);
+  }, [databaseProducts, toast]); // Added toast dependency
 
   const convertToCSV = useCallback((data: Product[]) => {
     const headers = ["Barcode", "Description", "Provider", "Stock"];
     const rows = data.map((product) => [
-      product.barcode,
-      `"${(product.description || '').replace(/"/g, '""')}"`,
-      `"${(product.provider || '').replace(/"/g, '""')}"`,
-      product.stock ?? 0, // Ensure stock is a number
+      `"${(product.barcode || '').replace(/"/g, '""')}"`, // Quote barcode
+      `"${(product.description || '').replace(/"/g, '""')}"`, // Quote description
+      `"${(product.provider || '').replace(/"/g, '""')}"`, // Quote provider
+      product.stock ?? 0, // Ensure stock is a number, default 0
     ]);
     return headers.join(",") + "\n" + rows.map((row) => row.join(",")).join("\n");
   }, []);
@@ -697,9 +795,12 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = ({
         </div>
       )}
       {uploadComplete && !isUploading && totalProductsToLoad > 0 && (
-        <p className="text-sm text-green-600 mb-4 text-center">
-          ¡Carga completa! Se procesaron {productsLoaded} productos.
-        </p>
+        <Alert variant="default" className="mb-4 bg-green-50 border-green-300 text-green-800 text-xs">
+           <AlertTitle className="font-semibold text-sm">Carga Completa</AlertTitle>
+           <AlertDescription>
+               Se procesaron {productsLoaded} productos desde la Hoja de Google.
+            </AlertDescription>
+        </Alert>
       )}
 
       {/* --- Confirmation Dialog (for Delete/Clear) --- */}
@@ -709,7 +810,7 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = ({
             <AlertDialogTitle>¿Estás seguro?</AlertDialogTitle>
             <AlertDialogDescription>
               {alertAction === 'deleteProduct' && productToDelete ?
-                `Eliminarás el producto "${productToDelete.description}". Esta acción no se puede deshacer.`
+                `Eliminarás el producto "${productToDelete.description}" (Código: ${productToDelete.barcode}). Esta acción no se puede deshacer.`
                  : alertAction === 'clearDatabase' ?
                  "Eliminarás TODOS los productos de la base de datos. Esta acción no se puede deshacer."
                  : "Esta acción no se puede deshacer."

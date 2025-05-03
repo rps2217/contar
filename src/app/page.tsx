@@ -42,6 +42,7 @@ import { Minus, Plus, Trash, RefreshCw } from "lucide-react"; // Added RefreshCw
 import React, { useCallback, useEffect, useRef, useState } from "react"; // Import React
 import { updateProductInDB, getAllProductsFromDB } from '@/lib/indexeddb-helpers'; // Import DB helpers
 
+const LOCAL_STORAGE_COUNTING_LIST_KEY = 'stockCounterPro_countingList';
 
 export default function Home() {
   const [barcode, setBarcode] = useState("");
@@ -85,6 +86,56 @@ export default function Home() {
     };
     loadDb();
   }, [toast]); // Dependency array includes toast
+
+  // Load counting list from localStorage on initial mount
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      try {
+        const savedList = localStorage.getItem(LOCAL_STORAGE_COUNTING_LIST_KEY);
+        if (savedList) {
+          const parsedList = JSON.parse(savedList);
+          if (Array.isArray(parsedList)) {
+             // Basic validation for structure (optional but recommended)
+             const isValid = parsedList.every(item =>
+                typeof item === 'object' && item !== null &&
+                typeof item.barcode === 'string' &&
+                typeof item.description === 'string' &&
+                typeof item.count === 'number'
+             );
+             if (isValid) {
+                setProducts(parsedList);
+                console.log("Loaded counting list from localStorage:", parsedList.length, "items");
+             } else {
+                 console.warn("Invalid data found in localStorage for counting list. Clearing.");
+                 localStorage.removeItem(LOCAL_STORAGE_COUNTING_LIST_KEY);
+             }
+          }
+        }
+      } catch (error) {
+        console.error("Failed to load counting list from localStorage:", error);
+        // Optionally clear corrupted data
+        localStorage.removeItem(LOCAL_STORAGE_COUNTING_LIST_KEY);
+      }
+    }
+  }, []); // Empty dependency array ensures this runs only once on mount
+
+  // Save counting list to localStorage whenever it changes
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      try {
+        localStorage.setItem(LOCAL_STORAGE_COUNTING_LIST_KEY, JSON.stringify(products));
+      } catch (error) {
+        console.error("Failed to save counting list to localStorage:", error);
+        toast({
+            variant: "destructive",
+            title: "Error de Almacenamiento Local",
+            description: "No se pudo guardar el estado del inventario actual.",
+            duration: 5000,
+        });
+      }
+    }
+  }, [products, toast]); // Runs whenever the products state changes
+
 
   // Function to play a beep sound
   const playBeep = useCallback(() => {
@@ -831,3 +882,5 @@ export default function Home() {
     </div>
   );
 }
+
+        

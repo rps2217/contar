@@ -1,65 +1,82 @@
+// Ensure this file starts with "use client" if it uses client-side hooks like useState, useEffect, etc.
 "use client";
 
-import { useState, useCallback, useRef, useEffect } from "react";
-import {
-  Table,
-  TableBody,
-  TableCaption,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
-import { Button } from "@/components/ui/button";
-import { Trash, Upload, FileDown, Filter, SheetIcon, Edit, Save } from "lucide-react";
+import type { Product } from '@/types/product'; // Import Product type
+import { zodResolver } from "@hookform/resolvers/zod";
+import { useIsMobile } from "@/hooks/use-mobile";
 import { useToast } from "@/hooks/use-toast";
+import { cn } from "@/lib/utils";
 import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-  DialogTrigger,
-  DialogClose,
-} from "@/components/ui/dialog";
-import { Label } from "@/components/ui/label";
-import { Textarea } from "@/components/ui/textarea";
+    addProductsToDB,
+    clearDatabaseDB,
+    deleteProductFromDB,
+    getAllProductsFromDB,
+    updateProductInDB
+} from "@/lib/indexeddb-helpers"; // Import helpers
 import {
-  Form,
-  FormControl,
-  FormField,
-  FormItem,
-  FormLabel,
-  FormMessage,
-} from "@/components/ui/form";
+    Edit,
+    FileDown,
+    Filter,
+    Save,
+    SheetIcon,
+    Trash,
+    Upload
+} from "lucide-react";
+import Papa from 'papaparse'; // Using PapaParse for robust CSV parsing
+import * as React from "react"; // Import React
+import { useCallback, useEffect, useState } from "react";
 import { useForm } from "react-hook-form";
 import * as z from "zod";
-import { zodResolver } from "@hookform/resolvers/zod";
+import {
+    AlertDialog,
+    AlertDialogAction,
+    AlertDialogCancel,
+    AlertDialogContent,
+    AlertDialogDescription,
+    AlertDialogFooter,
+    AlertDialogHeader,
+    AlertDialogTitle
+} from "@/components/ui/alert-dialog";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { Button } from "@/components/ui/button";
+import {
+    Dialog,
+    DialogClose,
+    DialogContent,
+    DialogDescription,
+    DialogFooter,
+    DialogHeader,
+    DialogTitle
+} from "@/components/ui/dialog";
+import {
+    Form,
+    FormControl,
+    FormField,
+    FormItem,
+    FormLabel,
+    FormMessage
+} from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Progress } from "@/components/ui/progress";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-  AlertDialogTrigger,
-} from "@/components/ui/alert-dialog";
-import { Progress } from "@/components/ui/progress";
-import { useIsMobile } from "@/hooks/use-mobile";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
+    Select,
+    SelectContent,
+    SelectItem,
+    SelectTrigger,
+    SelectValue
 } from "@/components/ui/select";
-import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
-import type { Product } from '@/types/product'; // Import Product type
+import {
+    Table,
+    TableBody,
+    TableCaption,
+    TableCell,
+    TableHead,
+    TableHeader,
+    TableRow
+} from "@/components/ui/table";
+import { Textarea } from "@/components/ui/textarea";
 
 
 const productSchema = z.object({
@@ -82,220 +99,6 @@ interface ProductDatabaseProps {
   databaseProducts: Product[];
   setDatabaseProducts: (products: Product[] | ((prevProducts: Product[]) => Product[])) => void; // Allow functional updates
 }
-
-const DATABASE_NAME = "stockCounterDB";
-const OBJECT_STORE_NAME = "products";
-const DATABASE_VERSION = 1; // Increment if schema changes
-
-// --- IndexedDB Helper Functions ---
-
-export const openDB = (): Promise<IDBDatabase> => {
-  return new Promise((resolve, reject) => {
-    if (typeof window === 'undefined' || !window.indexedDB) {
-      console.warn("IndexedDB not supported by this browser.");
-      return reject(new Error("IndexedDB not supported by this browser."));
-    }
-    console.log(`Opening IndexedDB: ${DATABASE_NAME} v${DATABASE_VERSION}`);
-    const request = window.indexedDB.open(DATABASE_NAME, DATABASE_VERSION);
-
-    request.onerror = (event) => {
-      const error = (event.target as IDBOpenDBRequest).error;
-      console.error("IndexedDB error:", error?.name, error?.message);
-      reject(new Error(`IndexedDB error: ${error?.name} - ${error?.message}`));
-    };
-
-    request.onupgradeneeded = (event: IDBVersionChangeEvent) => {
-      console.log("IndexedDB upgrade needed.");
-      const db = (event.target as IDBOpenDBRequest).result;
-      if (!db.objectStoreNames.contains(OBJECT_STORE_NAME)) {
-        console.log(`Creating object store: ${OBJECT_STORE_NAME}`);
-        const store = db.createObjectStore(OBJECT_STORE_NAME, { keyPath: "barcode" });
-        store.createIndex("description", "description", { unique: false });
-        store.createIndex("provider", "provider", { unique: false });
-        console.log("IndexedDB object store created with indexes.");
-      } else {
-        console.log(`Object store ${OBJECT_STORE_NAME} already exists.`);
-        // Handle potential index updates in future versions if needed
-      }
-    };
-
-    request.onsuccess = (event) => {
-      console.log("IndexedDB opened successfully.");
-      const db = (event.target as IDBOpenDBRequest).result;
-      // Add global error handler for the connection
-      db.onerror = (event: Event) => {
-        console.error("Database error:", (event.target as any).error);
-      };
-      resolve(db);
-    };
-  });
-};
-
-const performTransaction = <T>(
-    mode: IDBTransactionMode,
-    operation: (objectStore: IDBObjectStore) => Promise<T>
-): Promise<T> => {
-    return new Promise(async (resolve, reject) => {
-        let db: IDBDatabase | null = null;
-        try {
-            db = await openDB();
-            if (!db.objectStoreNames.contains(OBJECT_STORE_NAME)) {
-                console.error(`Object store '${OBJECT_STORE_NAME}' not found.`);
-                db.close(); // Close connection if store doesn't exist
-                return reject(new Error(`Object store '${OBJECT_STORE_NAME}' not found.`));
-            }
-
-            const transaction = db.transaction(OBJECT_STORE_NAME, mode);
-            const objectStore = transaction.objectStore(OBJECT_STORE_NAME);
-
-            let result: T | undefined;
-
-            transaction.oncomplete = () => {
-                console.log(`Transaction (${mode}) completed.`);
-                db?.close(); // Close connection after transaction completes
-                if (result !== undefined) {
-                    resolve(result);
-                } else {
-                    // Resolve even if operation didn't explicitly return a value (e.g., delete)
-                    resolve(undefined as T);
-                }
-            };
-
-            transaction.onerror = (event) => {
-                const error = (event.target as IDBTransaction).error;
-                console.error(`Transaction (${mode}) error:`, error?.name, error?.message);
-                db?.close(); // Close connection on error
-                reject(new Error(`Transaction error: ${error?.name} - ${error?.message}`));
-            };
-
-            transaction.onabort = (event) => {
-                const error = (event.target as IDBTransaction).error;
-                console.warn(`Transaction (${mode}) aborted:`, error?.name, error?.message);
-                db?.close(); // Close connection on abort
-                reject(new Error(`Transaction aborted: ${error?.name} - ${error?.message}`));
-            };
-
-            // Perform the actual operation within the transaction context
-            result = await operation(objectStore);
-
-        } catch (error: any) {
-            console.error("Error performing transaction:", error);
-            if (db) db.close(); // Ensure DB is closed on external errors
-            reject(error);
-        }
-    });
-};
-
-
-export const getAllProductsFromDB = (): Promise<Product[]> => {
-    return performTransaction("readonly", (objectStore) => {
-        return new Promise((resolve, reject) => {
-            const request = objectStore.getAll();
-            request.onsuccess = () => resolve(request.result as Product[]);
-            request.onerror = (event) => reject((event.target as IDBRequest).error);
-        });
-    });
-};
-
-
-export const addProductsToDB = (products: Product[]): Promise<void> => {
-    if (!products || products.length === 0) {
-        console.warn("addProductsToDB called with empty or invalid product list.");
-        return Promise.resolve();
-    }
-
-    return performTransaction("readwrite", async (objectStore) => {
-        let successCount = 0;
-        let errorCount = 0;
-        const totalProducts = products.length;
-
-        console.log(`Attempting to add/update ${totalProducts} products in bulk.`);
-
-        for (const product of products) {
-            if (!product || typeof product.barcode !== 'string' || product.barcode.trim() === '') {
-                console.warn('Skipping invalid product data:', product);
-                errorCount++;
-                continue;
-            }
-            // Ensure correct types before putting into DB
-            const productToAdd: Product = {
-                ...product,
-                description: product.description || `Producto ${product.barcode}`, // Default description
-                provider: product.provider || "Desconocido", // Default provider
-                stock: Number(product.stock) || 0, // Ensure stock is a number
-                count: Number(product.count) || 0, // Ensure count is a number
-            };
-
-            try {
-                await new Promise<void>((resolvePut, rejectPut) => {
-                    const request = objectStore.put(productToAdd);
-                    request.onsuccess = () => {
-                        successCount++;
-                        resolvePut();
-                    };
-                    request.onerror = (event) => {
-                        errorCount++;
-                        console.error("Error putting product to IndexedDB", (event.target as IDBRequest).error, productToAdd);
-                        // Don't reject the whole transaction, just log the error for this item
-                        resolvePut(); // Resolve even on error to continue processing others
-                    };
-                });
-            } catch (putError) {
-                console.error("Caught error during put operation:", putError);
-                errorCount++;
-            }
-        }
-
-        console.log(`Bulk add/update finished. Success: ${successCount}, Errors/Skipped: ${errorCount}`);
-        if (errorCount > 0) {
-            // Optionally throw an error if any single put failed,
-            // or resolve successfully but indicate partial success.
-            // For now, just logging errors.
-        }
-        // No explicit return needed as it's Promise<void>
-    });
-};
-
-
-export const updateProductInDB = (product: Product): Promise<void> => {
-  // Uses addProductsToDB which uses 'put' - handles updates implicitly
-  console.log("Updating product in DB:", product.barcode);
-  return addProductsToDB([product]); // Wrap in array
-};
-
-export const deleteProductFromDB = (barcode: string): Promise<void> => {
-    return performTransaction("readwrite", (objectStore) => {
-        return new Promise((resolve, reject) => {
-            console.log(`Attempting to delete product with barcode: ${barcode}`);
-            const request = objectStore.delete(barcode);
-            request.onsuccess = () => {
-                console.log(`Product with barcode ${barcode} deleted successfully.`);
-                resolve();
-            };
-            request.onerror = (event) => {
-                console.error("Error deleting product from IndexedDB", (event.target as IDBRequest).error);
-                reject((event.target as IDBRequest).error);
-            };
-        });
-    });
-};
-
-export const clearDatabaseDB = (): Promise<void> => {
-    return performTransaction("readwrite", (objectStore) => {
-        return new Promise((resolve, reject) => {
-            console.log(`Attempting to clear object store: ${OBJECT_STORE_NAME}`);
-            const request = objectStore.clear();
-            request.onsuccess = () => {
-                console.log("IndexedDB object store cleared successfully.");
-                resolve();
-            };
-            request.onerror = (event) => {
-                console.error("Error clearing IndexedDB", (event.target as IDBRequest).error);
-                reject((event.target as IDBRequest).error);
-            };
-        });
-    });
-};
 
 
 // --- Google Sheet Parsing Logic ---
@@ -386,8 +189,18 @@ async function fetchGoogleSheetData(sheetUrl: string): Promise<Product[]> {
         const line = lines[i].trim();
         if (!line) continue; // Skip empty lines
 
-        // Basic CSV split - might need a more robust parser for complex CSVs
-        const values = line.split(',').map(value => value.replace(/^"|"$/g, '').trim());
+        // Use PapaParse for more reliable CSV parsing
+        const result = Papa.parse<string[]>(line, { delimiter: ',', skipEmptyLines: true });
+        if (result.errors.length > 0) {
+             console.warn(`Skipping row ${i + 1} due to parsing errors: ${result.errors[0].message}. Line: "${line}"`);
+             continue;
+        }
+        if (!result.data || result.data.length === 0 || !result.data[0] || result.data[0].length === 0) {
+             console.warn(`Skipping row ${i + 1}: No data parsed. Line: "${line}"`);
+            continue;
+        }
+
+        const values = result.data[0]; // PapaParse returns data as an array of arrays
 
         // Expected columns by position (0-based index):
         // 0: Barcode
@@ -400,10 +213,10 @@ async function fetchGoogleSheetData(sheetUrl: string): Promise<Product[]> {
             continue;
         }
 
-        const barcode = values[0];
-        const description = values.length > 1 && values[1] ? values[1] : `Producto ${barcode}`; // Default if missing
-        const provider = values.length > 2 && values[2] ? values[2] : "Desconocido"; // Default if missing
-        const stockStr = values.length > 3 ? values[3] : '0'; // Default stock to '0'
+        const barcode = values[0].trim();
+        const description = values.length > 1 && values[1] ? values[1].trim() : `Producto ${barcode}`; // Default if missing
+        const provider = values.length > 2 && values[2] ? values[2].trim() : "Desconocido"; // Default if missing
+        const stockStr = values.length > 3 ? values[3].trim() : '0'; // Default stock to '0'
         const stock = parseInt(stockStr, 10);
 
         products.push({
@@ -412,7 +225,7 @@ async function fetchGoogleSheetData(sheetUrl: string): Promise<Product[]> {
             provider: provider,
             stock: isNaN(stock) || stock < 0 ? 0 : stock, // Handle parsing errors, default to 0, ensure non-negative
             count: 0, // Default count when loading from sheet
-            // lastUpdated: will be set on interaction
+            lastUpdated: new Date().toISOString(), // Add lastUpdated timestamp
         });
     }
     console.log(`Parsed ${products.length} products from CSV based on column position.`);
@@ -436,7 +249,7 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = ({
   const [uploadProgress, setUploadProgress] = useState(0);
   const [isUploading, setIsUploading] = useState(false);
   const [uploadComplete, setUploadComplete] = useState(false);
-  const [totalProductsToLoad, setTotalProductsToLoad] = useState(0); // Renamed for clarity
+  const [totalProductsToLoad, setTotalProductsToLoad] = useState(0);
   const [productsLoaded, setProductsLoaded] = useState(0);
   const isMobile = useIsMobile();
   const [googleSheetUrl, setGoogleSheetUrl] = useState("");
@@ -491,6 +304,7 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = ({
             duration: null // Persist until dismissed
         });
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []); // Run only once on mount
 
 
@@ -504,7 +318,6 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = ({
         provider: data.provider?.trim() || "Desconocido", // Trim provider or default
         stock: Number(data.stock) || 0, // Ensure stock is a number, default 0
         // Preserve count if updating, otherwise it should be 0 for DB state
-        // If selectedProduct exists and has a count, use it, otherwise 0.
         count: selectedProduct?.count ?? 0,
         lastUpdated: new Date().toISOString() // Add or update timestamp
     };
@@ -518,8 +331,17 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = ({
 
     setIsUploading(true); // Show loading indicator during DB operation
     try {
-        // Add/Update in IndexedDB
-        await addProductsToDB([productData]);
+        if (isUpdating) {
+             await updateProductInDB(productData); // Use specific update function
+        } else {
+             // Check if barcode already exists before adding
+             const existingProduct = await getAllProductsFromDB().then(products => products.find(p => p.barcode === productData.barcode));
+             if (existingProduct) {
+                 throw new Error(`El producto con código de barras ${productData.barcode} ya existe.`);
+             }
+            await addProductsToDB([productData]);
+        }
+
 
         // Update React state reliably using functional update
         setDatabaseProducts(prevProducts => {
@@ -548,8 +370,10 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = ({
     } catch (error: any) {
         console.error("Database operation failed", error);
         let errorMessage = `Error al ${isUpdating ? 'actualizar' : 'guardar'} el producto.`;
-         // Check for specific IndexedDB errors
-        if (error.name === 'ConstraintError' && !isUpdating) {
+         // Check for specific IndexedDB errors or custom errors
+        if (error.message?.includes('ya existe')) {
+             errorMessage = error.message;
+        } else if (error.name === 'ConstraintError' && !isUpdating) {
             errorMessage = `El producto con código de barras ${productData.barcode} ya existe.`;
         } else if (error.message?.includes('TransactionInactiveError')) {
              errorMessage = "Error de transacción. Intente de nuevo.";
@@ -620,7 +444,7 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = ({
 
   // --- Dialog and Alert Triggers ---
 
-  const handleOpenEditDialog = (product: Product) => {
+  const handleOpenEditDialog = useCallback((product: Product) => {
     console.log("Opening edit dialog for:", product);
     setSelectedProduct(product);
     // Ensure form values are set correctly, handling potential undefined/null
@@ -631,9 +455,9 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = ({
         stock: product.stock ?? 0, // Default to 0 if stock is null/undefined
     });
     setOpen(true);
-  };
+  }, [reset]);
 
-  const triggerDeleteProductAlert = (product: Product | null) => {
+  const triggerDeleteProductAlert = useCallback((product: Product | null) => {
       if (!product) {
          console.error("Cannot trigger delete: product data is missing.");
          toast({ variant: "destructive", title: "Error Interno", description: "Datos del producto no disponibles para eliminar." });
@@ -643,15 +467,15 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = ({
       setProductToDelete(product); // Set the product to be deleted
       setAlertAction('deleteProduct');
       setOpenAlert(true); // Open confirmation dialog
-  };
+  }, [toast]);
 
-  const triggerClearDatabaseAlert = () => {
+  const triggerClearDatabaseAlert = useCallback(() => {
       console.log("Triggering clear database confirmation.");
       setAlertAction('clearDatabase');
       setOpenAlert(true);
-  };
+  }, []);
 
- const handleDeleteConfirmation = () => {
+ const handleDeleteConfirmation = useCallback(() => {
     console.log(`Confirming action: ${alertAction}`);
     if (alertAction === 'deleteProduct' && productToDelete) {
       handleDeleteProduct(productToDelete.barcode); // Pass barcode
@@ -664,7 +488,7 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = ({
          setAlertAction(null);
     }
     // Reset states are handled within individual handlers now
-  };
+  }, [alertAction, productToDelete, handleDeleteProduct, handleClearDatabase]);
 
 
   // --- Google Sheet Loading ---
@@ -694,14 +518,25 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = ({
                  toast({ title: "Hoja Vacía o Sin Datos Válidos", description: "No se encontraron productos válidos en la hoja. Verifique el formato y el acceso.", variant: "default", duration: 6000 });
                  // No need to set uploadComplete=true here
             } else {
-                // Use addProductsToDB for efficient bulk insertion/update
-                await addProductsToDB(productsFromSheet);
+                // --- Incremental Loading Logic ---
+                const BATCH_SIZE = 100; // Process 100 products at a time
+                let loadedCount = 0;
 
-                // Update progress based on successful operation (assuming addProductsToDB handles bulk)
-                setProductsLoaded(productsFromSheet.length);
-                setUploadProgress(100);
+                for (let i = 0; i < productsFromSheet.length; i += BATCH_SIZE) {
+                    const batch = productsFromSheet.slice(i, i + BATCH_SIZE);
+                    await addProductsToDB(batch); // Add batch to IndexedDB
+
+                    loadedCount += batch.length;
+                    setProductsLoaded(loadedCount);
+                    setUploadProgress(Math.round((loadedCount / productsFromSheet.length) * 100));
+
+                    // Optional: Small delay to allow UI updates and prevent blocking
+                    // await new Promise(resolve => setTimeout(resolve, 50));
+                }
+                // --- End Incremental Loading ---
+
                 setUploadComplete(true); // Mark as complete
-                console.log("Bulk add/update to IndexedDB completed.");
+                console.log("Bulk add/update to IndexedDB completed incrementally.");
 
                 // Reload data from DB to ensure UI consistency
                 await loadInitialData();
@@ -916,9 +751,11 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = ({
             <AlertDialogCancel onClick={() => setOpenAlert(false)}>Cancelar</AlertDialogCancel>
             <AlertDialogAction
                 onClick={handleDeleteConfirmation}
-                className={alertAction === 'clearDatabase' || alertAction === 'deleteProduct'
-                    ? "bg-red-600 hover:bg-red-700 text-white"
-                    : "bg-destructive hover:bg-destructive/90"} // Consistent destructive style
+                className={cn(
+                    alertAction === 'clearDatabase' || alertAction === 'deleteProduct'
+                        ? "bg-red-600 hover:bg-red-700 text-white"
+                        : "bg-destructive hover:bg-destructive/90" // Default destructive style if action type is unexpected
+                )}
              >
               {alertAction === 'deleteProduct' ? "Sí, Eliminar Producto" : alertAction === 'clearDatabase' ? "Sí, Borrar Todo" : "Confirmar"}
             </AlertDialogAction>
@@ -942,7 +779,7 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = ({
               <TableHead className="w-[20%] px-3 py-3">Código Barras</TableHead>
               <TableHead className="w-[45%] px-3 py-3">Descripción (Click para editar)</TableHead>
               {/* Provider column shown on desktop */}
-              <TableHead className="w-[20%] px-3 py-3 hidden md:table-cell">Proveedor</TableHead>
+              {/* <TableHead className="w-[20%] px-3 py-3 hidden md:table-cell">Proveedor</TableHead> */}
               <TableHead className="w-[15%] px-3 py-3 text-right">Stock</TableHead>
             </TableRow>
           </TableHeader>
@@ -961,9 +798,9 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = ({
                   {product.description}
                 </TableCell>
                  {/* Provider column shown on desktop */}
-                 <TableCell className="px-3 py-2 hidden md:table-cell text-muted-foreground" aria-label={`Proveedor ${product.provider}`}>
+                 {/* <TableCell className="px-3 py-2 hidden md:table-cell text-muted-foreground" aria-label={`Proveedor ${product.provider}`}>
                   {product.provider || 'N/A'}
-                </TableCell>
+                </TableCell> */}
                 <TableCell className="px-3 py-2 text-right font-medium tabular-nums text-muted-foreground" aria-label={`Stock ${product.stock}`}>
                   {product.stock}
                 </TableCell>
@@ -972,7 +809,7 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = ({
              {/* Loading State Placeholder */}
             {isUploading && databaseProducts.length === 0 && (
                 <TableRow>
-                    <TableCell colSpan={isMobile ? 3 : 4} className="text-center py-10 text-muted-foreground">
+                    <TableCell colSpan={isMobile ? 3 : 3} className="text-center py-10 text-muted-foreground">
                         Cargando datos iniciales...
                     </TableCell>
                 </TableRow>
@@ -980,7 +817,7 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = ({
              {/* Empty State */}
             {!isUploading && filteredProducts.length === 0 && (
               <TableRow>
-                <TableCell colSpan={isMobile ? 3 : 4} className="text-center py-10 text-muted-foreground">
+                <TableCell colSpan={isMobile ? 3 : 3} className="text-center py-10 text-muted-foreground">
                   {databaseProducts.length > 0 ? "No hay productos que coincidan con los filtros." : "La base de datos está vacía. Agregue productos o cargue desde Google Sheet."}
                 </TableCell>
               </TableRow>
@@ -1103,7 +940,3 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = ({
     </div>
   );
 };
-
-// Utility function to simulate delay (for debugging)
-// const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
-    

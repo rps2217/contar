@@ -1,46 +1,46 @@
 
 "use client";
 
-import { useState, useRef, useEffect, useCallback } from "react";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import {
-  Table,
-  TableBody,
-  TableCaption,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
-import { Plus, Minus, Trash } from "lucide-react";
-import { useToast } from "@/hooks/use-toast";
-import { ScrollArea } from "@/components/ui/scroll-area";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { ProductDatabase } from "@/components/product-database";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogHeader,
-  DialogTitle,
-  DialogTrigger,
-  DialogFooter,
-  DialogClose,
-} from "@/components/ui/dialog";
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-  AlertDialogTrigger,
-} from "@/components/ui/alert-dialog"
-import { format } from 'date-fns';
 import type { Product } from '@/types/product'; // Import Product type
+import { useToast } from "@/hooks/use-toast";
+import { cn } from "@/lib/utils"; // Import cn if needed, otherwise remove
+import {
+    AlertDialog,
+    AlertDialogAction,
+    AlertDialogCancel,
+    AlertDialogContent,
+    AlertDialogDescription,
+    AlertDialogFooter,
+    AlertDialogHeader,
+    AlertDialogTitle
+} from "@/components/ui/alert-dialog";
+import { Button } from "@/components/ui/button";
+import {
+    Dialog,
+    DialogClose,
+    DialogContent,
+    DialogDescription,
+    DialogFooter,
+    DialogHeader,
+    DialogTitle
+} from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
+import { ProductDatabase } from "@/components/product-database";
+import { ScrollArea } from "@/components/ui/scroll-area";
+import {
+    Table,
+    TableBody,
+    TableCaption,
+    TableCell,
+    TableHead,
+    TableHeader,
+    TableRow
+} from "@/components/ui/table";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { format } from 'date-fns';
+import { Minus, Plus, Trash } from "lucide-react";
+import React, { useCallback, useEffect, useRef, useState } from "react"; // Import React
+import { updateProductInDB, getAllProductsFromDB } from '@/lib/indexeddb-helpers'; // Import DB helpers
 
 
 export default function Home() {
@@ -49,116 +49,132 @@ export default function Home() {
   const [databaseProducts, setDatabaseProducts] = useState<Product[]>([]);
   const { toast } = useToast();
   const barcodeInputRef = useRef<HTMLInputElement>(null);
-  const [openQuantity, setOpenQuantity] = useState(false);
-  const [openStock, setOpenStock] = useState(false);
-  const [selectedProductBarcode, setSelectedProductBarcode] = useState<string | null>(null);
-  const [editingStockBarcode, setEditingStockBarcode] = useState<string | null>(null);
-  const [newStockValue, setNewStockValue] = useState<string>("");
-
-  // State for confirmation dialog
+  const [openQuantityDialog, setOpenQuantityDialog] = useState(false);
+  const [openStockDialog, setOpenStockDialog] = useState(false);
+  const [selectedProductForDialog, setSelectedProductForDialog] = useState<Product | null>(null); // Use one state for dialog product
   const [isConfirmDialogOpen, setIsConfirmDialogOpen] = useState(false);
-  const [confirmAction, setConfirmAction] = useState<'increment' | 'decrement' | 'delete' | null>(null);
+  const [confirmAction, setConfirmAction] = useState<'increment' | 'decrement' | null>(null);
   const [confirmProductBarcode, setConfirmProductBarcode] = useState<string | null>(null);
   const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false);
   const [productToDelete, setProductToDelete] = useState<Product | null>(null);
 
-
+  // Load database products on initial mount
   useEffect(() => {
+    const loadDb = async () => {
+      try {
+        const dbProducts = await getAllProductsFromDB();
+        setDatabaseProducts(dbProducts);
+      } catch (error) {
+        console.error("Failed to load database products:", error);
+        toast({
+          variant: "destructive",
+          title: "Error",
+          description: "No se pudieron cargar los productos de la base de datos.",
+        });
+      }
+    };
+    loadDb();
     barcodeInputRef.current?.focus();
-  }, []);
+  }, [toast]); // Dependency array includes toast
 
-  const playBeep = () => {
-      // Check if AudioContext is supported
+  const playBeep = useCallback(() => {
     if (typeof window !== 'undefined' && (window.AudioContext || (window as any).webkitAudioContext)) {
         const audioCtx = new (window.AudioContext || (window as any).webkitAudioContext)();
         const oscillator = audioCtx.createOscillator();
-        oscillator.type = 'sine'; // Sine wave for a simple beep
-        oscillator.frequency.setValueAtTime(440, audioCtx.currentTime); // A4 pitch
+        oscillator.type = 'sine';
+        oscillator.frequency.setValueAtTime(440, audioCtx.currentTime);
         oscillator.connect(audioCtx.destination);
         oscillator.start();
-        // Stop the beep after a short duration
         setTimeout(() => {
             oscillator.stop();
-            audioCtx.close(); // Close the context to free resources
-        }, 100); // 100 milliseconds duration
+            audioCtx.close();
+        }, 100);
     } else {
         console.warn("AudioContext not supported in this browser.");
-        // Fallback or do nothing if AudioContext is not supported
     }
-  };
+  }, []); // Empty dependency array as it doesn't depend on external state
 
  const handleAddProduct = useCallback(async () => {
-    // Trim the barcode value immediately to remove potential leading/trailing whitespace or characters
-    const currentBarcode = barcode.trim();
+    const currentBarcode = barcode.trim(); // Trim barcode immediately
 
-    if (!currentBarcode) { // Check if the trimmed barcode is empty
+    if (!currentBarcode) {
       toast({
         variant: "destructive",
         title: "Error",
         description: "Por favor, introduce un código de barras válido.",
       });
-      setBarcode(""); // Clear the input even if it was just whitespace
-      barcodeInputRef.current?.focus(); // Refocus
+      setBarcode("");
+      barcodeInputRef.current?.focus();
       return;
     }
 
-    // 1. Check if already in the counting list using the trimmed barcode
     const existingProductIndex = products.findIndex((p) => p.barcode === currentBarcode);
+
     if (existingProductIndex !== -1) {
       // Product exists in counting list, increment count
-      const updatedProducts = [...products];
-      const updatedProduct = {
-        ...updatedProducts[existingProductIndex],
-        count: updatedProducts[existingProductIndex].count + 1,
-        lastUpdated: format(new Date(), 'yyyy-MM-dd HH:mm:ss'),
-      };
-      updatedProducts[existingProductIndex] = updatedProduct;
-      // Move to top
-      setProducts([updatedProduct, ...products.slice(0, existingProductIndex), ...products.slice(existingProductIndex + 1)]);
-      toast({
-        title: "Cantidad aumentada",
-        description: `${updatedProduct.description} cantidad aumentada a ${updatedProduct.count}.`,
+      setProducts(prevProducts => {
+        const updatedProducts = [...prevProducts];
+        const productToUpdate = updatedProducts[existingProductIndex];
+        const updatedProduct = {
+          ...productToUpdate,
+          count: productToUpdate.count + 1,
+          lastUpdated: format(new Date(), 'yyyy-MM-dd HH:mm:ss'),
+        };
+        // Move updated product to the top
+        updatedProducts.splice(existingProductIndex, 1);
+        updatedProducts.unshift(updatedProduct);
+        toast({
+          title: "Cantidad aumentada",
+          description: `${updatedProduct.description} cantidad aumentada a ${updatedProduct.count}.`,
+        });
+        return updatedProducts;
       });
+
     } else {
-      // 2. Product not in counting list, look in the database state using the trimmed barcode
+      // Product not in counting list, look in the database state
       const productFromDb = databaseProducts.find((p) => p.barcode === currentBarcode);
 
       if (productFromDb) {
         // Product found in database state, add it to the counting list
-        const newProductForList = {
-          ...productFromDb, // Use all data from DB record (includes description, provider, stock)
-          count: 1,         // Start count at 1 for the counting list
+        const newProductForList: Product = {
+          ...productFromDb,
+          count: 1,
           lastUpdated: format(new Date(), 'yyyy-MM-dd HH:mm:ss'),
         };
         // Add to top
-        setProducts([newProductForList, ...products]);
+        setProducts(prevProducts => [newProductForList, ...prevProducts]);
         toast({
           title: "Producto agregado",
           description: `${newProductForList.description} agregado al inventario desde la base de datos.`,
         });
       } else {
-        // 3. Product not found in database state, add as new to both lists
+        // Product not found in database state, add as new (unknown)
         playBeep(); // Beep because it's unknown
-        const newProductData = {
-          barcode: currentBarcode, // Use the trimmed barcode
-          description: `Producto desconocido ${currentBarcode}`, // Indicate it's unknown
+        const newProductData: Product = {
+          barcode: currentBarcode,
+          description: `Producto desconocido ${currentBarcode}`,
           provider: "Desconocido",
           stock: 0,
-          count: 0, // Base count for DB state representation is 0
+          count: 1, // Start count at 1 for the counting list
           lastUpdated: format(new Date(), 'yyyy-MM-dd HH:mm:ss'),
         };
 
-        // Add to database state (ProductDatabase component listens and updates IndexedDB)
-        setDatabaseProducts(prevDbProducts => [...prevDbProducts, newProductData]);
+        // Add to counting list state (add to top)
+        setProducts(prevProducts => [newProductData, ...prevProducts]);
 
-        // Add to counting list state (with count 1)
-        // Add to top
-        setProducts([{ ...newProductData, count: 1 }, ...products]);
+        // Optionally, decide if you want to add unknown products to the database automatically
+        // If so, call addProductsToDB here and update databaseProducts state
+        // Example:
+        // try {
+        //   await addProductsToDB([{...newProductData, count: 0}]); // Add to DB with count 0
+        //   setDatabaseProducts(prevDb => [{...newProductData, count: 0}, ...prevDb]);
+        // } catch (error) { console.error("Failed to add unknown product to DB", error); }
+
 
         toast({
-          variant: "destructive", // Use destructive to highlight it wasn't found
+          variant: "destructive",
           title: "Producto desconocido",
-          description: `Producto ${currentBarcode} no encontrado en la base de datos. Agregado como nuevo.`,
+          description: `Producto ${currentBarcode} no encontrado. Agregado al inventario. Considere agregarlo a la base de datos.`,
         });
       }
     }
@@ -167,120 +183,120 @@ export default function Home() {
     setBarcode("");
     barcodeInputRef.current?.focus();
 
-  }, [barcode, products, databaseProducts, setDatabaseProducts, toast]);
+  }, [barcode, products, databaseProducts, toast, playBeep, setDatabaseProducts]); // Ensure all dependencies are listed
 
 
-  const executeQuantityChange = useCallback((barcode: string, action: 'increment' | 'decrement') => {
-    setProducts(prevProducts =>
-      prevProducts.map(product => {
-        if (product.barcode === barcode) {
-          const change = action === 'increment' ? 1 : -1;
-          const updatedCount = product.count + change;
-          // Prevent going below zero for decrement
-          if (action === 'decrement' && updatedCount < 0) return product;
+  // --- Quantity/Stock Modification Callbacks ---
 
-          return { ...product, count: updatedCount, lastUpdated: format(new Date(), 'yyyy-MM-dd HH:mm:ss') };
+  const modifyProductValue = useCallback(async (barcodeToUpdate: string, type: 'count' | 'stock', change: number) => {
+    let productToConfirm: Product | null = null;
+    let shouldConfirm = false;
+
+    setProducts(prevProducts => {
+        const index = prevProducts.findIndex(p => p.barcode === barcodeToUpdate);
+        if (index === -1) return prevProducts; // Product not found in list
+
+        const updatedProducts = [...prevProducts];
+        const product = updatedProducts[index];
+        let finalChange = change;
+
+        if (type === 'count') {
+            const newCount = product.count + change;
+            if (newCount < 0) finalChange = 0; // Prevent count going below zero
+
+            // Check for confirmation only when INCREMENTING count to match stock
+            if (change > 0 && newCount === product.stock && product.stock !== 0) {
+                 productToConfirm = product;
+                 shouldConfirm = true;
+            }
+            // Check for confirmation when DECREMENTING count when it matches stock
+             if (change < 0 && product.count === product.stock && product.stock !== 0) {
+                productToConfirm = product;
+                shouldConfirm = true;
+             }
+
+
+            updatedProducts[index] = { ...product, count: product.count + finalChange, lastUpdated: format(new Date(), 'yyyy-MM-dd HH:mm:ss') };
+        } else { // type === 'stock'
+            const newStock = product.stock + change;
+            if (newStock < 0) finalChange = 0; // Prevent stock going below zero
+            updatedProducts[index] = { ...product, stock: product.stock + finalChange, lastUpdated: format(new Date(), 'yyyy-MM-dd HH:mm:ss') };
         }
-        return product;
-      })
-    );
-  }, []);
+
+        return updatedProducts;
+    });
+
+     // Update stock in IndexedDB if stock changed
+    if (type === 'stock') {
+       const product = products.find(p => p.barcode === barcodeToUpdate);
+       if (product) {
+           const newStock = product.stock + change;
+           if (newStock >= 0) {
+                try {
+                    // Fetch the latest version from DB first? Or just update based on current state?
+                    // Assuming current state is accurate enough for this update.
+                    await updateProductInDB({ ...product, stock: newStock });
+                    // Also update the databaseProducts state for consistency
+                    setDatabaseProducts(prevDbProducts =>
+                        prevDbProducts.map(dbP => dbP.barcode === barcodeToUpdate ? { ...dbP, stock: newStock } : dbP)
+                    );
+                } catch (error) {
+                    console.error("Failed to update stock in DB:", error);
+                    toast({ variant: "destructive", title: "Error DB", description: "No se pudo actualizar el stock en la base de datos." });
+                    // Optionally revert the state change in `products` state here
+                }
+           }
+       }
+    }
+
+    // Handle confirmation dialog outside of state update
+    if (shouldConfirm && productToConfirm) {
+        setConfirmProductBarcode(productToConfirm.barcode);
+        setConfirmAction(change > 0 ? 'increment' : 'decrement');
+        setIsConfirmDialogOpen(true);
+        // Revert the optimistic UI update for count if confirmation is needed
+         setProducts(prevProducts => {
+             const index = prevProducts.findIndex(p => p.barcode === barcodeToUpdate);
+             if (index === -1) return prevProducts;
+             const revertedProducts = [...prevProducts];
+             revertedProducts[index] = { ...revertedProducts[index], count: revertedProducts[index].count - change }; // Revert the change
+             return revertedProducts;
+         });
+
+    }
+
+  }, [products, setDatabaseProducts, toast]); // Added setDatabaseProducts
 
   const handleIncrement = useCallback((barcode: string, type: 'count' | 'stock') => {
-    const product = products.find(p => p.barcode === barcode);
-    if (!product) return;
-
-    if (type === 'count' && product.count === product.stock && product.stock !== 0) {
-      // Show confirmation dialog
-      setConfirmProductBarcode(barcode);
-      setConfirmAction('increment');
-      setIsConfirmDialogOpen(true);
-    } else {
-      // Proceed with the increment directly
-      setProducts(prevProducts =>
-        prevProducts.map(p => {
-          if (p.barcode === barcode) {
-            const updatedCount = type === 'count' ? p.count + 1 : p.count;
-            const updatedStock = type === 'stock' ? p.stock + 1 : p.stock;
-            const updatedProduct = { ...p, count: updatedCount, stock: updatedStock, lastUpdated: format(new Date(), 'yyyy-MM-dd HH:mm:ss') };
-
-            // Also update the stock in the database state if stock is changed
-            if (type === 'stock') {
-              setDatabaseProducts(prevDbProducts =>
-                prevDbProducts.map(dbProduct =>
-                  dbProduct.barcode === barcode ? { ...dbProduct, stock: updatedStock } : dbProduct
-                )
-              );
-              // Persist stock change to IndexedDB
-              const dbProductToUpdate = databaseProducts.find(dbP => dbP.barcode === barcode);
-              if (dbProductToUpdate) {
-                  import('@/components/product-database').then(({ updateProductInDB }) => {
-                    updateProductInDB({ ...dbProductToUpdate, stock: updatedStock });
-                  });
-              }
-            }
-            return updatedProduct;
-          }
-          return p;
-        })
-      );
-    }
-  }, [products, databaseProducts, setDatabaseProducts]); // Added databaseProducts
+    modifyProductValue(barcode, type, 1);
+  }, [modifyProductValue]);
 
   const handleDecrement = useCallback((barcode: string, type: 'count' | 'stock') => {
-    const product = products.find(p => p.barcode === barcode);
-    if (!product) return;
+    modifyProductValue(barcode, type, -1);
+  }, [modifyProductValue]);
 
-    if (type === 'count' && product.count === product.stock && product.stock !== 0) {
-      // Show confirmation dialog
-      setConfirmProductBarcode(barcode);
-      setConfirmAction('decrement');
-      setIsConfirmDialogOpen(true);
-    } else {
-       // Proceed with the decrement directly
-      setProducts(prevProducts =>
-        prevProducts.map(p => {
-          if (p.barcode === barcode) {
-            const updatedCount = type === 'count' && p.count > 0 ? p.count - 1 : p.count;
-            const updatedStock = type === 'stock' && p.stock > 0 ? p.stock - 1 : p.stock;
-            const updatedProduct = { ...p, count: updatedCount, stock: updatedStock, lastUpdated: format(new Date(), 'yyyy-MM-dd HH:mm:ss') };
-
-            // Also update the stock in the database state if stock is changed
-            if (type === 'stock') {
-              setDatabaseProducts(prevDbProducts =>
-                prevDbProducts.map(dbProduct =>
-                  dbProduct.barcode === barcode ? { ...dbProduct, stock: updatedStock } : dbProduct
-                )
-              );
-               // Persist stock change to IndexedDB
-               const dbProductToUpdate = databaseProducts.find(dbP => dbP.barcode === barcode);
-               if (dbProductToUpdate) {
-                    import('@/components/product-database').then(({ updateProductInDB }) => {
-                       updateProductInDB({ ...dbProductToUpdate, stock: updatedStock });
-                     });
-               }
-            }
-            return updatedProduct;
-          }
-          return p;
-        })
-      );
+  const handleConfirmQuantityChange = useCallback(() => {
+    if (confirmProductBarcode && confirmAction) {
+      const change = confirmAction === 'increment' ? 1 : -1;
+        // Re-apply the change after confirmation
+         setProducts(prevProducts => {
+             const index = prevProducts.findIndex(p => p.barcode === confirmProductBarcode);
+             if (index === -1) return prevProducts;
+             const updatedProducts = [...prevProducts];
+             const product = updatedProducts[index];
+             const newCount = product.count + change;
+             updatedProducts[index] = { ...product, count: newCount < 0 ? 0 : newCount, lastUpdated: format(new Date(), 'yyyy-MM-dd HH:mm:ss') };
+             return updatedProducts;
+         });
     }
-  }, [products, databaseProducts, setDatabaseProducts]); // Added databaseProducts
+    setIsConfirmDialogOpen(false);
+    setConfirmProductBarcode(null);
+    setConfirmAction(null);
+  }, [confirmProductBarcode, confirmAction]);
 
-    const handleConfirmQuantityChange = () => {
-        if (confirmProductBarcode && confirmAction && (confirmAction === 'increment' || confirmAction === 'decrement')) {
-            executeQuantityChange(confirmProductBarcode, confirmAction);
-        }
-        setIsConfirmDialogOpen(false);
-        setConfirmProductBarcode(null);
-        setConfirmAction(null);
-    };
-
-
-    const handleDelete = useCallback((product: Product) => {
+  const handleDeleteRequest = useCallback((product: Product) => {
         setProductToDelete(product);
-        setIsDeleteDialogOpen(true); // Open the delete confirmation dialog
+        setIsDeleteDialogOpen(true);
     }, []);
 
     const confirmDelete = useCallback(() => {
@@ -296,273 +312,176 @@ export default function Home() {
     }, [productToDelete, toast]);
 
 
-  const handleExport = useCallback(() => {
-    const csvData = convertToCSV(products);
-    const blob = new Blob([csvData], { type: "text/csv;charset=utf-8;" });
-    const link = document.createElement("a");
-    link.href = URL.createObjectURL(blob);
-    link.setAttribute("download", "inventory_count.csv");
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-  }, [products]);
+    // --- Export ---
+    const handleExport = useCallback(() => {
+        if (products.length === 0) {
+            toast({ title: "Vacío", description: "No hay productos en el inventario para exportar." });
+            return;
+        }
+        const csvData = convertToCSV(products);
+        const blob = new Blob([`\uFEFF${csvData}`], { type: "text/csv;charset=utf-8;" }); // Add BOM for Excel
+        const link = document.createElement("a");
+        link.href = URL.createObjectURL(blob);
+        const timestamp = format(new Date(), 'yyyyMMdd_HHmmss');
+        link.setAttribute("download", `inventory_count_${timestamp}.csv`);
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        toast({ title: "Exportado", description: "Inventario exportado a CSV." });
+    }, [products, toast]);
 
   const convertToCSV = (data: Product[]) => {
     const headers = ["Barcode", "Description", "Provider", "Stock", "Count", "Last Updated"];
     const rows = data.map((product) => [
-      product.barcode,
-      `"${product.description.replace(/"/g, '""')}"`, // Handle quotes in description
-      `"${product.provider.replace(/"/g, '""')}"`, // Handle quotes in provider
-      product.stock,
-      product.count,
-      product.lastUpdated,
+      `"${product.barcode}"`, // Ensure barcode is treated as string
+      `"${product.description?.replace(/"/g, '""') ?? ''}"`, // Handle quotes and null description
+      `"${product.provider?.replace(/"/g, '""') ?? 'Desconocido'}"`, // Handle quotes and null provider
+      product.stock ?? 0,
+      product.count ?? 0,
+      product.lastUpdated ? `"${format(new Date(product.lastUpdated), 'yyyy-MM-dd HH:mm:ss')}"` : '""', // Format date
     ]);
 
-    const csv = headers.join(",") + "\n" + rows.map((row) => row.join(",")).join("\n");
-    return csv;
+    return [headers.join(","), ...rows.map((row) => row.join(","))].join("\n");
   };
 
+  // --- Event Handlers ---
   const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
     if (e.key === "Enter") {
-       e.preventDefault(); // Prevent default form submission if inside a form
-      handleAddProduct();
+       e.preventDefault();
+       handleAddProduct();
     }
   };
 
-    const handleOpenQuantityDialog = useCallback((barcode: string) => {
-        setSelectedProductBarcode(barcode);
-        setOpenQuantity(true);
+    // --- Dialog Openers ---
+    const handleOpenQuantityDialog = useCallback((product: Product) => {
+        setSelectedProductForDialog(product);
+        setOpenQuantityDialog(true);
     }, []);
 
-    const handleOpenStockDialog = useCallback((barcode: string) => {
-        setSelectedProductBarcode(barcode);
-        setOpenStock(true);
+    const handleOpenStockDialog = useCallback((product: Product) => {
+        setSelectedProductForDialog(product);
+        setOpenStockDialog(true);
     }, []);
 
-    const handleQuantityChange = useCallback((barcode: string, newCount: number) => {
-        setProducts(prevProducts =>
-            prevProducts.map(product =>
-                product.barcode === barcode ? { ...product, count: newCount,  lastUpdated: format(new Date(), 'yyyy-MM-dd HH:mm:ss') } : product
-            )
-        );
-    }, []);
-
-    const handleStockChange = useCallback((barcode: string, newStock: number) => {
-        // Update stock in the counting list (products state)
-        setProducts(prevProducts =>
-            prevProducts.map(product =>
-                product.barcode === barcode ? { ...product, stock: newStock, lastUpdated: format(new Date(), 'yyyy-MM-dd HH:mm:ss') } : product
-            )
-        );
-        // Update stock in the database state (databaseProducts state)
-        setDatabaseProducts(prevDbProducts =>
-            prevDbProducts.map(dbProduct =>
-                dbProduct.barcode === barcode ? { ...dbProduct, stock: newStock } : dbProduct
-            )
-        );
-         // Persist stock change to IndexedDB
-         const productToUpdate = databaseProducts.find(p => p.barcode === barcode);
-         if (productToUpdate) {
-             import('@/components/product-database').then(({ updateProductInDB }) => {
-                 updateProductInDB({ ...productToUpdate, stock: newStock });
-             });
-         }
-    }, [databaseProducts, setDatabaseProducts]); // Include setDatabaseProducts dependency
-
-    const getProductByBarcode = useCallback((barcode: string) => {
-        return products.find((product) => product.barcode === barcode);
-    }, [products]);
-
-    const handleCloseQuantityDialog = () => {
-        setOpenQuantity(false);
+    const handleCloseDialogs = () => {
+        setOpenQuantityDialog(false);
+        setOpenStockDialog(false);
+        setSelectedProductForDialog(null); // Clear selected product when closing
     };
 
-    const handleCloseStockDialog = () => {
-        setOpenStock(false);
-    };
+    // --- Dialog Renderers ---
+    const renderQuantityDialog = () => {
+       const product = selectedProductForDialog; // Get the product from state
+       if (!product) return null; // Don't render if no product is selected
 
-
-  const handleStartEditingStock = (barcode: string) => {
-    setSelectedProductBarcode(barcode);
-    setOpenStock(true)
-  };
-
-  const handleCancelEditingStock = () => {
-    setEditingStockBarcode(null);
-    setNewStockValue("");
-  };
-
-  const handleSaveStock = (barcode: string) => {
-      const newStock = parseInt(newStockValue, 10);
-      if (!isNaN(newStock)) {
-          handleStockChange(barcode, newStock);
-
-          setDatabaseProducts(prevProducts => {
-              return prevProducts.map(product => {
-                  if (product.barcode === barcode) {
-                      return { ...product, stock: newStock };
-                  }
-                  return product;
-              });
-          });
-
-          setEditingStockBarcode(null);
-          setNewStockValue("");
-      } else {
-          toast({
-              variant: "destructive",
-              title: "Error",
-              description: "Por favor, introduce un número válido para el stock.",
-          });
-      }
-  };
-
-    const renderQuantityDialog = () => (
-        <Dialog open={openQuantity} onOpenChange={setOpenQuantity}>
-            <DialogContent className="sm:max-w-[425px] bg-white text-black border-teal-500 rounded-lg shadow-lg p-6">
-                <DialogHeader>
-                    <DialogTitle className="text-center text-xl font-semibold text-gray-800">
-                        <span className="flex items-center justify-center gap-2">
-                            <svg
-                                xmlns="http://www.w3.org/2000/svg"
-                                width="24"
-                                height="24"
-                                viewBox="0 0 24 24"
-                                fill="none"
-                                stroke="currentColor"
-                                strokeWidth="2"
-                                strokeLinecap="round"
-                                strokeLinejoin="round"
-                                className="lucide lucide-boxes h-6 w-6 text-teal-600"
+       return (
+            <Dialog open={openQuantityDialog} onOpenChange={setOpenQuantityDialog}>
+                <DialogContent className="sm:max-w-[425px] bg-white text-black border-teal-500 rounded-lg shadow-lg p-6">
+                    <DialogHeader>
+                        <DialogTitle className="text-center text-xl font-semibold text-gray-800">
+                            <span className="flex items-center justify-center gap-2">
+                                {/* SVG Icon */}
+                                <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="lucide lucide-boxes h-6 w-6 text-teal-600"><path d="M21 8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16Z"/><path d="m3.3 8 8.7 5 8.7-5"/><path d="M12 22V12"/></svg>
+                                Ajustar Cantidad ({product.description})
+                            </span>
+                        </DialogTitle>
+                        <DialogDescription className="text-center text-gray-600 mt-1">
+                            Ajuste la cantidad contada manualmente.
+                        </DialogDescription>
+                    </DialogHeader>
+                    <div className="grid gap-4 py-6">
+                        <div className="flex justify-around items-center">
+                            <Button
+                                size="lg"
+                                className="p-6 rounded-full bg-red-500 hover:bg-red-600 text-white text-2xl shadow-md transition-transform transform hover:scale-105 w-20 h-20 flex items-center justify-center"
+                                onClick={() => handleDecrement(product.barcode, 'count')}
+                                aria-label="Disminuir cantidad"
                             >
-                                <path d="M21 8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16Z"/>
-                                <path d="m3.3 8 8.7 5 8.7-5"/>
-                                <path d="M12 22V12"/>
-                            </svg>
-                            Ajustar Cantidad
-                        </span>
-                    </DialogTitle>
-                    <DialogDescription className="text-center text-gray-600 mt-1">
-                        Ajuste la cantidad contada manualmente.
-                    </DialogDescription>
-                </DialogHeader>
-                <div className="grid gap-4 py-6">
-                    <div className="flex justify-around items-center">
-                        <Button
-                            size="lg"
-                            className="p-6 rounded-full bg-red-500 hover:bg-red-600 text-white text-2xl shadow-md transition-transform transform hover:scale-105 w-20 h-20 flex items-center justify-center"
-                            onClick={() => {
-                                if (selectedProductBarcode) {
-                                    handleDecrement(selectedProductBarcode, 'count');
-                                }
-                            }}
-                            aria-label="Disminuir cantidad"
-                        >
-                            <Minus className="h-10 w-10" />
-                        </Button>
+                                <Minus className="h-10 w-10" />
+                            </Button>
 
-                        {selectedProductBarcode && (
                             <div className="text-6xl font-bold mx-6 text-gray-800 tabular-nums">
-                                {getProductByBarcode(selectedProductBarcode)?.count ?? 0}
+                                {products.find(p => p.barcode === product.barcode)?.count ?? 0}
                             </div>
-                        )}
 
-                        <Button
-                            size="lg"
-                            className="p-6 rounded-full bg-green-500 hover:bg-green-600 text-white text-2xl shadow-md transition-transform transform hover:scale-105 w-20 h-20 flex items-center justify-center"
-                            onClick={() => {
-                                if (selectedProductBarcode) {
-                                    handleIncrement(selectedProductBarcode, 'count');
-                                }
-                            }}
-                             aria-label="Aumentar cantidad"
-                        >
-                            <Plus className="h-10 w-10" />
-                        </Button>
+                            <Button
+                                size="lg"
+                                className="p-6 rounded-full bg-green-500 hover:bg-green-600 text-white text-2xl shadow-md transition-transform transform hover:scale-105 w-20 h-20 flex items-center justify-center"
+                                onClick={() => handleIncrement(product.barcode, 'count')}
+                                aria-label="Aumentar cantidad"
+                            >
+                                <Plus className="h-10 w-10" />
+                            </Button>
+                        </div>
                     </div>
-                </div>
-                <DialogFooter className="mt-4">
-                    <DialogClose asChild>
-                        <Button type="button" variant="outline" className="border-gray-300 text-gray-700 hover:bg-gray-100" onClick={handleCloseQuantityDialog}>
-                            Cerrar
-                        </Button>
-                    </DialogClose>
-                </DialogFooter>
-            </DialogContent>
-        </Dialog>
-    );
+                    <DialogFooter className="mt-4">
+                        <DialogClose asChild>
+                            <Button type="button" variant="outline" className="border-gray-300 text-gray-700 hover:bg-gray-100" onClick={handleCloseDialogs}>
+                                Cerrar
+                            </Button>
+                        </DialogClose>
+                    </DialogFooter>
+                </DialogContent>
+            </Dialog>
+        );
+    }
 
-    const renderStockDialog = () => (
-         <Dialog open={openStock} onOpenChange={setOpenStock}>
-            <DialogContent className="sm:max-w-[425px] bg-white text-black border-teal-500 rounded-lg shadow-lg p-6">
-                <DialogHeader>
-                    <DialogTitle className="text-center text-xl font-semibold text-gray-800">
-                        <span className="flex items-center justify-center gap-2">
-                             <svg
-                                xmlns="http://www.w3.org/2000/svg"
-                                width="24"
-                                height="24"
-                                viewBox="0 0 24 24"
-                                fill="none"
-                                stroke="currentColor"
-                                strokeWidth="2"
-                                strokeLinecap="round"
-                                strokeLinejoin="round"
-                                className="lucide lucide-archive h-6 w-6 text-teal-600" >
-                                    <rect width="20" height="5" x="2" y="3" rx="1"/><path d="M4 8v11a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8"/><path d="M10 12h4"/>
-                             </svg>
-                            Ajustar Stock
-                        </span>
-                    </DialogTitle>
-                    <DialogDescription className="text-center text-gray-600 mt-1">
-                        Ajuste el stock del producto manualmente.
-                    </DialogDescription>
-                </DialogHeader>
-                <div className="grid gap-4 py-6">
-                    <div className="flex justify-around items-center">
-                        <Button
-                            size="lg"
-                             className="p-6 rounded-full bg-red-500 hover:bg-red-600 text-white text-2xl shadow-md transition-transform transform hover:scale-105 w-20 h-20 flex items-center justify-center"
-                            onClick={() => {
-                                if (selectedProductBarcode) {
-                                    handleDecrement(selectedProductBarcode, 'stock');
-                                }
-                            }}
-                             aria-label="Disminuir stock"
-                        >
-                            <Minus className="h-10 w-10" />
-                        </Button>
+    const renderStockDialog = () => {
+        const product = selectedProductForDialog; // Get the product from state
+        if (!product) return null; // Don't render if no product is selected
 
-                        {selectedProductBarcode && (
+        return (
+            <Dialog open={openStockDialog} onOpenChange={setOpenStockDialog}>
+                <DialogContent className="sm:max-w-[425px] bg-white text-black border-teal-500 rounded-lg shadow-lg p-6">
+                    <DialogHeader>
+                        <DialogTitle className="text-center text-xl font-semibold text-gray-800">
+                            <span className="flex items-center justify-center gap-2">
+                                {/* SVG Icon */}
+                                <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="lucide lucide-archive h-6 w-6 text-teal-600"><rect width="20" height="5" x="2" y="3" rx="1"/><path d="M4 8v11a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8"/><path d="M10 12h4"/></svg>
+                                Ajustar Stock ({product.description})
+                            </span>
+                        </DialogTitle>
+                        <DialogDescription className="text-center text-gray-600 mt-1">
+                            Ajuste el stock del producto manualmente. Este cambio se reflejará en la base de datos.
+                        </DialogDescription>
+                    </DialogHeader>
+                    <div className="grid gap-4 py-6">
+                        <div className="flex justify-around items-center">
+                            <Button
+                                size="lg"
+                                className="p-6 rounded-full bg-red-500 hover:bg-red-600 text-white text-2xl shadow-md transition-transform transform hover:scale-105 w-20 h-20 flex items-center justify-center"
+                                onClick={() => handleDecrement(product.barcode, 'stock')}
+                                aria-label="Disminuir stock"
+                            >
+                                <Minus className="h-10 w-10" />
+                            </Button>
+
                              <div className="text-6xl font-bold mx-6 text-gray-800 tabular-nums">
-                                {getProductByBarcode(selectedProductBarcode)?.stock ?? 0}
+                                {products.find(p => p.barcode === product.barcode)?.stock ?? 0}
                             </div>
-                        )}
 
-                        <Button
-                            size="lg"
-                             className="p-6 rounded-full bg-green-500 hover:bg-green-600 text-white text-2xl shadow-md transition-transform transform hover:scale-105 w-20 h-20 flex items-center justify-center"
-                            onClick={() => {
-                                if (selectedProductBarcode) {
-                                    handleIncrement(selectedProductBarcode, 'stock');
-                                }
-                            }}
-                            aria-label="Aumentar stock"
-                        >
-                            <Plus className="h-10 w-10" />
-                        </Button>
+                            <Button
+                                size="lg"
+                                className="p-6 rounded-full bg-green-500 hover:bg-green-600 text-white text-2xl shadow-md transition-transform transform hover:scale-105 w-20 h-20 flex items-center justify-center"
+                                onClick={() => handleIncrement(product.barcode, 'stock')}
+                                aria-label="Aumentar stock"
+                            >
+                                <Plus className="h-10 w-10" />
+                            </Button>
+                        </div>
                     </div>
-                </div>
-                <DialogFooter className="mt-4">
-                    <DialogClose asChild>
-                         <Button type="button" variant="outline" className="border-gray-300 text-gray-700 hover:bg-gray-100" onClick={handleCloseStockDialog}>
-                            Cerrar
-                        </Button>
-                    </DialogClose>
-                </DialogFooter>
-            </DialogContent>
-        </Dialog>
-    );
+                    <DialogFooter className="mt-4">
+                        <DialogClose asChild>
+                             <Button type="button" variant="outline" className="border-gray-300 text-gray-700 hover:bg-gray-100" onClick={handleCloseDialogs}>
+                                Cerrar
+                            </Button>
+                        </DialogClose>
+                    </DialogFooter>
+                </DialogContent>
+            </Dialog>
+        );
+    }
+
 
      const renderConfirmationDialog = () => (
          <AlertDialog open={isConfirmDialogOpen} onOpenChange={setIsConfirmDialogOpen}>
@@ -613,10 +532,10 @@ export default function Home() {
         <TabsContent value="Contador">
           <div className="flex items-center mb-4">
             <Input
-              type="text" // Changed back to text to allow scanner input, trimming handles extra chars
+              type="text" // Keep as text for scanners
               placeholder="Escanear o ingresar código de barras"
               value={barcode}
-              onChange={(e) => setBarcode(e.target.value)} // Let input handle value as is
+              onChange={(e) => setBarcode(e.target.value)}
               className="mr-2 flex-grow bg-yellow-100 border-teal-300 focus:ring-teal-500 focus:border-teal-500 rounded-md shadow-sm"
               ref={barcodeInputRef}
               onKeyDown={handleKeyDown}
@@ -643,20 +562,22 @@ export default function Home() {
                   <TableHead className="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider w-[10%]">Cantidad</TableHead>
                    <TableHead className="hidden md:table-cell px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider w-1/5">Última Actualización</TableHead>
                    <TableHead className="hidden md:table-cell px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider w-[5%]">Validación</TableHead>
-                  <TableHead className="text-center hidden md:table-cell px-4 py-3 text-xs font-medium text-gray-500 uppercase tracking-wider w-[15%]">Acciones</TableHead> {/* Adjusted hidden class */}
+                  {/* Actions column hidden on mobile */}
+                  <TableHead className="text-center hidden md:table-cell px-4 py-3 text-xs font-medium text-gray-500 uppercase tracking-wider w-[15%]">Acciones</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {products.map((product) => (
                   <TableRow
                     key={product.barcode}
-                    className={`hover:bg-gray-50 transition-colors duration-150 ${
+                    className={cn(
+                      "hover:bg-gray-50 transition-colors duration-150",
                       product.count === product.stock && product.stock !== 0 ? "bg-green-50" : ""
-                    }`}
+                    )}
                   >
                     <TableCell
                         className="px-4 py-3 font-medium text-gray-900 cursor-pointer hover:text-red-600 hover:underline"
-                        onClick={() => handleDelete(product)}
+                        onClick={() => handleDeleteRequest(product)} // Changed to request delete
                         aria-label={`Eliminar ${product.description}`}
                     >
                       {product.description}
@@ -666,25 +587,28 @@ export default function Home() {
                     </TableCell>
                       <TableCell
                                   className="px-4 py-3 text-center text-gray-600 cursor-pointer hover:text-teal-700 hover:font-semibold"
-                                  onClick={() => handleOpenStockDialog(product.barcode)}
+                                  onClick={() => handleOpenStockDialog(product)} // Use correct product object
                                   aria-label={`Editar stock para ${product.description}`}
                               >
                                   {product.stock}
                       </TableCell>
                     <TableCell
                       className="px-4 py-3 text-center text-gray-600 cursor-pointer hover:text-teal-700 hover:font-semibold"
-                      onClick={() => handleOpenQuantityDialog(product.barcode)}
+                      onClick={() => handleOpenQuantityDialog(product)} // Use correct product object
                        aria-label={`Editar cantidad para ${product.description}`}
                     >
                       {product.count}
                     </TableCell>
-                     <TableCell className="hidden md:table-cell px-4 py-3 text-gray-500 text-xs">{product.lastUpdated}</TableCell>
+                     <TableCell className="hidden md:table-cell px-4 py-3 text-gray-500 text-xs">
+                         {product.lastUpdated ? format(new Date(product.lastUpdated), 'yyyy-MM-dd HH:mm:ss') : 'N/A'}
+                     </TableCell>
                       <TableCell className="hidden md:table-cell px-4 py-3 text-center">
                           {product.count === product.stock && product.stock !== 0 ? (
                               <span className="text-green-600 font-semibold">OK</span>
                           ) : null}
                       </TableCell>
-                    <TableCell className="text-center hidden md:table-cell px-4 py-3"> {/* Adjusted hidden class */}
+                     {/* Actions hidden on mobile, visible on desktop */}
+                    <TableCell className="text-center hidden md:table-cell px-4 py-3">
                        <div className="flex justify-center items-center space-x-1">
                           <Button
                             onClick={() => handleDecrement(product.barcode, 'count')}
@@ -704,7 +628,7 @@ export default function Home() {
                           >
                             <Plus className="h-4 w-4" />
                           </Button>
-                          {/* Remove Trash button here as click on description handles delete */}
+                          {/* Trash button removed, delete is now triggered by clicking description */}
                        </div>
                     </TableCell>
                   </TableRow>
@@ -725,6 +649,7 @@ export default function Home() {
           </div>
         </TabsContent>
         <TabsContent value="Base de Datos">
+          {/* Pass the state and setter correctly */}
           <ProductDatabase
             databaseProducts={databaseProducts}
             setDatabaseProducts={setDatabaseProducts}
@@ -732,6 +657,7 @@ export default function Home() {
         </TabsContent>
       </Tabs>
 
+            {/* Render dialogs */}
             {renderQuantityDialog()}
             {renderStockDialog()}
             {renderConfirmationDialog()}

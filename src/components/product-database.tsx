@@ -11,7 +11,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { Button } from "@/components/ui/button";
-import { Trash, Upload, FileDown, Filter, SheetIcon, Edit, Save } from "lucide-react"; // Added Edit, Save
+import { Trash, Upload, FileDown, Filter, SheetIcon, Edit, Save } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import {
   Dialog,
@@ -69,12 +69,11 @@ const productSchema = z.object({
   description: z.string().min(1, {
     message: "La descripción es requerida.",
   }),
-  provider: z.string().min(1, {
-    message: "El proveedor es requerido.",
-  }),
-  stock: z.number().min(0, {
-    message: "El stock debe ser mayor o igual a 0.",
-  }),
+  provider: z.string().optional(), // Provider is optional
+  stock: z.preprocess(
+    (val) => (val === "" || val === undefined || val === null ? 0 : Number(val)), // Preprocess empty/null to 0
+    z.number().min(0, { message: "El stock debe ser mayor o igual a 0." })
+  ),
 });
 
 type ProductValues = z.infer<typeof productSchema>;
@@ -93,177 +92,240 @@ const DATABASE_VERSION = 1; // Increment if schema changes
 export const openDB = (): Promise<IDBDatabase> => {
   return new Promise((resolve, reject) => {
     if (typeof window === 'undefined' || !window.indexedDB) {
-      reject(new Error("IndexedDB not supported by this browser."));
-      return;
+      console.warn("IndexedDB not supported by this browser.");
+      return reject(new Error("IndexedDB not supported by this browser."));
     }
+    console.log(`Opening IndexedDB: ${DATABASE_NAME} v${DATABASE_VERSION}`);
     const request = window.indexedDB.open(DATABASE_NAME, DATABASE_VERSION);
 
     request.onerror = (event) => {
-      console.error("Error opening IndexedDB", (event.target as IDBOpenDBRequest).error);
-      reject((event.target as IDBOpenDBRequest).error);
+      const error = (event.target as IDBOpenDBRequest).error;
+      console.error("IndexedDB error:", error?.name, error?.message);
+      reject(new Error(`IndexedDB error: ${error?.name} - ${error?.message}`));
     };
 
     request.onupgradeneeded = (event: IDBVersionChangeEvent) => {
+      console.log("IndexedDB upgrade needed.");
       const db = (event.target as IDBOpenDBRequest).result;
       if (!db.objectStoreNames.contains(OBJECT_STORE_NAME)) {
+        console.log(`Creating object store: ${OBJECT_STORE_NAME}`);
         const store = db.createObjectStore(OBJECT_STORE_NAME, { keyPath: "barcode" });
         store.createIndex("description", "description", { unique: false });
         store.createIndex("provider", "provider", { unique: false });
-        console.log("IndexedDB object store created.");
+        console.log("IndexedDB object store created with indexes.");
       } else {
+        console.log(`Object store ${OBJECT_STORE_NAME} already exists.`);
         // Handle potential index updates in future versions if needed
-        // Example: if (!store.indexNames.contains('newIndex')) store.createIndex('newIndex', 'field');
-        console.log("IndexedDB object store already exists.");
       }
     };
 
     request.onsuccess = (event) => {
-      resolve((event.target as IDBOpenDBRequest).result);
+      console.log("IndexedDB opened successfully.");
+      const db = (event.target as IDBOpenDBRequest).result;
+      // Add global error handler for the connection
+      db.onerror = (event: Event) => {
+        console.error("Database error:", (event.target as any).error);
+      };
+      resolve(db);
     };
   });
 };
 
-export const getAllProductsFromDB = async (): Promise<Product[]> => {
-  const db = await openDB();
-  return new Promise((resolve, reject) => {
-    if (!db.objectStoreNames.contains(OBJECT_STORE_NAME)) {
-        console.warn("Object store not found during getAllProductsFromDB");
-        resolve([]); // Return empty if store doesn't exist yet
-        return;
-    }
-    const transaction = db.transaction(OBJECT_STORE_NAME, "readonly");
-    const objectStore = transaction.objectStore(OBJECT_STORE_NAME);
-    const request = objectStore.getAll();
+const performTransaction = <T>(
+    mode: IDBTransactionMode,
+    operation: (objectStore: IDBObjectStore) => Promise<T>
+): Promise<T> => {
+    return new Promise(async (resolve, reject) => {
+        let db: IDBDatabase | null = null;
+        try {
+            db = await openDB();
+            if (!db.objectStoreNames.contains(OBJECT_STORE_NAME)) {
+                console.error(`Object store '${OBJECT_STORE_NAME}' not found.`);
+                db.close(); // Close connection if store doesn't exist
+                return reject(new Error(`Object store '${OBJECT_STORE_NAME}' not found.`));
+            }
 
-    request.onsuccess = () => {
-      resolve(request.result);
-    };
+            const transaction = db.transaction(OBJECT_STORE_NAME, mode);
+            const objectStore = transaction.objectStore(OBJECT_STORE_NAME);
 
-    request.onerror = (event) => {
-      console.error("Error getting all products from IndexedDB", (event.target as IDBRequest).error);
-      reject((event.target as IDBRequest).error);
-    };
-    // No need to close DB in transaction events, let it auto-close or handle elsewhere
-  });
+            let result: T | undefined;
+
+            transaction.oncomplete = () => {
+                console.log(`Transaction (${mode}) completed.`);
+                db?.close(); // Close connection after transaction completes
+                if (result !== undefined) {
+                    resolve(result);
+                } else {
+                    // Resolve even if operation didn't explicitly return a value (e.g., delete)
+                    resolve(undefined as T);
+                }
+            };
+
+            transaction.onerror = (event) => {
+                const error = (event.target as IDBTransaction).error;
+                console.error(`Transaction (${mode}) error:`, error?.name, error?.message);
+                db?.close(); // Close connection on error
+                reject(new Error(`Transaction error: ${error?.name} - ${error?.message}`));
+            };
+
+            transaction.onabort = (event) => {
+                const error = (event.target as IDBTransaction).error;
+                console.warn(`Transaction (${mode}) aborted:`, error?.name, error?.message);
+                db?.close(); // Close connection on abort
+                reject(new Error(`Transaction aborted: ${error?.name} - ${error?.message}`));
+            };
+
+            // Perform the actual operation within the transaction context
+            result = await operation(objectStore);
+
+        } catch (error: any) {
+            console.error("Error performing transaction:", error);
+            if (db) db.close(); // Ensure DB is closed on external errors
+            reject(error);
+        }
+    });
 };
 
-export const addProductsToDB = async (products: Product[]): Promise<void> => {
+
+export const getAllProductsFromDB = (): Promise<Product[]> => {
+    return performTransaction("readonly", (objectStore) => {
+        return new Promise((resolve, reject) => {
+            const request = objectStore.getAll();
+            request.onsuccess = () => resolve(request.result as Product[]);
+            request.onerror = (event) => reject((event.target as IDBRequest).error);
+        });
+    });
+};
+
+
+export const addProductsToDB = (products: Product[]): Promise<void> => {
     if (!products || products.length === 0) {
+        console.warn("addProductsToDB called with empty or invalid product list.");
         return Promise.resolve();
     }
-    const db = await openDB();
-    return new Promise((resolve, reject) => {
-        const transaction = db.transaction(OBJECT_STORE_NAME, "readwrite");
-        const objectStore = transaction.objectStore(OBJECT_STORE_NAME);
-        let completedRequests = 0;
-        const totalRequests = products.length;
 
-        transaction.oncomplete = () => {
-            console.log(`Transaction completed for adding/updating ${totalRequests} products.`);
-            resolve();
-        };
+    return performTransaction("readwrite", async (objectStore) => {
+        let successCount = 0;
+        let errorCount = 0;
+        const totalProducts = products.length;
 
-        transaction.onerror = (event) => {
-            console.error("Transaction error adding/updating products", (event.target as IDBTransaction).error);
-            reject((event.target as IDBTransaction).error);
-        };
+        console.log(`Attempting to add/update ${totalProducts} products in bulk.`);
 
-        products.forEach(product => {
+        for (const product of products) {
             if (!product || typeof product.barcode !== 'string' || product.barcode.trim() === '') {
                 console.warn('Skipping invalid product data:', product);
-                completedRequests++; // Count as processed
-                if (completedRequests === totalRequests) {
-                    // This case should ideally not happen if transaction completes/errors
-                }
-                return;
+                errorCount++;
+                continue;
             }
-            const productToAdd = {
+            // Ensure correct types before putting into DB
+            const productToAdd: Product = {
                 ...product,
-                stock: Number(product.stock) || 0,
-                count: Number(product.count) || 0
+                description: product.description || `Producto ${product.barcode}`, // Default description
+                provider: product.provider || "Desconocido", // Default provider
+                stock: Number(product.stock) || 0, // Ensure stock is a number
+                count: Number(product.count) || 0, // Ensure count is a number
             };
-            // Use put for both add and update
-            const request = objectStore.put(productToAdd);
+
+            try {
+                await new Promise<void>((resolvePut, rejectPut) => {
+                    const request = objectStore.put(productToAdd);
+                    request.onsuccess = () => {
+                        successCount++;
+                        resolvePut();
+                    };
+                    request.onerror = (event) => {
+                        errorCount++;
+                        console.error("Error putting product to IndexedDB", (event.target as IDBRequest).error, productToAdd);
+                        // Don't reject the whole transaction, just log the error for this item
+                        resolvePut(); // Resolve even on error to continue processing others
+                    };
+                });
+            } catch (putError) {
+                console.error("Caught error during put operation:", putError);
+                errorCount++;
+            }
+        }
+
+        console.log(`Bulk add/update finished. Success: ${successCount}, Errors/Skipped: ${errorCount}`);
+        if (errorCount > 0) {
+            // Optionally throw an error if any single put failed,
+            // or resolve successfully but indicate partial success.
+            // For now, just logging errors.
+        }
+        // No explicit return needed as it's Promise<void>
+    });
+};
+
+
+export const updateProductInDB = (product: Product): Promise<void> => {
+  // Uses addProductsToDB which uses 'put' - handles updates implicitly
+  console.log("Updating product in DB:", product.barcode);
+  return addProductsToDB([product]); // Wrap in array
+};
+
+export const deleteProductFromDB = (barcode: string): Promise<void> => {
+    return performTransaction("readwrite", (objectStore) => {
+        return new Promise((resolve, reject) => {
+            console.log(`Attempting to delete product with barcode: ${barcode}`);
+            const request = objectStore.delete(barcode);
             request.onsuccess = () => {
-                completedRequests++;
+                console.log(`Product with barcode ${barcode} deleted successfully.`);
+                resolve();
             };
             request.onerror = (event) => {
-                console.error("Error putting product to IndexedDB", (event.target as IDBRequest).error, productToAdd);
-                completedRequests++; // Still count as processed
+                console.error("Error deleting product from IndexedDB", (event.target as IDBRequest).error);
+                reject((event.target as IDBRequest).error);
+            };
+        });
+    });
+};
+
+export const clearDatabaseDB = (): Promise<void> => {
+    return performTransaction("readwrite", (objectStore) => {
+        return new Promise((resolve, reject) => {
+            console.log(`Attempting to clear object store: ${OBJECT_STORE_NAME}`);
+            const request = objectStore.clear();
+            request.onsuccess = () => {
+                console.log("IndexedDB object store cleared successfully.");
+                resolve();
+            };
+            request.onerror = (event) => {
+                console.error("Error clearing IndexedDB", (event.target as IDBRequest).error);
+                reject((event.target as IDBRequest).error);
             };
         });
     });
 };
 
 
-export const updateProductInDB = async (product: Product): Promise<void> => {
-  // Uses addProductsToDB which uses 'put' - handles updates implicitly
-  return addProductsToDB([product]);
-};
-
-export const deleteProductFromDB = async (barcode: string): Promise<void> => {
-  const db = await openDB();
-  return new Promise((resolve, reject) => {
-    const transaction = db.transaction(OBJECT_STORE_NAME, "readwrite");
-    const objectStore = transaction.objectStore(OBJECT_STORE_NAME);
-    const request = objectStore.delete(barcode);
-
-    request.onsuccess = () => {
-      console.log(`Product with barcode ${barcode} deleted successfully.`);
-      resolve();
-    };
-
-    request.onerror = (event) => {
-      console.error("Error deleting product from IndexedDB", (event.target as IDBRequest).error);
-      reject((event.target as IDBRequest).error);
-    };
-  });
-};
-
-export const clearDatabaseDB = async (): Promise<void> => {
-    const db = await openDB();
-    return new Promise(async (resolve, reject) => {
-         if (!db.objectStoreNames.contains(OBJECT_STORE_NAME)) {
-            console.warn("Object store not found during clearDatabaseDB");
-            resolve(); // Nothing to clear
-            return;
-         }
-        const transaction = db.transaction(OBJECT_STORE_NAME, "readwrite");
-        const objectStore = transaction.objectStore(OBJECT_STORE_NAME);
-        const request = objectStore.clear();
-
-        request.onsuccess = () => {
-            console.log("IndexedDB database cleared successfully.");
-            resolve();
-        };
-
-        request.onerror = (event) => {
-            console.error("Error clearing IndexedDB", (event.target as IDBRequest).error);
-            reject((event.target as IDBRequest).error);
-        };
-    });
-};
-
 // --- Google Sheet Parsing Logic ---
 
 const parseGoogleSheetUrl = (sheetUrl: string): { spreadsheetId: string | null; gid: string } => {
     try {
-        new URL(sheetUrl);
+        new URL(sheetUrl); // Basic URL validation
     } catch (error) {
-        console.error("Invalid Google Sheet URL provided", error);
+        console.error("Invalid Google Sheet URL provided:", sheetUrl, error);
         throw new Error("URL de Hoja de Google inválida.");
     }
-    const spreadsheetIdMatch = sheetUrl.match(/\/d\/([a-zA-Z0-9-_]+)\//);
-    const sheetGidMatch = sheetUrl.match(/[#&]gid=([0-9]+)/);
+    // More robust regex to handle various URL formats
+    const spreadsheetIdMatch = sheetUrl.match(/\/spreadsheets\/d\/([a-zA-Z0-9-_]+)/);
+    const gidMatch = sheetUrl.match(/[#&]gid=([0-9]+)/);
+
     const spreadsheetId = spreadsheetIdMatch ? spreadsheetIdMatch[1] : null;
-    const gid = sheetGidMatch ? sheetGidMatch[1] : '0'; // Default to first sheet (gid=0) if not specified
+    const gid = gidMatch ? gidMatch[1] : '0'; // Default to first sheet (gid=0)
+
+    console.log(`Parsed URL: spreadsheetId=${spreadsheetId}, gid=${gid}`);
+    if (!spreadsheetId) {
+         console.warn("Could not extract spreadsheet ID from URL:", sheetUrl);
+    }
     return { spreadsheetId, gid };
 };
+
 
 async function fetchGoogleSheetData(sheetUrl: string): Promise<Product[]> {
     const { spreadsheetId, gid } = parseGoogleSheetUrl(sheetUrl);
     if (!spreadsheetId) {
-        throw new Error("No se pudo extraer el ID de la hoja de cálculo de la URL.");
+        throw new Error("No se pudo extraer el ID de la hoja de cálculo de la URL. Verifique el formato de la URL.");
     }
 
     // Construct the public CSV export URL
@@ -272,81 +334,85 @@ async function fetchGoogleSheetData(sheetUrl: string): Promise<Product[]> {
 
     let response: Response;
     try {
-        // Fetch the data. No CORS mode needed if the sheet is public.
         response = await fetch(csvExportUrl);
     } catch (error: any) {
         console.error("Network error fetching Google Sheet:", error);
-        // Provide more specific error guidance
-        let userMessage = "Error de red al obtener la hoja. ";
-        if (error.message?.includes('Failed to fetch')) {
-            userMessage += "Verifique su conexión a internet y la URL.";
-        } else {
-            userMessage += `Detalle: ${error.message}`;
-        }
+        let userMessage = "Error de red al obtener la hoja. Verifique su conexión a internet y la URL.";
+         if (error.message?.includes('Failed to fetch')) {
+             // This often indicates a CORS issue if the sheet isn't public,
+             // or a network connectivity problem.
+             userMessage += " Posible problema de CORS o conectividad.";
+         } else {
+             userMessage += ` Detalle: ${error.message}`;
+         }
         throw new Error(userMessage);
     }
 
     if (!response.ok) {
-        const errorText = await response.text().catch(() => "Could not read error response body.");
-        console.error(`Failed to fetch Google Sheet data: ${response.status} ${response.statusText}`, errorText);
-        let userMessage = `Error ${response.status} al obtener datos. `;
-        if (response.status === 400) userMessage += "Verifique la URL y asegúrese de que el ID de la hoja (gid) sea correcto.";
-        else if (response.status === 403) userMessage += "Asegúrese de que la hoja sea pública ('Cualquier persona con el enlace puede ver').";
-        else if (response.status === 404) userMessage += "Hoja no encontrada. Verifique la URL.";
-        else userMessage += ` ${response.statusText}.`;
+        const status = response.status;
+        const statusText = response.statusText;
+        const errorBody = await response.text().catch(() => "Could not read error response body.");
+        console.error(`Failed to fetch Google Sheet data: ${status} ${statusText}`, { url: csvExportUrl, body: errorBody });
+
+        let userMessage = `Error ${status} al obtener datos. `;
+        if (status === 400) userMessage += "Verifique la URL y asegúrese de que el ID de la hoja (gid=${gid}) sea correcto.";
+        else if (status === 403) userMessage += "Acceso denegado. Asegúrese de que la hoja sea pública ('Cualquier persona con el enlace puede ver').";
+        else if (status === 404) userMessage += "Hoja no encontrada. Verifique la URL y el ID de la hoja.";
+        else userMessage += ` ${statusText}. Revise los permisos de la hoja.`;
+
+        // Specific check for common "Sign in" page response when not public
+        if (errorBody.toLowerCase().includes("google accounts sign in")) {
+             userMessage = "Error de Acceso: La hoja no es pública. Cambie la configuración de compartir a 'Cualquier persona con el enlace puede ver'.";
+        }
+
         throw new Error(userMessage);
     }
 
     const csvText = await response.text();
-    console.log("Successfully fetched CSV data.");
+    console.log(`Successfully fetched CSV data (length: ${csvText.length}). Parsing...`);
 
     // --- Robust CSV Parsing Logic - Rely on Column Position ---
-    // Handle different line endings (\n or \r\n)
-    const lines = csvText.split(/\r?\n/);
-    if (lines.length < 2) { // Need at least header + one data row
-        console.warn("CSV data is empty or has only headers.");
+    const lines = csvText.split(/\r?\n/); // Handle different line endings
+    if (lines.length < 1) { // Allow empty sheets or sheets with only header
+        console.warn("CSV data is empty.");
         return [];
     }
 
     const products: Product[] = [];
-    // Start from 1 to skip the header row
-    for (let i = 1; i < lines.length; i++) {
+    // Skip header row (assuming first row is header, start from i=1)
+    const startRow = lines[0].trim() ? 1 : 0; // Start from 0 if first line is empty
+
+    for (let i = startRow; i < lines.length; i++) {
         const line = lines[i].trim();
         if (!line) continue; // Skip empty lines
 
-        // Basic CSV split - assumes comma separator and handles simple quotes
-        // This parser is basic. For complex CSVs (e.g., commas within quoted fields), a library is better.
+        // Basic CSV split - might need a more robust parser for complex CSVs
         const values = line.split(',').map(value => value.replace(/^"|"$/g, '').trim());
 
-        // Expected columns by position:
+        // Expected columns by position (0-based index):
         // 0: Barcode
         // 1: Description
         // 2: Provider (optional)
         // 3: Stock (optional)
 
-        if (values.length < 1) { // Need at least barcode
-            console.warn(`Skipping row ${i + 1}: Insufficient columns. Found ${values.length}, expected at least 1. Line: "${line}"`);
+        if (values.length === 0 || !values[0]) {
+            console.warn(`Skipping row ${i + 1}: Missing or empty barcode (Column 1). Line: "${line}"`);
             continue;
         }
 
         const barcode = values[0];
-        const description = values.length > 1 ? values[1] : `Producto ${barcode}`; // Default if missing
+        const description = values.length > 1 && values[1] ? values[1] : `Producto ${barcode}`; // Default if missing
         const provider = values.length > 2 && values[2] ? values[2] : "Desconocido"; // Default if missing
-        const stockStr = values.length > 3 ? values[3] : '0'; // Default stock to '0' if missing
+        const stockStr = values.length > 3 ? values[3] : '0'; // Default stock to '0'
         const stock = parseInt(stockStr, 10);
-
-        if (!barcode) {
-            console.warn(`Skipping row ${i + 1}: Missing barcode.`);
-            continue;
-        }
 
         products.push({
             barcode: barcode,
             description: description,
             provider: provider,
-            stock: isNaN(stock) ? 0 : stock, // Handle if stock parsing fails, default to 0
+            stock: isNaN(stock) || stock < 0 ? 0 : stock, // Handle parsing errors, default to 0, ensure non-negative
             count: 0, // Default count when loading from sheet
-            // lastUpdated: not set here, will be set on interaction
+            // lastUpdated: will be set on interaction
         });
     }
     console.log(`Parsed ${products.length} products from CSV based on column position.`);
@@ -380,32 +446,52 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = ({
 
   const productForm = useForm<ProductValues>({
     resolver: zodResolver(productSchema),
-    defaultValues: { barcode: "", description: "", provider: "", stock: 0 },
+    defaultValues: { barcode: "", description: "", provider: "Desconocido", stock: 0 },
   });
-  const { handleSubmit, reset, control } = productForm; // Destructure control
+  const { handleSubmit, reset, control, setValue, formState: { errors } } = productForm; // Destructure control
+
+   // Debug form errors
+  useEffect(() => {
+    if (Object.keys(errors).length > 0) {
+      console.warn("Form validation errors:", errors);
+    }
+  }, [errors]);
 
   // Load initial data from IndexedDB on mount
   const loadInitialData = useCallback(async () => {
     console.log("Attempting to load initial data from IndexedDB...");
+    setIsUploading(true); // Indicate loading state
     try {
       const products = await getAllProductsFromDB();
       setDatabaseProducts(products);
       console.log("Loaded initial data from DB:", products.length, "items");
-    } catch (error) {
+    } catch (error: any) {
       console.error("Failed to load products from IndexedDB", error);
       toast({
         variant: "destructive",
-        title: "Error de Carga",
-        description: "No se pudieron cargar los productos de la base de datos local.",
+        title: "Error de Carga DB",
+        description: `No se pudieron cargar los productos: ${error.message}`,
+        duration: 9000
       });
+      setDatabaseProducts([]); // Set to empty array on error
+    } finally {
+        setIsUploading(false); // Turn off loading indicator
     }
   }, [setDatabaseProducts, toast]); // Dependencies for useCallback
 
   useEffect(() => {
-    if (typeof window !== 'undefined') {
+    if (typeof window !== 'undefined' && window.indexedDB) { // Ensure IndexedDB is available
         loadInitialData();
+    } else {
+        console.warn("IndexedDB not available, skipping initial load.");
+         toast({
+            variant: "destructive",
+            title: "Base de Datos No Disponible",
+            description: "IndexedDB no es compatible con este navegador. La base de datos local no funcionará.",
+            duration: null // Persist until dismissed
+        });
     }
-  }, [loadInitialData]); // Run loadInitialData once on mount
+  }, []); // Run only once on mount
 
 
   // --- CRUD Handlers ---
@@ -413,66 +499,81 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = ({
   const handleAddOrUpdateProduct = useCallback(async (data: ProductValues) => {
     const isUpdating = !!selectedProduct; // Check if we are updating
     const productData: Product = {
-        ...data,
-        barcode: isUpdating ? selectedProduct.barcode : data.barcode.trim(), // Trim barcode on add
-        description: data.description.trim(), // Trim description
-        provider: data.provider.trim(), // Trim provider
-        stock: Number(data.stock) || 0, // Ensure stock is a number
-        count: isUpdating ? selectedProduct.count : 0, // Preserve count if updating, else 0
+        barcode: isUpdating ? selectedProduct.barcode : data.barcode.trim(), // Trim barcode only on add
+        description: data.description.trim() || `Producto ${data.barcode.trim()}`, // Trim description or default
+        provider: data.provider?.trim() || "Desconocido", // Trim provider or default
+        stock: Number(data.stock) || 0, // Ensure stock is a number, default 0
+        // Preserve count if updating, otherwise it should be 0 for DB state
+        // If selectedProduct exists and has a count, use it, otherwise 0.
+        count: selectedProduct?.count ?? 0,
         lastUpdated: new Date().toISOString() // Add or update timestamp
     };
+
+    console.log(`${isUpdating ? 'Updating' : 'Adding'} product:`, productData);
 
     if (!productData.barcode) {
         toast({ variant: "destructive", title: "Error", description: "El código de barras no puede estar vacío." });
         return;
     }
-     if (!productData.description) {
-        toast({ variant: "destructive", title: "Error", description: "La descripción no puede estar vacía." });
-        return;
-    }
-    // Provider can be empty, default is handled if needed elsewhere
 
+    setIsUploading(true); // Show loading indicator during DB operation
     try {
-        await addProductsToDB([productData]); // Use addProductsToDB (uses 'put') for both add/update
-        // Use functional update for reliability
+        // Add/Update in IndexedDB
+        await addProductsToDB([productData]);
+
+        // Update React state reliably using functional update
         setDatabaseProducts(prevProducts => {
             const existingIndex = prevProducts.findIndex(p => p.barcode === productData.barcode);
+            let newProducts;
             if (existingIndex > -1) {
                 // Update existing product
-                const updatedProducts = [...prevProducts];
-                updatedProducts[existingIndex] = productData;
-                return updatedProducts;
+                newProducts = [...prevProducts];
+                newProducts[existingIndex] = { ...prevProducts[existingIndex], ...productData }; // Merge to preserve other fields if necessary
             } else {
                 // Add new product
-                return [...prevProducts, productData];
+                newProducts = [...prevProducts, productData];
             }
+            // Sort or reorder if needed, e.g., alphabetically by description
+            // newProducts.sort((a, b) => a.description.localeCompare(b.description));
+            return newProducts;
         });
 
         toast({
             title: isUpdating ? "Producto Actualizado" : "Producto Agregado",
-            description: `${productData.description} ha sido ${isUpdating ? 'actualizado' : 'agregado'}.`,
+            description: `${productData.description} (${productData.barcode}) ha sido ${isUpdating ? 'actualizado' : 'agregado'}.`,
         });
-        reset({ barcode: "", description: "", provider: "", stock: 0 }); // Reset form fully
+        reset({ barcode: "", description: "", provider: "Desconocido", stock: 0 }); // Reset form
         setOpen(false); // Close dialog
-        setSelectedProduct(null); // Clear selected product after update/add
+        setSelectedProduct(null); // Clear selected product state
     } catch (error: any) {
         console.error("Database operation failed", error);
         let errorMessage = `Error al ${isUpdating ? 'actualizar' : 'guardar'} el producto.`;
+         // Check for specific IndexedDB errors
         if (error.name === 'ConstraintError' && !isUpdating) {
             errorMessage = `El producto con código de barras ${productData.barcode} ya existe.`;
+        } else if (error.message?.includes('TransactionInactiveError')) {
+             errorMessage = "Error de transacción. Intente de nuevo.";
         } else if (error.message) {
              errorMessage += ` Detalle: ${error.message}`;
         }
-        toast({ variant: "destructive", title: "Error", description: errorMessage, duration: 9000 });
+        toast({ variant: "destructive", title: "Error de Base de Datos", description: errorMessage, duration: 9000 });
+    } finally {
+        setIsUploading(false); // Hide loading indicator
     }
 }, [selectedProduct, setDatabaseProducts, toast, reset]);
 
 
-  const handleDeleteProduct = useCallback(async (barcode: string) => {
+  const handleDeleteProduct = useCallback(async (barcode: string | null) => {
       if (!barcode) {
           console.error("Delete cancelled: No barcode provided.");
-          return; // Should not happen if triggered correctly
+          toast({ variant: "destructive", title: "Error Interno", description: "No se puede eliminar el producto sin código de barras." });
+          setOpenAlert(false);
+          setProductToDelete(null);
+          setAlertAction(null);
+          return;
       }
+      console.log(`Attempting to delete product with barcode: ${barcode}`);
+      setIsUploading(true); // Show loading state
       try {
         await deleteProductFromDB(barcode);
         // Use functional update for setDatabaseProducts
@@ -483,27 +584,35 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = ({
         });
       } catch (error: any) {
         console.error("Failed to delete product from database", error);
-        toast({ variant: "destructive", title: "Error", description: `Error al eliminar el producto: ${error.message}` });
+        toast({ variant: "destructive", title: "Error al Eliminar", description: `No se pudo eliminar: ${error.message}`, duration: 9000 });
       } finally {
+          setIsUploading(false); // Hide loading state
           setOpenAlert(false); // Close confirmation dialog
-          setAlertAction(null);
           setProductToDelete(null); // Clear the product slated for deletion
-          setOpen(false); // Close the edit dialog if it was open
-          setSelectedProduct(null); // Clear selection
+          setAlertAction(null);
+          // If the edit dialog was open for the deleted product, close it and reset
+          if (selectedProduct?.barcode === barcode) {
+             setOpen(false);
+             setSelectedProduct(null);
+             reset();
+          }
       }
-  }, [setDatabaseProducts, toast]); // Dependencies for useCallback
+  }, [setDatabaseProducts, toast, reset, selectedProduct]); // Added dependencies
 
 
   const handleClearDatabase = useCallback(async () => {
+    console.log("Attempting to clear the entire database.");
+    setIsUploading(true);
     try {
       await clearDatabaseDB();
       setDatabaseProducts([]); // Clear component state immediately
       toast({ title: "Base de Datos Borrada", description: "Todos los productos han sido eliminados." });
     } catch (error: any) {
       console.error("Failed to clear database", error);
-      toast({ variant: "destructive", title: "Error", description: `Error al borrar la base de datos: ${error.message}` });
+      toast({ variant: "destructive", title: "Error al Borrar DB", description: `No se pudo borrar la base de datos: ${error.message}`, duration: 9000 });
     } finally {
-        setOpenAlert(false);
+        setIsUploading(false);
+        setOpenAlert(false); // Close confirmation
         setAlertAction(null);
     }
   }, [setDatabaseProducts, toast]); // Dependencies
@@ -512,34 +621,49 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = ({
   // --- Dialog and Alert Triggers ---
 
   const handleOpenEditDialog = (product: Product) => {
+    console.log("Opening edit dialog for:", product);
     setSelectedProduct(product);
-    reset({ ...product, stock: Number(product.stock) }); // Populate form for editing
+    // Ensure form values are set correctly, handling potential undefined/null
+    reset({
+        barcode: product.barcode || "",
+        description: product.description || "",
+        provider: product.provider || "Desconocido",
+        stock: product.stock ?? 0, // Default to 0 if stock is null/undefined
+    });
     setOpen(true);
   };
 
-  const triggerDeleteProductAlert = (product: Product) => {
+  const triggerDeleteProductAlert = (product: Product | null) => {
       if (!product) {
-         console.error("Cannot delete: product data is missing.");
-         toast({ variant: "destructive", title: "Error Interno", description: "No se pueden obtener los datos del producto para eliminar." });
+         console.error("Cannot trigger delete: product data is missing.");
+         toast({ variant: "destructive", title: "Error Interno", description: "Datos del producto no disponibles para eliminar." });
          return;
       }
+      console.log("Triggering delete confirmation for:", product);
       setProductToDelete(product); // Set the product to be deleted
       setAlertAction('deleteProduct');
       setOpenAlert(true); // Open confirmation dialog
   };
 
   const triggerClearDatabaseAlert = () => {
+      console.log("Triggering clear database confirmation.");
       setAlertAction('clearDatabase');
       setOpenAlert(true);
   };
 
  const handleDeleteConfirmation = () => {
+    console.log(`Confirming action: ${alertAction}`);
     if (alertAction === 'deleteProduct' && productToDelete) {
-      handleDeleteProduct(productToDelete.barcode); // Pass barcode to delete handler
+      handleDeleteProduct(productToDelete.barcode); // Pass barcode
     } else if (alertAction === 'clearDatabase') {
       handleClearDatabase();
+    } else {
+         console.warn("Delete confirmation called with invalid state:", { alertAction, productToDelete });
+         setOpenAlert(false); // Close dialog if state is invalid
+         setProductToDelete(null);
+         setAlertAction(null);
     }
-    // Reset states handled within individual handlers now
+    // Reset states are handled within individual handlers now
   };
 
 
@@ -551,119 +675,50 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = ({
             return;
         }
 
+        console.log("Starting Google Sheet load process...");
         setIsUploading(true);
         setUploadProgress(0);
         setUploadComplete(false);
         setProductsLoaded(0);
         setTotalProductsToLoad(0);
-        setShowSheetInfoAlert(true); // Show info alert immediately
+        setShowSheetInfoAlert(true); // Show info alert
 
-        let db: IDBDatabase | null = null;
-        let transaction: IDBTransaction | null = null;
-        let objectStore: IDBObjectStore | null = null;
-        const CHUNK_SIZE = 200; // Process products in chunks
         let productsFromSheet: Product[] = [];
 
         try {
-            console.log("Starting Google Sheet data fetch...");
             productsFromSheet = await fetchGoogleSheetData(googleSheetUrl);
-            console.log(`Fetched ${productsFromSheet.length} products from sheet.`);
             setTotalProductsToLoad(productsFromSheet.length);
+            console.log(`Fetched ${productsFromSheet.length} products from sheet.`);
 
             if (productsFromSheet.length === 0) {
-                 toast({ title: "Hoja Vacía o Inválida", description: "No se encontraron productos válidos en la hoja. Verifique el formato y el acceso.", variant: "destructive" });
-                 setIsUploading(false);
-                 setShowSheetInfoAlert(false);
-                 return;
+                 toast({ title: "Hoja Vacía o Sin Datos Válidos", description: "No se encontraron productos válidos en la hoja. Verifique el formato y el acceso.", variant: "default", duration: 6000 });
+                 // No need to set uploadComplete=true here
+            } else {
+                // Use addProductsToDB for efficient bulk insertion/update
+                await addProductsToDB(productsFromSheet);
+
+                // Update progress based on successful operation (assuming addProductsToDB handles bulk)
+                setProductsLoaded(productsFromSheet.length);
+                setUploadProgress(100);
+                setUploadComplete(true); // Mark as complete
+                console.log("Bulk add/update to IndexedDB completed.");
+
+                // Reload data from DB to ensure UI consistency
+                await loadInitialData();
+
+                toast({ title: "Carga Completa", description: `Se procesaron ${productsFromSheet.length} productos desde la Hoja de Google.` });
             }
-
-            db = await openDB();
-            transaction = db.transaction(OBJECT_STORE_NAME, "readwrite");
-            objectStore = transaction.objectStore(OBJECT_STORE_NAME);
-            let processedCount = 0;
-
-            transaction.oncomplete = () => {
-                console.log("IndexedDB Transaction completed successfully.");
-                setIsUploading(false);
-                setUploadComplete(true);
-                loadInitialData(); // Refresh UI state from DB
-                toast({ title: "Carga Completa", description: `Se cargaron/actualizaron ${processedCount} productos.` });
-                // No need to close db here, transaction handles it implicitly
-            };
-
-            transaction.onerror = (event) => {
-                console.error("IndexedDB Transaction error:", (event.target as IDBTransaction).error);
-                setIsUploading(false);
-                setShowSheetInfoAlert(false);
-                toast({ variant: "destructive", title: "Error de Base de Datos", description: "Ocurrió un error durante la transacción al guardar.", duration: 9000 });
-                // No need to close db here
-            };
-
-             transaction.onabort = (event) => {
-                 console.error("IndexedDB Transaction aborted:", (event.target as IDBTransaction).error);
-                 setIsUploading(false);
-                 setShowSheetInfoAlert(false);
-                 toast({ variant: "destructive", title: "Carga Abortada", description: "La carga de datos fue abortada debido a un error.", duration: 9000 });
-             };
-
-
-            // Process products sequentially using the transaction
-            for (const product of productsFromSheet) {
-                 if (!objectStore || !transaction) { // Should not happen if transaction active
-                     throw new Error("Transaction or ObjectStore became invalid during processing.");
-                 }
-                 // Basic validation before putting
-                 const productToAdd = {
-                    ...product,
-                    stock: Number(product.stock) || 0,
-                    count: Number(product.count) || 0,
-                 };
-                 if (typeof productToAdd.barcode !== 'string' || !productToAdd.barcode.trim()) {
-                     console.warn("Skipping product with invalid barcode:", productToAdd);
-                     continue; // Skip this product
-                 }
-
-                 const request = objectStore.put(productToAdd);
-                 request.onerror = (event) => {
-                     // Log specific error, but don't necessarily stop the whole process unless transaction aborts
-                     console.error("Error putting product to IndexedDB:", (event.target as IDBRequest).error, productToAdd);
-                 };
-                 request.onsuccess = () => {
-                     processedCount++;
-                     setProductsLoaded(processedCount);
-                     const progress = totalProductsToLoad > 0 ? Math.round((processedCount / totalProductsToLoad) * 100) : 0;
-                     setUploadProgress(progress);
-                 };
-
-                 // Yield slightly if processing many items to keep UI responsive, but within the transaction
-                 if (processedCount % CHUNK_SIZE === 0) {
-                      console.log(`Processed ${processedCount}/${totalProductsToLoad}...`);
-                      // Brief yield, but careful not to let transaction time out
-                      // await new Promise(resolve => setTimeout(resolve, 5)); // Use cautiously
-                 }
-            }
-
-             // If loop completes, the transaction.oncomplete will fire.
 
         } catch (error: any) {
             console.error("Error during Google Sheet load process:", error);
-            setIsUploading(false); // Ensure UI state is reset
-            setShowSheetInfoAlert(false);
-            toast({ variant: "destructive", title: "Error de Carga", description: error.message || "Error desconocido al cargar. Verifique URL, permisos y consola.", duration: 9000 });
-            // Abort transaction if it's still active and an external error occurred
-             if (transaction && transaction.readyState === "active") {
-                 try {
-                     transaction.abort();
-                 } catch (abortError) {
-                     console.error("Error aborting transaction:", abortError);
-                 }
-             }
+            setUploadComplete(false); // Ensure complete is false on error
+            toast({ variant: "destructive", title: "Error de Carga", description: error.message || "Error desconocido al cargar desde Google Sheet. Verifique URL, permisos y formato.", duration: 9000 });
+
         } finally {
-            // Ensure UI state is consistent regardless of success/failure
-            setIsUploading(false);
-             // Don't hide info alert immediately on error, let user see it
-             // setShowSheetInfoAlert(false); // Removed from here
-             // DB closing is handled by transaction completion/error/abort
+            setIsUploading(false); // Hide loading indicator
+            // Do not hide the info alert immediately on error, maybe keep it or provide different feedback
+            // setShowSheetInfoAlert(false); // Consider removing or delaying this
+            console.log("Google Sheet load process finished.");
         }
     }, [googleSheetUrl, toast, loadInitialData, setDatabaseProducts]); // Dependencies
 
@@ -675,25 +730,47 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = ({
       toast({ title: "Base de Datos Vacía", description: "No hay productos para exportar." });
       return;
     }
-    const csvData = convertToCSV(databaseProducts);
-    const blob = new Blob([csvData], { type: "text/csv;charset=utf-8;" });
-    const link = document.createElement("a");
-    link.href = URL.createObjectURL(blob);
-    link.setAttribute("download", "product_database.csv");
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
+    try {
+        const csvData = convertToCSV(databaseProducts);
+        const blob = new Blob([`\uFEFF${csvData}`], { type: "text/csv;charset=utf-8;" }); // Add BOM for Excel compatibility
+        const link = document.createElement("a");
+        link.href = URL.createObjectURL(blob);
+        const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+        link.setAttribute("download", `product_database_${timestamp}.csv`);
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        toast({ title: "Exportación Iniciada", description: "Se ha iniciado la descarga del archivo CSV." });
+    } catch (error) {
+         console.error("Error exporting database:", error);
+         toast({ variant: "destructive", title: "Error de Exportación", description: "No se pudo generar el archivo CSV." });
+    }
   }, [databaseProducts, toast]); // Added toast dependency
 
   const convertToCSV = useCallback((data: Product[]) => {
-    const headers = ["Barcode", "Description", "Provider", "Stock"];
+    if (!data || data.length === 0) return "";
+    // Define headers consistently
+    const headers = ["barcode", "description", "provider", "stock"];
+     // Function to safely quote CSV fields
+    const safeQuote = (field: any): string => {
+        const str = String(field ?? ''); // Ensure it's a string, default to empty string if null/undefined
+        // Escape double quotes within the field by doubling them, then enclose the whole field in double quotes.
+        const escapedStr = str.replace(/"/g, '""');
+        return `"${escapedStr}"`;
+    };
+    // Map data to rows, ensuring order matches headers
     const rows = data.map((product) => [
-      `"${(product.barcode || '').replace(/"/g, '""')}"`, // Quote barcode
-      `"${(product.description || '').replace(/"/g, '""')}"`, // Quote description
-      `"${(product.provider || '').replace(/"/g, '""')}"`, // Quote provider
-      product.stock ?? 0, // Ensure stock is a number, default 0
+        safeQuote(product.barcode),
+        safeQuote(product.description),
+        safeQuote(product.provider),
+        product.stock ?? 0, // Ensure stock is a number, default 0
     ]);
-    return headers.join(",") + "\n" + rows.map((row) => row.join(",")).join("\n");
+
+    // Join headers and rows
+    return [
+        headers.join(","), // Header row
+        ...rows.map((row) => row.join(",")) // Data rows
+    ].join("\n");
   }, []);
 
 
@@ -701,118 +778,136 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = ({
       const searchTermLower = searchTerm.toLowerCase();
       const matchesSearch = searchTerm === "" ||
                             (product.barcode || '').toLowerCase().includes(searchTermLower) ||
-                            (product.description || '').toLowerCase().includes(searchTermLower);
+                            (product.description || '').toLowerCase().includes(searchTermLower) ||
+                             (product.provider || '').toLowerCase().includes(searchTermLower); // Include provider in search
       const matchesProvider = selectedProviderFilter === 'all' || product.provider === selectedProviderFilter;
       return matchesSearch && matchesProvider;
   });
 
-  // Generate provider options dynamically, ensuring 'all' is first and no duplicates
-  const providerOptions = ["all", ...Array.from(new Set(databaseProducts.map(p => p.provider).filter(p => p)))]; // Filter out empty/null providers
+  // Generate provider options dynamically, ensuring 'all' is first and handling empty/null providers
+  const providerOptions = ["all", ...Array.from(new Set(databaseProducts.map(p => p.provider || "Desconocido").filter(p => p)))];
 
 
   // --- Render ---
 
   return (
-    <div className="p-4 md:p-6"> {/* Added padding */}
+    <div className="p-4 md:p-6 space-y-4"> {/* Added spacing */}
       {/* --- Toolbar --- */}
-      <div className="flex flex-wrap justify-between items-center mb-4 gap-2">
-        {/* Add Product Button */}
-        <Button onClick={() => { setSelectedProduct(null); reset({barcode: "", description: "", provider: "", stock: 0}); setOpen(true); }}>
-          Agregar Producto
-        </Button>
+      <div className="flex flex-col md:flex-row md:justify-between md:items-center gap-4">
+        {/* Action Buttons */}
+         <div className="flex flex-wrap gap-2">
+            <Button onClick={() => { setSelectedProduct(null); reset({barcode: "", description: "", provider: "Desconocido", stock: 0}); setOpen(true); }}>
+                Agregar Producto
+            </Button>
+            <Button onClick={handleExportDatabase} variant="outline">
+                Exportar CSV <FileDown className="ml-2 h-4 w-4" />
+            </Button>
+            <Button variant="destructive" onClick={triggerClearDatabaseAlert}>
+               <Trash className="mr-2 h-4 w-4" /> Borrar Todo
+            </Button>
+        </div>
 
         {/* Search and Filter Controls */}
-        <div className="flex items-center gap-2 flex-wrap"> {/* Allow wrapping */}
+        <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2"> {/* Allow wrapping */}
            <Label htmlFor="search-product" className="sr-only">Buscar Producto</Label>
             <Input
                 id="search-product"
                 type="text"
-                placeholder="Buscar..."
+                placeholder="Buscar por código, descripción, proveedor..."
                 value={searchTerm}
                 onChange={(e) => setSearchTerm(e.target.value)}
-                className="max-w-xs h-9" // Adjusted size
+                className="h-10" // Consistent height
             />
             <Select value={selectedProviderFilter} onValueChange={setSelectedProviderFilter}>
-                <SelectTrigger className="w-auto md:w-[180px] h-9"> {/* Responsive width */}
+                <SelectTrigger className="w-full sm:w-auto md:w-[200px] h-10"> {/* Responsive width */}
                     <Filter className="mr-2 h-4 w-4" />
                     <SelectValue placeholder="Filtrar proveedor" />
                 </SelectTrigger>
                 <SelectContent>
                     {providerOptions.map(provider => (
                         <SelectItem key={provider} value={provider}>
-                            {provider === 'all' ? 'Todos' : provider}
+                            {provider === 'all' ? 'Todos los Proveedores' : provider}
                         </SelectItem>
                     ))}
+                    {providerOptions.length <= 1 && ( // Only 'all' option
+                         <SelectItem value="no-providers" disabled>No hay proveedores</SelectItem>
+                    )}
                 </SelectContent>
             </Select>
-            {/* Export and Clear Buttons */}
-            <Button onClick={handleExportDatabase} variant="outline" size="sm"> {/* Smaller size */}
-                Exportar <FileDown className="ml-2 h-4 w-4" />
-            </Button>
-            <Button variant="destructive" size="sm" onClick={triggerClearDatabaseAlert}> {/* Smaller size */}
-               <Trash className="mr-2 h-4 w-4" /> Borrar Todo
-            </Button>
         </div>
       </div>
 
       {/* --- Google Sheet Loader --- */}
-      <div className="flex flex-wrap items-center mb-4 gap-2">
-        <Label htmlFor="google-sheet-url" className="shrink-0 text-sm"> {/* Smaller label */}
+      <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 p-4 border rounded-lg bg-card">
+        <Label htmlFor="google-sheet-url" className="shrink-0 font-medium">
           Cargar desde Google Sheet:
         </Label>
         <Input
           id="google-sheet-url"
           type="url"
-          placeholder="URL de Hoja de Google (pública)"
+          placeholder="URL de Hoja de Google (pública y compartida)"
           value={googleSheetUrl}
           onChange={(e) => setGoogleSheetUrl(e.target.value)}
-          className="flex-grow min-w-[200px] h-9" // Adjusted size
+          className="flex-grow h-10" // Adjusted size
           disabled={isUploading}
+          aria-describedby="google-sheet-info"
         />
-        <Button variant="secondary" size="sm" disabled={isUploading} onClick={handleLoadFromGoogleSheet}>
+        <Button variant="secondary" disabled={isUploading || !googleSheetUrl} onClick={handleLoadFromGoogleSheet}>
             <Upload className="mr-2 h-4 w-4" />
-            {isUploading ? 'Cargando...' : 'Cargar'}
+            {isUploading ? 'Cargando...' : 'Cargar Datos'}
         </Button>
       </div>
-
-      {/* --- Loading Indicators and Alerts --- */}
-       {showSheetInfoAlert && (
-         <Alert className="mb-4 bg-blue-50 border-blue-300 text-blue-800 text-xs"> {/* Smaller text */}
-             <SheetIcon className="h-4 w-4 text-blue-600" />
-             <AlertTitle className="font-semibold text-sm">Cargando desde Google Sheet</AlertTitle>
-             <AlertDescription>
-                 Asegúrese de que la hoja sea <span className="font-medium">pública</span> y accesible.
-                 Se leerá por posición: <span className="font-medium">Col 1: Cód. Barras, Col 2: Descripción, Col 3: Proveedor, Col 4: Stock</span>.
-             </AlertDescription>
-         </Alert>
-      )}
-      {isUploading && (
-        <div className="mb-4">
-          <Progress value={uploadProgress} className="h-2" />
-          <p className="text-sm text-blue-600 mt-1 text-center">
-            Cargando {productsLoaded} de {totalProductsToLoad} ({uploadProgress}%)
-          </p>
-        </div>
-      )}
-      {uploadComplete && !isUploading && totalProductsToLoad > 0 && (
-        <Alert variant="default" className="mb-4 bg-green-50 border-green-300 text-green-800 text-xs">
-           <AlertTitle className="font-semibold text-sm">Carga Completa</AlertTitle>
-           <AlertDescription>
-               Se procesaron {productsLoaded} productos desde la Hoja de Google.
-            </AlertDescription>
-        </Alert>
-      )}
+       {/* --- Loading Indicators and Alerts --- */}
+      <div id="google-sheet-info">
+        {showSheetInfoAlert && (
+            <Alert className="mb-4 bg-blue-50 border-blue-300 text-blue-800 text-sm">
+                <SheetIcon className="h-5 w-5 text-blue-600" />
+                <AlertTitle className="font-semibold">Cargando desde Google Sheet</AlertTitle>
+                <AlertDescription>
+                    Asegúrese de que la hoja sea <span className="font-medium">pública y accesible ('Cualquier persona con el enlace')</span>.
+                    Se leerán las columnas por posición: <span className="font-medium">1: Cód. Barras, 2: Descripción, 3: Proveedor, 4: Stock</span>.
+                    Los encabezados son ignorados.
+                </AlertDescription>
+            </Alert>
+        )}
+        {isUploading && (
+            <div className="my-4 space-y-2">
+            <Progress value={uploadProgress} className="h-2 w-full" />
+            <p className="text-sm text-muted-foreground text-center">
+                {uploadComplete ? `Procesados ${productsLoaded} productos.` : `Cargando ${productsLoaded} de ${totalProductsToLoad || 'muchos'} (${uploadProgress}%)`}
+            </p>
+            </div>
+        )}
+         {/* Show success message separately after upload completes */}
+        {uploadComplete && !isUploading && totalProductsToLoad > 0 && (
+             <Alert variant="default" className="my-4 bg-green-50 border-green-300 text-green-800">
+               <AlertTitle className="font-semibold">Carga Completa</AlertTitle>
+               <AlertDescription>
+                   Se procesaron {productsLoaded} productos desde la Hoja de Google y se actualizaron en la base de datos local.
+                </AlertDescription>
+            </Alert>
+        )}
+         {/* Persistent error if IndexedDB is not supported */}
+         {typeof window !== 'undefined' && !window.indexedDB && (
+             <Alert variant="destructive" className="my-4">
+                <AlertTitle>Error Crítico</AlertTitle>
+                <AlertDescription>
+                    Este navegador no soporta IndexedDB. La funcionalidad de base de datos local no está disponible.
+                </AlertDescription>
+             </Alert>
+         )}
+      </div>
 
       {/* --- Confirmation Dialog (for Delete/Clear) --- */}
       <AlertDialog open={openAlert} onOpenChange={setOpenAlert}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>¿Estás seguro?</AlertDialogTitle>
+            <AlertDialogTitle>¿Estás realmente seguro?</AlertDialogTitle>
             <AlertDialogDescription>
               {alertAction === 'deleteProduct' && productToDelete ?
-                `Eliminarás el producto "${productToDelete.description}" (Código: ${productToDelete.barcode}). Esta acción no se puede deshacer.`
+                `Estás a punto de eliminar permanentemente el producto "${productToDelete.description}" (Código: ${productToDelete.barcode}). Esta acción no se puede deshacer.`
                  : alertAction === 'clearDatabase' ?
-                 "Eliminarás TODOS los productos de la base de datos. Esta acción no se puede deshacer."
+                 "Estás a punto de eliminar TODOS los productos de la base de datos local permanentemente. Esta acción no se puede deshacer."
                  : "Esta acción no se puede deshacer."
                 }
             </AlertDialogDescription>
@@ -821,9 +916,11 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = ({
             <AlertDialogCancel onClick={() => setOpenAlert(false)}>Cancelar</AlertDialogCancel>
             <AlertDialogAction
                 onClick={handleDeleteConfirmation}
-                className={alertAction === 'clearDatabase' ? "bg-red-600 hover:bg-red-700" : "bg-destructive hover:bg-destructive/90"} // Consistent destructive style
+                className={alertAction === 'clearDatabase' || alertAction === 'deleteProduct'
+                    ? "bg-red-600 hover:bg-red-700 text-white"
+                    : "bg-destructive hover:bg-destructive/90"} // Consistent destructive style
              >
-              {alertAction === 'deleteProduct' ? "Eliminar Producto" : "Borrar Base de Datos"}
+              {alertAction === 'deleteProduct' ? "Sí, Eliminar Producto" : alertAction === 'clearDatabase' ? "Sí, Borrar Todo" : "Confirmar"}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
@@ -831,46 +928,60 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = ({
 
 
       {/* --- Products Table --- */}
-      <ScrollArea className="h-[calc(100vh-450px)] mt-4 border rounded-lg shadow-sm"> {/* Adjusted height */}
+      <ScrollArea className="h-[calc(100vh-500px)] border rounded-lg shadow-sm"> {/* Adjusted height */}
         <Table>
-          <TableCaption>Lista de productos en la base de datos.</TableCaption>
+           <TableCaption>
+              {filteredProducts.length === 0
+                ? (searchTerm || selectedProviderFilter !== 'all' ? 'No hay productos que coincidan con la búsqueda/filtro.' : 'La base de datos está vacía o cargando.')
+                : `Mostrando ${filteredProducts.length} de ${databaseProducts.length} productos.`
+              }
+          </TableCaption>
            <TableHeader className="sticky top-0 bg-background z-10 shadow-sm"> {/* Added shadow */}
             <TableRow>
               {/* Adjusted widths and hidden classes */}
-              <TableHead className="w-[20%] px-2 py-2">Código</TableHead>
-              <TableHead className="w-[40%] px-2 py-2">Descripción</TableHead>
-              <TableHead className="w-[25%] px-2 py-2 hidden md:table-cell">Proveedor</TableHead>
-              <TableHead className="w-[15%] px-2 py-2 text-right">Stock</TableHead>
+              <TableHead className="w-[20%] px-3 py-3">Código Barras</TableHead>
+              <TableHead className="w-[45%] px-3 py-3">Descripción (Click para editar)</TableHead>
+              {/* Provider column shown on desktop */}
+              <TableHead className="w-[20%] px-3 py-3 hidden md:table-cell">Proveedor</TableHead>
+              <TableHead className="w-[15%] px-3 py-3 text-right">Stock</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
             {filteredProducts.map((product) => (
-              <TableRow key={product.barcode} className="hover:bg-gray-50 text-sm"> {/* Smaller text */}
-                {/* Removed onClick from barcode - using description now */}
-                <TableCell className="w-[20%] px-2 py-2 font-medium" aria-label="Código de Barras">
+              <TableRow key={product.barcode} className="hover:bg-muted/50 text-sm transition-colors duration-150">
+                <TableCell className="px-3 py-2 font-medium" aria-label={`Código ${product.barcode}`}>
                   {product.barcode}
                 </TableCell>
-                 {/* Added onClick to description for editing */}
+                 {/* Click on description to edit */}
                 <TableCell
-                    className="w-[40%] px-2 py-2 cursor-pointer hover:text-teal-700 hover:underline"
+                    className="px-3 py-2 cursor-pointer hover:text-primary hover:underline"
                     onClick={() => handleOpenEditDialog(product)}
                      aria-label={`Editar producto ${product.description}`}
                     >
                   {product.description}
                 </TableCell>
-                 <TableCell className="w-[25%] px-2 py-2 hidden md:table-cell text-gray-600" aria-label="Proveedor">
-                  {product.provider}
+                 {/* Provider column shown on desktop */}
+                 <TableCell className="px-3 py-2 hidden md:table-cell text-muted-foreground" aria-label={`Proveedor ${product.provider}`}>
+                  {product.provider || 'N/A'}
                 </TableCell>
-                <TableCell className="w-[15%] px-2 py-2 text-right text-gray-600" aria-label="Stock">
+                <TableCell className="px-3 py-2 text-right font-medium tabular-nums text-muted-foreground" aria-label={`Stock ${product.stock}`}>
                   {product.stock}
                 </TableCell>
               </TableRow>
             ))}
-            {filteredProducts.length === 0 && (
+             {/* Loading State Placeholder */}
+            {isUploading && databaseProducts.length === 0 && (
+                <TableRow>
+                    <TableCell colSpan={isMobile ? 3 : 4} className="text-center py-10 text-muted-foreground">
+                        Cargando datos iniciales...
+                    </TableCell>
+                </TableRow>
+            )}
+             {/* Empty State */}
+            {!isUploading && filteredProducts.length === 0 && (
               <TableRow>
-                 {/* Adjusted colSpan based on hidden columns */}
-                <TableCell colSpan={isMobile ? 3 : 4} className="text-center py-10 text-gray-500">
-                  {databaseProducts.length > 0 ? "No hay productos que coincidan." : "Base de datos vacía."}
+                <TableCell colSpan={isMobile ? 3 : 4} className="text-center py-10 text-muted-foreground">
+                  {databaseProducts.length > 0 ? "No hay productos que coincidan con los filtros." : "La base de datos está vacía. Agregue productos o cargue desde Google Sheet."}
                 </TableCell>
               </TableRow>
             )}
@@ -879,24 +990,26 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = ({
       </ScrollArea>
 
       {/* --- Add/Edit Product Dialog --- */}
-      <Dialog open={open} onOpenChange={(isOpen) => { setOpen(isOpen); if (!isOpen) setSelectedProduct(null); }}> {/* Clear selection on close */}
-        <DialogContent className="sm:max-w-md"> {/* Adjusted width */}
+      <Dialog open={open} onOpenChange={(isOpen) => { if (!isOpen) { setOpen(false); setSelectedProduct(null); reset(); } else { setOpen(true); } }}>
+        <DialogContent className="sm:max-w-lg"> {/* Slightly wider */}
           <DialogHeader>
-            <DialogTitle>{selectedProduct ? "Editar Producto" : "Agregar Producto"}</DialogTitle>
+            <DialogTitle>{selectedProduct ? "Editar Producto" : "Agregar Nuevo Producto"}</DialogTitle>
             <DialogDescription>
-              {selectedProduct ? "Modifica los detalles del producto." : "Añade un nuevo producto."}
+              {selectedProduct ? "Modifica los detalles del producto existente." : "Añade un nuevo producto a la base de datos."}
             </DialogDescription>
           </DialogHeader>
           <Form {...productForm}>
-            <form onSubmit={handleSubmit(handleAddOrUpdateProduct)} className="space-y-3"> {/* Reduced spacing */}
+            {/* Pass the handler function directly to onSubmit */}
+            <form onSubmit={handleSubmit(handleAddOrUpdateProduct)} className="space-y-4 p-2">
               <FormField
                 control={control}
                 name="barcode"
                 render={({ field }) => (
                   <FormItem>
-                    <FormLabel>Código de Barras</FormLabel>
+                    <FormLabel>Código de Barras *</FormLabel>
                     <FormControl>
-                      <Input type="text" {...field} readOnly={!!selectedProduct} />
+                      {/* Make barcode read-only when editing */}
+                      <Input type="text" {...field} readOnly={!!selectedProduct} aria-required="true" />
                     </FormControl>
                     <FormMessage />
                   </FormItem>
@@ -907,9 +1020,9 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = ({
                 name="description"
                 render={({ field }) => (
                   <FormItem>
-                    <FormLabel>Descripción</FormLabel>
+                    <FormLabel>Descripción *</FormLabel>
                     <FormControl>
-                      <Textarea {...field} rows={2} /> {/* Fewer rows */}
+                      <Textarea {...field} rows={3} aria-required="true" />
                     </FormControl>
                     <FormMessage />
                   </FormItem>
@@ -922,7 +1035,7 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = ({
                   <FormItem>
                     <FormLabel>Proveedor</FormLabel>
                     <FormControl>
-                      <Input type="text" {...field} />
+                      <Input type="text" {...field} placeholder="Opcional"/>
                     </FormControl>
                     <FormMessage />
                   </FormItem>
@@ -931,36 +1044,57 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = ({
               <FormField
                 control={control}
                 name="stock"
-                render={({ field }) => (
+                 render={({ field: { onChange, onBlur, value, name, ref } }) => (
                   <FormItem>
-                    <FormLabel>Stock</FormLabel>
+                    <FormLabel>Stock *</FormLabel>
                     <FormControl>
                       <Input
                         type="number"
-                        {...field}
-                         value={field.value ?? ''}
-                         onChange={(e) => field.onChange(e.target.value === '' ? undefined : parseInt(e.target.value, 10))}
-                         onBlur={(e) => { if (e.target.value === '') field.onChange(0); }}
-                         min="0" // Ensure non-negative
+                        ref={ref}
+                        name={name}
+                        value={value ?? ''} // Handle undefined/null for controlled input
+                        onChange={(e) => {
+                           // Allow empty string temporarily, convert to number on change
+                           const rawValue = e.target.value;
+                           onChange(rawValue === '' ? '' : Number(rawValue)); // Pass empty string or number
+                        }}
+                        onBlur={(e) => {
+                            // On blur, ensure it's a valid number or default to 0
+                            const finalValue = Number(e.target.value);
+                            onChange(isNaN(finalValue) || finalValue < 0 ? 0 : finalValue);
+                        }}
+                        min="0"
+                        step="1" // Ensure whole numbers if needed
+                        aria-required="true"
                       />
                     </FormControl>
                     <FormMessage />
                   </FormItem>
                 )}
               />
-               <DialogFooter className="flex justify-between w-full pt-4">
-                  <Button type="submit">
-                      {selectedProduct ? <><Save className="mr-2 h-4 w-4" /> Guardar</> : "Agregar"}
-                  </Button>
-                  {selectedProduct && (
-                    // Pass the selectedProduct to the trigger function
-                    <Button type="button" variant="destructive" onClick={() => triggerDeleteProductAlert(selectedProduct)}>
-                        <Trash className="mr-2 h-4 w-4" /> Eliminar
+               <DialogFooter className="flex flex-col-reverse sm:flex-row sm:justify-between w-full pt-6 gap-2">
+                   {/* Delete Button only shows when editing */}
+                   {selectedProduct && (
+                    <Button
+                        type="button"
+                        variant="destructive"
+                        onClick={() => triggerDeleteProductAlert(selectedProduct)}
+                        className="sm:mr-auto" // Push to left on larger screens
+                    >
+                        <Trash className="mr-2 h-4 w-4" /> Eliminar Producto
                     </Button>
-                  )}
-                  <DialogClose asChild>
-                      <Button type="button" variant="outline" onClick={() => { setOpen(false); setSelectedProduct(null); reset(); }}>Cancelar</Button>
-                  </DialogClose>
+                   )}
+                   {/* Spacer to push buttons to right when delete is not visible */}
+                  {!selectedProduct && <div className="sm:mr-auto"></div>}
+
+                   <div className="flex gap-2 justify-end">
+                        <DialogClose asChild>
+                            <Button type="button" variant="outline">Cancelar</Button>
+                        </DialogClose>
+                         <Button type="submit" disabled={isUploading}>
+                            {isUploading ? "Guardando..." : (selectedProduct ? <><Save className="mr-2 h-4 w-4" /> Guardar Cambios</> : "Agregar Producto")}
+                        </Button>
+                   </div>
                </DialogFooter>
             </form>
           </Form>
@@ -969,3 +1103,7 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = ({
     </div>
   );
 };
+
+// Utility function to simulate delay (for debugging)
+// const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
+    

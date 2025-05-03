@@ -123,6 +123,7 @@ export default function Home() {
 
  // Handles adding or incrementing a product in the counting list
  const handleAddProduct = useCallback(async () => {
+    // Trim whitespace from barcode input which might be added by some scanners
     const currentBarcode = barcode.trim();
 
     if (!currentBarcode) {
@@ -140,23 +141,34 @@ export default function Home() {
     const existingProductIndex = products.findIndex((p) => p.barcode === currentBarcode);
 
     if (existingProductIndex !== -1) {
+      // Get the product to update *before* calling setProducts
+      const productToUpdate = products[existingProductIndex];
+      const newCount = productToUpdate.count + 1;
+      const descriptionForToast = productToUpdate.description;
+
       // --- Product exists in counting list: Increment count ---
       setProducts(prevProducts => {
         const updatedProducts = [...prevProducts];
-        const productToUpdate = updatedProducts[existingProductIndex];
-        const updatedProduct = {
-          ...productToUpdate,
-          count: productToUpdate.count + 1,
+        // Find index again within the updater function's scope if necessary
+        const internalIndex = updatedProducts.findIndex(p => p.barcode === currentBarcode);
+        if (internalIndex === -1) return prevProducts; // Should not happen, but safe check
+
+        const productDataToUpdate = updatedProducts[internalIndex];
+        const updatedProductData = { // Use data calculated above
+          ...productDataToUpdate,
+          count: productDataToUpdate.count + 1, // Correctly increments
           lastUpdated: format(new Date(), 'yyyy-MM-dd HH:mm:ss'),
         };
         // Move updated product to the top for visibility
-        updatedProducts.splice(existingProductIndex, 1);
-        updatedProducts.unshift(updatedProduct);
-        toast({
-          title: "Cantidad aumentada",
-          description: `${updatedProduct.description} cantidad aumentada a ${updatedProduct.count}.`,
-        });
+        updatedProducts.splice(internalIndex, 1);
+        // Update the specific product data
+        updatedProducts.unshift(updatedProductData); // Add the updated product data
         return updatedProducts;
+      });
+      // Call toast *after* scheduling the state update, using pre-calculated info
+      toast({
+        title: "Cantidad aumentada",
+        description: `${descriptionForToast} cantidad aumentada a ${newCount}.`,
       });
 
     } else {
@@ -219,6 +231,7 @@ export default function Home() {
     let productToConfirm: Product | null = null;
     let needsConfirmation = false;
     let originalCount = -1; // Store original count for potential revert
+    let updatedProductDescription = ''; // Store description for toast
 
     // Optimistic UI update for counting list state
     setProducts(prevProducts => {
@@ -228,7 +241,7 @@ export default function Home() {
         const updatedProducts = [...prevProducts];
         const product = updatedProducts[index];
         originalCount = product.count; // Store original count before modification
-        let finalChange = change;
+        updatedProductDescription = product.description; // Store description
         let finalValue;
 
         if (type === 'count') {
@@ -240,39 +253,46 @@ export default function Home() {
                 const changingToMatch = change > 0 && finalValue === product.stock;
                 const changingFromMatch = change < 0 && product.count === product.stock;
                 if (changingToMatch || changingFromMatch) {
-                    productToConfirm = product;
+                    productToConfirm = { ...product }; // Clone product state at this point
                     needsConfirmation = true;
                 }
             }
+             // If confirmation is needed, revert the optimistic update for now, otherwise apply
+            if (needsConfirmation) {
+                // Do nothing to the state here, revert happens below
+                console.log("Confirmation needed for", product.barcode);
+                 updatedProducts[index] = { ...product }; // No change yet
 
-            updatedProducts[index] = { ...product, count: finalValue, lastUpdated: format(new Date(), 'yyyy-MM-dd HH:mm:ss') };
+            } else {
+                updatedProducts[index] = { ...product, count: finalValue, lastUpdated: format(new Date(), 'yyyy-MM-dd HH:mm:ss') };
+            }
+
         } else { // type === 'stock'
             finalValue = product.stock + change;
-            if (finalValue < 0) finalValue = 0; // Prevent stock going below zero
+             if (finalValue < 0) finalValue = 0; // Prevent stock going below zero
+            // Update stock in counting list (optimistic for UI)
             updatedProducts[index] = { ...product, stock: finalValue, lastUpdated: format(new Date(), 'yyyy-MM-dd HH:mm:ss') };
         }
-
-        // If confirmation is needed for a 'count' change, revert the optimistic update for now
-        if (type === 'count' && needsConfirmation) {
-             updatedProducts[index] = { ...updatedProducts[index], count: originalCount };
-        }
-
 
         return updatedProducts;
     });
 
      // Update stock in IndexedDB *after* state update if stock changed
     if (type === 'stock') {
-       // Find the potentially updated product in the main list state (or use a ref if needed for guaranteed access)
-       const updatedProduct = products.find(p => p.barcode === barcodeToUpdate); // This might be slightly delayed
-       // Better: find in databaseProducts or pass the updated stock value directly
+       // Find the product in the *database* state to ensure we update the correct base stock
         const productInDb = databaseProducts.find(p => p.barcode === barcodeToUpdate);
 
        if (productInDb) {
            const newStock = productInDb.stock + change; // Calculate new stock based on DB state + change
            if (newStock >= 0) {
                 try {
-                    const productToUpdateInDB = { ...productInDb, stock: newStock, lastUpdated: format(new Date(), 'yyyy-MM-dd HH:mm:ss') };
+                    // Prepare the data for DB update (only barcode, description, provider, stock, lastUpdated are needed)
+                    const productToUpdateInDB: Product = {
+                         ...productInDb,
+                         stock: newStock,
+                         lastUpdated: format(new Date(), 'yyyy-MM-dd HH:mm:ss')
+                         // count is irrelevant for the DB product record itself
+                     };
                     await updateProductInDB(productToUpdateInDB); // Update DB
 
                     // Also update the databaseProducts state for consistency across tabs
@@ -281,7 +301,8 @@ export default function Home() {
                             dbP.barcode === barcodeToUpdate ? productToUpdateInDB : dbP
                         )
                     );
-                    toast({ title: "Stock Actualizado", description: `Stock de ${productInDb.description} actualizado a ${newStock} en la base de datos.` });
+                     // Use the description captured earlier
+                    toast({ title: "Stock Actualizado", description: `Stock de ${updatedProductDescription} actualizado a ${newStock} en la base de datos.` });
                 } catch (error) {
                     console.error("Failed to update stock in DB:", error);
                     toast({ variant: "destructive", title: "Error DB", description: "No se pudo actualizar el stock en la base de datos." });
@@ -290,25 +311,58 @@ export default function Home() {
                          const index = prevProducts.findIndex(p => p.barcode === barcodeToUpdate);
                          if (index === -1) return prevProducts;
                          const revertedProducts = [...prevProducts];
-                         revertedProducts[index] = { ...revertedProducts[index], stock: productInDb.stock }; // Revert to original DB stock
+                         // Revert to the stock value held in the *databaseProducts* state before the failed attempt
+                         revertedProducts[index] = { ...revertedProducts[index], stock: productInDb.stock };
                          return revertedProducts;
                      });
+                     // Also revert the change in databaseProducts state if the optimistic update there happened
+                    // (Though technically the state update might not have happened if await failed early)
+                     setDatabaseProducts(prevDbProducts =>
+                        prevDbProducts.map(dbP =>
+                            dbP.barcode === barcodeToUpdate ? productInDb : dbP // Revert to original DB product
+                        )
+                    );
                 }
            } else {
                 toast({ variant: "destructive", title: "Stock Inválido", description: "El stock no puede ser negativo." });
+                 // Revert the optimistic UI update in 'products' state as well
+                 setProducts(prevProducts => {
+                    const index = prevProducts.findIndex(p => p.barcode === barcodeToUpdate);
+                    if (index === -1) return prevProducts;
+                    const revertedProducts = [...prevProducts];
+                    revertedProducts[index] = { ...revertedProducts[index], stock: productInDb.stock }; // Revert to original DB stock
+                    return revertedProducts;
+                 });
            }
        } else {
             console.warn("Attempted to update stock for a product not found in DB state:", barcodeToUpdate);
             toast({ variant: "destructive", title: "Error", description: "No se encontró el producto en la base de datos para actualizar el stock." });
+             // Revert optimistic UI update in products state
+             setProducts(prevProducts => {
+                 const index = prevProducts.findIndex(p => p.barcode === barcodeToUpdate);
+                 if (index === -1) return prevProducts;
+                 const productInList = prevProducts[index];
+                 // If we don't have DB state, revert to the original stock value from the list item itself
+                 // This assumes the stock value in the list was initially correct or 0 if unknown
+                 const originalListStock = productInList.stock - change; // Calculate original before change
+                 const revertedProducts = [...prevProducts];
+                 revertedProducts[index] = { ...productInList, stock: originalListStock < 0 ? 0 : originalListStock };
+                 return revertedProducts;
+             });
        }
     }
 
     // Handle confirmation dialog outside of state update
     if (needsConfirmation && productToConfirm && type === 'count') {
+        console.log("Setting up confirmation dialog for:", productToConfirm.barcode);
         setConfirmProductBarcode(productToConfirm.barcode);
         setConfirmAction(change > 0 ? 'increment' : 'decrement');
         setIsConfirmDialogOpen(true);
-        // The state update was already reverted above if confirmation is needed
+        // State update was already skipped above if confirmation is needed
+    } else if (type === 'count' && !needsConfirmation) {
+         // If no confirmation was needed, show success toast for count change
+         const finalCountValue = originalCount + change;
+         toast({ title: "Cantidad Modificada", description: `Cantidad de ${updatedProductDescription} cambiada a ${finalCountValue < 0 ? 0 : finalCountValue}.` });
     }
 
   }, [products, databaseProducts, setDatabaseProducts, toast]); // Added dependencies
@@ -325,6 +379,9 @@ export default function Home() {
 
   // Handler for confirming the quantity change after the dialog
   const handleConfirmQuantityChange = useCallback(() => {
+    let descriptionForToast = '';
+    let newCount = 0;
+
     if (confirmProductBarcode && confirmAction) {
       const change = confirmAction === 'increment' ? 1 : -1;
         // Re-apply the count change after confirmation
@@ -334,15 +391,17 @@ export default function Home() {
 
              const updatedProducts = [...prevProducts];
              const product = updatedProducts[index];
-             const newCount = product.count + change;
+             descriptionForToast = product.description; // Capture description
+             newCount = product.count + change;
              updatedProducts[index] = {
                  ...product,
                  count: newCount < 0 ? 0 : newCount, // Ensure count doesn't go below 0
                  lastUpdated: format(new Date(), 'yyyy-MM-dd HH:mm:ss')
              };
-             toast({ title: "Cantidad Modificada", description: `Cantidad de ${product.description} cambiada a ${newCount}.` });
              return updatedProducts;
          });
+         // Show toast outside the state updater
+         toast({ title: "Cantidad Modificada", description: `Cantidad de ${descriptionForToast} cambiada a ${newCount}.` });
     }
     // Reset confirmation state
     setIsConfirmDialogOpen(false);
@@ -361,10 +420,11 @@ export default function Home() {
     // Confirms the deletion and removes the product from the counting list
     const confirmDelete = useCallback(() => {
         if (productToDelete) {
+            const descriptionForToast = productToDelete.description; // Capture before state update
             setProducts(prevProducts => prevProducts.filter(p => p.barcode !== productToDelete.barcode));
             toast({
                 title: "Producto eliminado",
-                description: `${productToDelete.description} ha sido eliminado del inventario actual.`,
+                description: `${descriptionForToast} ha sido eliminado del inventario actual.`,
                 variant: "default" // Use default variant for successful deletion
             });
         }
@@ -826,3 +886,4 @@ export default function Home() {
     </div>
   );
 }
+

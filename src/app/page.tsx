@@ -1,3 +1,4 @@
+
 "use client";
 
 import type { DisplayProduct, InventoryItem, ProductDetail } from '@/types/product'; // Import updated types
@@ -195,7 +196,12 @@ export default function Home() {
              return () => clearTimeout(closeTimeout); // Cleanup function for timeout
 
         } catch (error) {
-             console.error("Error playing beep sound:", error);
+             // Ignore errors like "The AudioContext was not allowed to start..." which can happen with autoplay policies
+             if (error instanceof DOMException && error.name === 'NotAllowedError') {
+                 console.warn("AudioContext playback prevented by browser policy.");
+             } else {
+                 console.error("Error playing beep sound:", error);
+             }
         }
     } else {
         console.warn("AudioContext not supported in this browser. Cannot play beep sound.");
@@ -639,6 +645,10 @@ export default function Home() {
          if (videoRef.current) {
             videoRef.current.srcObject = null; // Clear video source
         }
+        if (scannerReaderRef.current) {
+            scannerReaderRef.current.reset(); // Reset the scanner reader
+            scannerReaderRef.current = null;
+        }
     }, []);
 
     // Effect to request camera permission and set up video stream/scanning
@@ -648,24 +658,27 @@ export default function Home() {
 
         const initScanner = async () => {
              if (!isScanning) {
-                stopCameraStream(); // Stop stream when not scanning
-                if (reader) {
-                    reader.reset(); // Ensure scanner resets
-                    reader = null;
-                }
-                setHasCameraPermission(null); // Reset permission status
+                stopCameraStream(); // Ensure cleanup when scanning stops
                 return;
             }
 
+             // Ensure videoRef is available before proceeding
              if (!videoRef.current) {
-                 console.error("Video element ref is not available.");
+                 // If videoRef is not ready yet, retry after a short delay
+                 // This can happen if the dialog renders slightly after the effect runs
+                 setTimeout(() => {
+                     if (isScanning && !cancelled) { // Check again if still scanning and not cancelled
+                         initScanner();
+                     }
+                 }, 100); // Retry after 100ms
                  return;
              }
 
              // Initialize the scanner reader only once per activation
-             if (!reader) {
-                 reader = new BrowserMultiFormatReader();
+             if (!scannerReaderRef.current) {
+                 scannerReaderRef.current = new BrowserMultiFormatReader();
              }
+             reader = scannerReaderRef.current;
 
             try {
                 // Request camera permission and get stream
@@ -680,13 +693,13 @@ export default function Home() {
                 setHasCameraPermission(true);
                 streamRef.current = stream; // Store the stream
 
-                 // Attach stream to video element if it's still mounted
-                 if (videoRef.current) {
+                 // Attach stream to video element if it's still mounted and not already set
+                 if (videoRef.current && videoRef.current.srcObject !== stream) {
                      videoRef.current.srcObject = stream;
                       // Wait for video to be ready to play
                      await videoRef.current.play();
                      console.log("Video stream attached and playing.");
-                 } else {
+                 } else if (!videoRef.current) {
                      console.warn("Video ref became null before attaching stream.");
                      stream.getTracks().forEach(track => track.stop()); // Stop stream if video ref lost
                      return;
@@ -699,11 +712,16 @@ export default function Home() {
 
                       if (result) {
                           console.log('Barcode detected:', result.getText());
-                          setBarcode(result.getText()); // Update barcode state
-                          setIsScanning(false); // Close scanner UI
+                          const detectedBarcode = result.getText();
+                          // Close scanner UI *before* processing the barcode
+                          setIsScanning(false);
                           playBeep(900, 80); // Short, high beep for scan success
-                          // Pass the detected barcode directly for reliability
-                          handleAddProduct(result.getText());
+                          // Process the barcode after closing the dialog
+                          // Use requestAnimationFrame to ensure UI updates related to closing dialog are done
+                          requestAnimationFrame(() => {
+                              setBarcode(detectedBarcode); // Update barcode state (optional, handleAddProduct uses it)
+                              handleAddProduct(detectedBarcode); // Pass the detected barcode directly
+                          });
                       }
                       if (err && !(err instanceof NotFoundException)) {
                           console.error('Scanning error:', err);
@@ -727,17 +745,17 @@ export default function Home() {
             }
         };
 
-        initScanner();
+        if (isScanning) { // Only run initScanner if isScanning is true
+             initScanner();
+         } else {
+             stopCameraStream(); // Cleanup if isScanning becomes false
+         }
 
         // Cleanup function
         return () => {
             console.log("Cleaning up camera effect...");
             cancelled = true; // Set cancelled flag
             stopCameraStream(); // Stop the stream on cleanup
-             if (reader) {
-                 reader.reset(); // Reset the scanner reader
-                 reader = null;
-             }
         };
      }, [isScanning, toast, playBeep, handleAddProduct, stopCameraStream]); // Added dependencies
 
@@ -911,7 +929,7 @@ export default function Home() {
 
    // --- Camera Scanning Modal/View ---
    const renderScannerView = () => (
-       <Dialog open={isScanning} onOpenChange={setIsScanning}>
+       <Dialog open={isScanning} onOpenChange={(open) => { if (!open) { setIsScanning(false); } else { setIsScanning(true); } }}>
            <DialogContent className="max-w-md w-full p-4 bg-white dark:bg-gray-800 rounded-lg shadow-xl">
                <DialogHeader>
                    <DialogTitle className="text-center text-lg font-semibold text-gray-800 dark:text-gray-200">Escanear Código de Barras</DialogTitle>
@@ -920,7 +938,7 @@ export default function Home() {
                    </DialogDescription>
                </DialogHeader>
                 <div className="my-4 relative aspect-video">
-                    {/* Always render video tag to attach stream */}
+                    {/* Always render video tag when scanning dialog is open */}
                     <video ref={videoRef} className="w-full aspect-video rounded-md bg-black" autoPlay muted playsInline />
                     {/* Overlay for visual scanning area (optional) */}
                     <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
@@ -1169,3 +1187,5 @@ export default function Home() {
     </div>
   );
 }
+
+

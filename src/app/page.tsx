@@ -289,6 +289,7 @@ export default function Home() {
   const [hasCameraPermission, setHasCameraPermission] = useState<boolean | null>(null); // State for camera permission
   const scannerReaderRef = useRef<BrowserMultiFormatReader | null>(null); // Ref for the scanner reader instance
   const streamRef = useRef<MediaStream | null>(null); // Ref to hold the camera stream
+  const [activeTab, setActiveTab] = useState("Contador"); // State for active tab
 
 
   const getLocalStorageKeyForWarehouse = (warehouseId: string) => {
@@ -639,7 +640,7 @@ export default function Home() {
          toast({ title: "Cantidad Modificada", description: `Cantidad de ${updatedProductDescription} (${getWarehouseName(warehouseId)}) cambiada a ${finalCountValue < 0 ? 0 : finalCountValue}.` });
     }
 
- }, [countingList, currentWarehouseId, toast, getWarehouseName]); // Removed warehouses dependency
+ }, [countingList, currentWarehouseId, toast, getWarehouseName]);
 
 
  // Specific handler for increment button click
@@ -1124,6 +1125,18 @@ export default function Home() {
        </Dialog>
    );
 
+ // --- Count by Provider ---
+ const handleStartCountByProvider = useCallback(async (productsToCount: DisplayProduct[]) => {
+    if (!productsToCount || productsToCount.length === 0) {
+        toast({ title: "Vacío", description: "No hay productos para este proveedor en el almacén actual." });
+        return;
+    }
+    // Clear current counting list? Or merge? Let's replace for simplicity.
+    setCountingList(productsToCount);
+    setActiveTab("Contador"); // Switch to the counting tab
+    toast({ title: "Conteo por Proveedor Iniciado", description: `Cargados ${productsToCount.length} productos.` });
+ }, [toast]);
+
 
   // --- Main Component Render ---
   return (
@@ -1148,7 +1161,7 @@ export default function Home() {
       </div>
 
 
-      <Tabs defaultValue="Contador" className="w-full md:w-[800px] lg:w-[1000px] mx-auto">
+      <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full md:w-[800px] lg:w-[1000px] mx-auto">
          <TabsList className="grid w-full grid-cols-3 bg-gray-100 dark:bg-gray-800 p-1 rounded-lg mb-4 shadow-inner">
            <TabsTrigger
               value="Contador"
@@ -1207,7 +1220,10 @@ export default function Home() {
         </TabsContent>
 
          <TabsContent value="Base de Datos">
-           <ProductDatabase />
+           <ProductDatabase
+              currentWarehouseId={currentWarehouseId}
+              onStartCountByProvider={handleStartCountByProvider}
+           />
          </TabsContent>
 
           <TabsContent value="Almacenes">

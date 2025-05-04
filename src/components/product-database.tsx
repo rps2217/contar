@@ -1,6 +1,7 @@
+
 "use client";
 
-import type { ProductDetail, InventoryItem } from '@/types/product';
+import type { ProductDetail, InventoryItem, DisplayProduct } from '@/types/product';
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { useToast } from "@/hooks/use-toast";
@@ -15,12 +16,13 @@ import {
     getAllInventoryItems,
     addInventoryItemsInBulk,
     addProductDetailsInBulk,
+    getInventoryItemsForWarehouse, // Import needed function
 } from '@/lib/indexeddb-helpers';
 import {
-    Edit, FileDown, Filter, Save, Trash, Upload, AlertCircle, Warehouse as WarehouseIcon
+    Edit, FileDown, Filter, Save, Trash, Upload, AlertCircle, Warehouse as WarehouseIcon, Play
 } from "lucide-react";
-import Papa from 'papaparse';
-import * as React from "react";
+import Papa from 'papaparse'; // Using PapaParse for robust CSV parsing
+import * as React from "react"; // Import React
 import { useCallback, useEffect, useState } from "react";
 import { useForm } from "react-hook-form";
 import * as z from "zod";
@@ -107,7 +109,7 @@ const ProductTable: React.FC<ProductTableProps> = ({
                <TableHead className="w-[25%] px-3 py-3 dark:text-gray-300">Código Barras</TableHead>
                <TableHead className="w-[40%] px-3 py-3 dark:text-gray-300">Descripción (Click para editar)</TableHead>
                <TableHead className="w-[20%] px-3 py-3 hidden md:table-cell dark:text-gray-300">Proveedor</TableHead>
-                <TableHead className="w-[15%] px-3 py-3 text-right dark:text-gray-300">Stock Total</TableHead>
+               <TableHead className="w-[15%] px-3 py-3 text-right dark:text-gray-300">Stock Total</TableHead>
              </TableRow>
            </TableHeader>
            <TableBody>
@@ -442,9 +444,16 @@ async function fetchAndParseGoogleSheetData(sheetUrl: string): Promise<{ details
      return { details: productDetails, inventory: inventoryItems };
  }
 
+ // --- Props Interface for ProductDatabase ---
+ interface ProductDatabaseProps {
+    currentWarehouseId: string;
+    onStartCountByProvider: (products: DisplayProduct[]) => void;
+ }
+
+
 // --- React Component ---
 
-export const ProductDatabase: React.FC = () => {
+export const ProductDatabase: React.FC<ProductDatabaseProps> = ({ currentWarehouseId, onStartCountByProvider }) => {
   const { toast } = useToast();
   const [productDetails, setProductDetails] = useState<ProductDetail[]>([]);
   const [inventoryItems, setInventoryItems] = useState<InventoryItem[]>([]);
@@ -773,6 +782,57 @@ export const ProductDatabase: React.FC = () => {
         });
     }, [productDetails]);
 
+ // --- Count by Provider ---
+  const handleStartCountByProviderClick = useCallback(async () => {
+    if (selectedProviderFilter === 'all') {
+      toast({
+        variant: "destructive",
+        title: "Seleccionar Proveedor",
+        description: "Por favor, selecciona un proveedor específico para iniciar el conteo.",
+      });
+      return;
+    }
+
+    setIsProcessing(true);
+    setProcessingStatus(`Buscando productos de ${selectedProviderFilter} en almacén ${currentWarehouseId}...`);
+
+    try {
+      // 1. Filter productDetails by selected provider
+      const providerDetails = productDetails.filter(detail => (detail.provider || "Desconocido") === selectedProviderFilter);
+      if (providerDetails.length === 0) {
+        toast({ title: "Vacío", description: `No hay productos registrados para el proveedor ${selectedProviderFilter}.` });
+        return;
+      }
+
+      // 2. Get inventory for the current warehouse
+      const warehouseInventory = await getInventoryItemsForWarehouse(currentWarehouseId);
+      const inventoryMap = new Map<string, InventoryItem>();
+      warehouseInventory.forEach(item => inventoryMap.set(item.barcode, item));
+
+      // 3. Create DisplayProduct list for the provider in the current warehouse
+      const productsToCount: DisplayProduct[] = providerDetails.map(detail => {
+        const inventory = inventoryMap.get(detail.barcode);
+        return {
+          ...detail,
+          warehouseId: currentWarehouseId,
+          stock: inventory?.stock ?? 0,
+          count: 0, // Reset count for the new session
+          lastUpdated: inventory?.lastUpdated,
+        };
+      });
+
+      // 4. Call the callback function passed from Home to update the counting list
+      onStartCountByProvider(productsToCount);
+
+    } catch (error) {
+      console.error("Error starting count by provider:", error);
+      toast({ variant: "destructive", title: "Error", description: "No se pudo iniciar el conteo por proveedor." });
+    } finally {
+      setIsProcessing(false);
+      setProcessingStatus("");
+    }
+  }, [selectedProviderFilter, productDetails, currentWarehouseId, onStartCountByProvider, toast]);
+
 
   // --- Render ---
 
@@ -820,6 +880,16 @@ export const ProductDatabase: React.FC = () => {
                      ))}
                  </SelectContent>
              </Select>
+             {/* Add Count by Provider Button */}
+            <Button
+                onClick={handleStartCountByProviderClick}
+                disabled={selectedProviderFilter === 'all' || isProcessing || isLoading}
+                variant="outline"
+                className="h-10 text-green-600 border-green-500 hover:bg-green-50 hover:text-green-700 dark:text-green-400 dark:border-green-600 dark:hover:bg-green-900/50 dark:hover:text-green-300"
+                title={`Iniciar conteo para ${selectedProviderFilter === 'all' ? 'un proveedor' : selectedProviderFilter}`}
+            >
+                <Play className="mr-2 h-4 w-4" /> Contar Proveedor
+            </Button>
          </div>
        </div>
 

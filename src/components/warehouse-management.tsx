@@ -1,3 +1,4 @@
+
 "use client";
 
 import React, { useState, useCallback } from 'react';
@@ -63,28 +64,50 @@ export const WarehouseManagement: React.FC<WarehouseManagementProps> = ({
 
 
   const handleAddWarehouse = () => {
-    if (!newWarehouseId.trim() || !newWarehouseName.trim()) {
+    let warehouseId = newWarehouseId.trim().toLowerCase().replace(/\s+/g, '');
+    const warehouseName = newWarehouseName.trim();
+
+    if (!warehouseName) {
       toast({
         variant: "destructive",
         title: "Error",
-        description: "Por favor, introduce un ID y nombre de almacén válidos.",
+        description: "Por favor, introduce un nombre de almacén válido.",
       });
       return;
     }
 
-    const newWarehouse = { id: newWarehouseId.trim(), name: newWarehouseName.trim() };
-    onAddWarehouse(newWarehouse);
-    setNewWarehouseId("");
+    // If ID is empty, generate a timestamp
+    if (!warehouseId) {
+      warehouseId = `wh_${Date.now().toString()}`;
+       toast({
+        title: "ID Generado",
+        description: `Se ha generado un ID de almacén automático: ${warehouseId}`,
+        duration: 4000,
+      });
+    }
+
+    const newWarehouse = { id: warehouseId, name: warehouseName };
+    onAddWarehouse(newWarehouse); // This will trigger the parent's check for duplicates
+    setNewWarehouseId(""); // Clear inputs after successful attempt or failure handling in parent
     setNewWarehouseName("");
   };
 
   const handleDeleteRequest = useCallback((warehouse: Warehouse) => {
+    // Prevent deleting the 'main' warehouse
+    if (warehouse.id === 'main') {
+         toast({
+            variant: "destructive",
+            title: "Operación no permitida",
+            description: "No se puede eliminar el almacén principal ('main').",
+        });
+        return;
+    }
     setWarehouseToDelete(warehouse);
     setIsDeleteDialogOpen(true);
-  }, []);
+  }, [toast]);
 
   const confirmDelete = () => {
-    if (warehouseToDelete) {
+    if (warehouseToDelete && warehouseToDelete.id !== 'main') {
       const updatedWarehouses = warehouses.filter(w => w.id !== warehouseToDelete.id);
       onUpdateWarehouses(updatedWarehouses);
       toast({
@@ -92,6 +115,8 @@ export const WarehouseManagement: React.FC<WarehouseManagementProps> = ({
         description: `${warehouseToDelete.name} ha sido eliminado de la lista de almacenes.`,
         variant: "default"
       });
+    } else {
+        console.warn("Attempted to delete main warehouse or no warehouse selected.");
     }
     setIsDeleteDialogOpen(false);
     setWarehouseToDelete(null);
@@ -112,6 +137,9 @@ export const WarehouseManagement: React.FC<WarehouseManagementProps> = ({
       });
       return;
     }
+
+    // Prevent changing the ID of 'main' warehouse if needed (though ID is not edited here)
+    // if (warehouseToEdit.id === 'main') { ... }
 
     const updatedWarehouses = warehouses.map(w =>
       w.id === warehouseToEdit.id ? { ...warehouseToEdit, name: editWarehouseName.trim() } : w
@@ -141,11 +169,11 @@ export const WarehouseManagement: React.FC<WarehouseManagementProps> = ({
           <div className="grid grid-cols-1 gap-2">
             <Input
               type="text"
-              placeholder="ID del Almacén (ej. 'almacen2')"
+              placeholder="ID (opcional, se genera si está vacío)"
               value={newWarehouseId}
-              onChange={(e) => setNewWarehouseId(e.target.value.toLowerCase().replace(/\s+/g, ''))} // Ensure ID is lowercase and has no spaces
+              onChange={(e) => setNewWarehouseId(e.target.value)} // Removed automatic processing here
               className="dark:bg-gray-700 dark:border-gray-600 dark:text-white"
-              aria-label="ID del nuevo almacén"
+              aria-label="ID del nuevo almacén (opcional)"
             />
             <Input
               type="text"
@@ -157,7 +185,7 @@ export const WarehouseManagement: React.FC<WarehouseManagementProps> = ({
             />
           </div>
            <p className="text-xs text-muted-foreground dark:text-gray-400 mt-1">
-                El ID debe ser único y no contener espacios (se convertirá a minúsculas).
+                Si deja el ID vacío, se generará uno automáticamente (ej. wh_17...). Si lo introduce, debe ser único y sin espacios (se convertirá a minúsculas).
            </p>
           <Button onClick={handleAddWarehouse}>
             <Plus className="mr-2 h-4 w-4" />
@@ -201,6 +229,7 @@ export const WarehouseManagement: React.FC<WarehouseManagementProps> = ({
                           onClick={() => handleDeleteRequest(warehouse)}
                            aria-label={`Borrar ${warehouse.name}`}
                            className="text-red-600 dark:text-red-400 hover:text-red-700 dark:hover:text-red-300"
+                           disabled={warehouse.id === 'main'} // Explicitly disable for main
                         >
                           <Trash className="mr-1 h-4 w-4" />
                           Borrar
@@ -252,7 +281,7 @@ export const WarehouseManagement: React.FC<WarehouseManagementProps> = ({
                 </span>
             </DialogTitle>
             <DialogDescription className="text-center text-gray-600 dark:text-gray-400 mt-1">
-              Modifica el nombre de este almacén.
+              Modifica el nombre de este almacén. El ID no se puede cambiar.
             </DialogDescription>
           </DialogHeader>
           <div className="grid gap-4 py-4">

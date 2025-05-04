@@ -1,4 +1,3 @@
-
 "use client";
 
 import type { DisplayProduct, InventoryItem, ProductDetail } from '@/types/product';
@@ -26,7 +25,7 @@ import {
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { WarehouseManagement } from "@/components/warehouse-management";
 import { format } from 'date-fns';
-import { Minus, Plus, Trash, RefreshCw, Warehouse as WarehouseIcon, Camera, AlertCircle, Search } from "lucide-react";
+import { Minus, Plus, Trash, RefreshCw, Warehouse as WarehouseIcon, Camera, AlertCircle, Search, Check } from "lucide-react";
 import React, { useCallback, useEffect, useRef, useState } from "react";
 // Import ZXing library for barcode scanning
 import { BrowserMultiFormatReader, NotFoundException } from '@zxing/library';
@@ -288,8 +287,9 @@ export default function Home() {
   const [openStockDialog, setOpenStockDialog] = useState(false);
   const [selectedProductForDialog, setSelectedProductForDialog] = useState<DisplayProduct | null>(null);
   const [isConfirmDialogOpen, setIsConfirmDialogOpen] = useState(false);
-  const [confirmAction, setConfirmAction] = useState<'increment' | 'decrement' | null>(null);
+  const [confirmAction, setConfirmAction] = useState<'increment' | 'decrement' | 'set' | null>(null); // Added 'set'
   const [confirmProductBarcode, setConfirmProductBarcode] = useState<string | null>(null);
+  const [confirmNewValue, setConfirmNewValue] = useState<number | null>(null); // Added to store the new value for confirmation
   const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false);
   const [productToDelete, setProductToDelete] = useState<DisplayProduct | null>(null);
   const [isDbLoading, setIsDbLoading] = useState(true); // Loading state for initial data load for the warehouse
@@ -656,7 +656,7 @@ export default function Home() {
 
 
  // Handler to set product count or stock directly, handling confirmation dialog
- const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 'count' | 'stock', newValue: number) => {
+ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 'count' | 'stock', newValue: number, sumValue?: boolean) => {
      if (newValue < 0 || isNaN(newValue)) {
          toast({ variant: "destructive", title: "Valor Inválido", description: "La cantidad o stock debe ser un número positivo." });
          return;
@@ -667,6 +667,7 @@ export default function Home() {
      let productToConfirm: DisplayProduct | null = null;
      let updatedProductDescription = '';
      let originalValue = -1; // Added for toast message
+     let finalValue = newValue; // Initialize finalValue
 
      setCountingList(prevList => {
          const index = prevList.findIndex(p => p.barcode === barcodeToUpdate && p.warehouseId === warehouseId);
@@ -678,20 +679,27 @@ export default function Home() {
 
          if (type === 'count') {
              originalValue = product.count;
+              if (sumValue) {
+                 finalValue = originalValue + newValue; // Calculate sum if needed
+             }
              // Confirmation logic when setting count directly
-             if (product.stock !== 0 && newValue === product.stock && originalValue !== product.stock) {
+             if (product.stock !== 0 && finalValue === product.stock && originalValue !== product.stock) {
                  needsConfirmation = true;
                  productToConfirm = { ...product };
              }
 
              if (needsConfirmation) {
                  updatedList[index] = { ...product }; // Keep current state temporarily
+                 setConfirmNewValue(finalValue); // Store the intended final value for confirmation
              } else {
-                 updatedList[index] = { ...product, count: newValue, lastUpdated: format(new Date(), 'yyyy-MM-dd HH:mm:ss') };
+                 updatedList[index] = { ...product, count: finalValue, lastUpdated: format(new Date(), 'yyyy-MM-dd HH:mm:ss') };
              }
          } else { // type === 'stock'
              originalValue = product.stock;
-             updatedList[index] = { ...product, stock: newValue, lastUpdated: format(new Date(), 'yyyy-MM-dd HH:mm:ss') };
+             if (sumValue) {
+                 finalValue = originalValue + newValue; // Calculate sum if needed
+             }
+             updatedList[index] = { ...product, stock: finalValue, lastUpdated: format(new Date(), 'yyyy-MM-dd HH:mm:ss') };
          }
          return updatedList;
      });
@@ -702,12 +710,12 @@ export default function Home() {
              const itemToUpdate: InventoryItem = {
                  barcode: barcodeToUpdate,
                  warehouseId: warehouseId,
-                 stock: newValue,
+                 stock: finalValue, // Use finalValue
                  count: countingList.find(p => p.barcode === barcodeToUpdate && p.warehouseId === warehouseId)?.count ?? 0,
                  lastUpdated: format(new Date(), 'yyyy-MM-dd HH:mm:ss')
              };
              await addOrUpdateInventoryItem(itemToUpdate);
-             toast({ title: "Stock Actualizado", description: `Stock de ${updatedProductDescription} (${getWarehouseName(warehouseId)}) actualizado a ${newValue} en la base de datos.` });
+             toast({ title: "Stock Actualizado", description: `Stock de ${updatedProductDescription} (${getWarehouseName(warehouseId)}) actualizado a ${finalValue} en la base de datos.` });
          } catch (error) {
              console.error("Failed to update stock in DB:", error);
              toast({ variant: "destructive", title: "Error DB", description: "No se pudo actualizar el stock en la base de datos." });
@@ -716,7 +724,7 @@ export default function Home() {
                  const index = prevList.findIndex(p => p.barcode === barcodeToUpdate && p.warehouseId === warehouseId);
                  if (index === -1) return prevList;
                  const revertedList = [...prevList];
-                 revertedList[index] = { ...revertedList[index], stock: originalValue }; // Use originalValue
+                 revertedList[index] = { ...revertedList[index], stock: originalValue };
                  return revertedList;
              });
          }
@@ -725,11 +733,12 @@ export default function Home() {
      // Handle confirmation dialog
      if (needsConfirmation && productToConfirm && type === 'count') {
          setConfirmProductBarcode(productToConfirm.barcode);
-         // Set confirmAction based on whether the new value is higher or lower than original, though 'set' is more accurate
-         setConfirmAction(newValue > originalValue ? 'increment' : 'decrement');
+         // Use 'set' action for confirmation, store the target value
+         setConfirmAction('set');
          setIsConfirmDialogOpen(true);
      } else if (type === 'count' && !needsConfirmation) {
-         toast({ title: "Cantidad Modificada", description: `Cantidad de ${updatedProductDescription} (${getWarehouseName(warehouseId)}) establecida en ${newValue}.` });
+         const actionText = sumValue ? "sumada a" : "establecida en";
+         toast({ title: "Cantidad Modificada", description: `Cantidad de ${updatedProductDescription} (${getWarehouseName(warehouseId)}) ${actionText} ${finalValue}.` });
      }
 
      setIsEditingValueInDialog(false); // Exit edit mode after setting the value
@@ -750,33 +759,44 @@ export default function Home() {
  // Handler for confirming the quantity change after the dialog
  const handleConfirmQuantityChange = useCallback(() => {
     let descriptionForToast = '';
-    let newCount = 0;
+    let finalConfirmedCount = 0;
     const warehouseId = currentWarehouseId;
 
-    if (confirmProductBarcode && confirmAction) {
-      const change = confirmAction === 'increment' ? 1 : -1;
-      setCountingList(prevList => {
-          const index = prevList.findIndex(p => p.barcode === confirmProductBarcode && p.warehouseId === warehouseId);
-          if (index === -1) return prevList;
+    if (confirmProductBarcode && confirmAction !== null) {
+        setCountingList(prevList => {
+            const index = prevList.findIndex(p => p.barcode === confirmProductBarcode && p.warehouseId === warehouseId);
+            if (index === -1) return prevList;
 
-          const updatedList = [...prevList];
-          const product = updatedList[index];
-          descriptionForToast = product.description;
-          newCount = product.count + change;
-          updatedList[index] = {
-              ...product,
-              count: newCount < 0 ? 0 : newCount,
-              lastUpdated: format(new Date(), 'yyyy-MM-dd HH:mm:ss')
-          };
-          return updatedList;
-      });
-      toast({ title: "Cantidad Modificada", description: `Cantidad de ${descriptionForToast} (${getWarehouseName(warehouseId)}) cambiada a ${newCount}.` });
+            const updatedList = [...prevList];
+            const product = updatedList[index];
+            descriptionForToast = product.description;
+
+            if (confirmAction === 'set' && confirmNewValue !== null) {
+                finalConfirmedCount = confirmNewValue < 0 ? 0 : confirmNewValue;
+            } else if (confirmAction === 'increment') {
+                finalConfirmedCount = product.count + 1;
+            } else if (confirmAction === 'decrement') {
+                finalConfirmedCount = product.count - 1;
+            }
+            finalConfirmedCount = finalConfirmedCount < 0 ? 0 : finalConfirmedCount;
+
+            updatedList[index] = {
+                ...product,
+                count: finalConfirmedCount,
+                lastUpdated: format(new Date(), 'yyyy-MM-dd HH:mm:ss')
+            };
+            return updatedList;
+        });
+         toast({ title: "Cantidad Modificada", description: `Cantidad de ${descriptionForToast} (${getWarehouseName(warehouseId)}) cambiada a ${finalConfirmedCount}.` });
+    } else {
+        console.warn("Confirmation attempted with invalid state:", { confirmProductBarcode, confirmAction, confirmNewValue });
     }
     // Reset confirmation state
     setIsConfirmDialogOpen(false);
     setConfirmProductBarcode(null);
     setConfirmAction(null);
- }, [currentWarehouseId, confirmProductBarcode, confirmAction, toast, getWarehouseName]);
+    setConfirmNewValue(null); // Reset new value as well
+}, [currentWarehouseId, confirmProductBarcode, confirmAction, toast, getWarehouseName, confirmNewValue]);
 
 
  // --- Deletion Handlers ---
@@ -1107,16 +1127,18 @@ export default function Home() {
         };
 
         // Handler for submitting the edited value
-        const handleValueSubmit = (e: React.FormEvent) => {
-            e.preventDefault();
-            const newValueInt = parseInt(editingValue, 10);
-            if (!isNaN(newValueInt)) {
-                handleSetProductValue(product.barcode, type, newValueInt);
+        const handleValueSubmit = (e: React.FormEvent | null, sumValue: boolean = false) => {
+            if (e) e.preventDefault(); // Prevent form submission if called from form
+            const valueToAdd = parseInt(editingValue, 10);
+            if (!isNaN(valueToAdd)) {
+                handleSetProductValue(product.barcode, type, valueToAdd, sumValue);
             } else {
                 toast({ variant: "destructive", title: "Entrada Inválida", description: "Por favor, ingrese un número válido." });
             }
+             setEditingValue(''); // Clear input after submit
             setIsEditingValueInDialog(false); // Exit edit mode
         };
+
 
          // Handler for input change
          const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -1125,16 +1147,24 @@ export default function Home() {
 
          // Handler for input blur (exit edit mode if clicked outside)
          const handleInputBlur = () => {
-            // Submit if the value changed? Or just exit? Let's just exit for simplicity.
-            // Consider adding a check icon/button to explicitly save.
-             setIsEditingValueInDialog(false);
+            // Only exit if not submitting via button
+            // Timeout allows button click to register before blur closes edit mode
+             setTimeout(() => {
+                // Check if focus moved to one of the submit buttons, if not, exit edit mode.
+                // This logic might be complex depending on exact focus management needs.
+                 // For simplicity, let's just exit on blur for now. Revisit if needed.
+                 setIsEditingValueInDialog(false);
+                 setEditingValue(''); // Also clear input on blur exit
+             }, 150); // Small delay to allow button clicks
          };
 
          const handleInputKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
              if (e.key === 'Enter') {
-                 handleValueSubmit(e);
+                  e.preventDefault(); // Prevent default form submission if inside a form
+                 handleValueSubmit(null, e.shiftKey); // Submit, potentially summing if Shift is held
              } else if (e.key === 'Escape') {
                  setIsEditingValueInDialog(false);
+                 setEditingValue(''); // Clear input on escape
              }
          };
 
@@ -1166,7 +1196,7 @@ export default function Home() {
                                  <Minus className="h-8 w-8 sm:h-10 sm:w-10" />
                              </Button>
                              {isEditingValueInDialog ? (
-                                <form onSubmit={handleValueSubmit} className="flex-grow mx-2 sm:mx-4">
+                                <form onSubmit={(e) => handleValueSubmit(e, false)} className="flex-grow mx-2 sm:mx-4 relative">
                                     <Input
                                         ref={valueInputRef}
                                         type="number"
@@ -1178,7 +1208,30 @@ export default function Home() {
                                         onKeyDown={handleInputKeyDown}
                                          className="text-5xl sm:text-6xl font-bold text-center w-full h-full p-0 border-2 border-blue-500 dark:bg-gray-800 dark:text-gray-100 tabular-nums focus:outline-none focus:ring-2 focus:ring-blue-400 rounded-md"
                                         aria-label="Editar valor"
+                                        autoFocus
                                     />
+                                     {/* Submit buttons positioned within the form */}
+                                     <div className="absolute -bottom-14 left-0 right-0 flex justify-center gap-2 mt-2">
+                                         <Button
+                                             type="submit" // Submit with replace value
+                                             size="sm"
+                                             variant="outline"
+                                             className="bg-green-100 dark:bg-green-900 border-green-500 hover:bg-green-200 dark:hover:bg-green-800 text-green-700 dark:text-green-300"
+                                             title="Guardar (Reemplazar)"
+                                         >
+                                             <Check className="h-4 w-4 mr-1" /> Guardar
+                                         </Button>
+                                         <Button
+                                             type="button" // Button to trigger submit with sum logic
+                                             size="sm"
+                                             variant="outline"
+                                              className="bg-blue-100 dark:bg-blue-900 border-blue-500 hover:bg-blue-200 dark:hover:bg-blue-800 text-blue-700 dark:text-blue-300"
+                                             onClick={() => handleValueSubmit(null, true)} // Submit with sum = true
+                                             title="Sumar a la cantidad actual (Shift+Enter)"
+                                         >
+                                              <Plus className="h-4 w-4 mr-1" /> Sumar
+                                         </Button>
+                                     </div>
                                 </form>
                             ) : (
                                 <div
@@ -1200,7 +1253,7 @@ export default function Home() {
                              </Button>
                          </div>
                      </div>
-                    <DialogFooter className="mt-4">
+                    <DialogFooter className="mt-16 sm:mt-4"> {/* Increased top margin for footer to avoid overlap */}
                          <DialogClose asChild>
                              <Button type="button" variant="outline" className="border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700" onClick={handleCloseDialogs}>
                                 Cerrar
@@ -1220,11 +1273,11 @@ export default function Home() {
                <AlertDialogHeader>
                <AlertDialogTitle>Confirmar Modificación</AlertDialogTitle>
                <AlertDialogDescription>
-                   La cantidad contada coincide con el stock ({countingList.find(p=>p.barcode===confirmProductBarcode)?.stock}). ¿Estás seguro de que deseas modificar la cantidad?
+                   La cantidad contada ahora coincide con el stock ({countingList.find(p=>p.barcode===confirmProductBarcode)?.stock}). ¿Estás seguro de que deseas modificar la cantidad a {confirmNewValue ?? 'este valor'}?
                </AlertDialogDescription>
                </AlertDialogHeader>
                <AlertDialogFooter>
-               <AlertDialogCancel onClick={() => setIsConfirmDialogOpen(false)}>Cancelar</AlertDialogCancel>
+               <AlertDialogCancel onClick={() => { setIsConfirmDialogOpen(false); setConfirmProductBarcode(null); setConfirmAction(null); setConfirmNewValue(null); }}>Cancelar</AlertDialogCancel>
                <AlertDialogAction onClick={handleConfirmQuantityChange}>Confirmar</AlertDialogAction>
                </AlertDialogFooter>
            </AlertDialogContent>
@@ -1439,4 +1492,3 @@ export default function Home() {
   );
 }
 
-    

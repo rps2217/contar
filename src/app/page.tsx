@@ -1,3 +1,4 @@
+
 "use client";
 
 import type { DisplayProduct, InventoryItem, ProductDetail } from '@/types/product';
@@ -298,6 +299,9 @@ export default function Home() {
   const scannerReaderRef = useRef<BrowserMultiFormatReader | null>(null); // Ref for the scanner reader instance
   const streamRef = useRef<MediaStream | null>(null); // Ref to hold the camera stream
   const [activeTab, setActiveTab] = useState("Contador"); // State for active tab
+  const [isEditingValueInDialog, setIsEditingValueInDialog] = useState(false); // State for inline editing in dialog
+  const [editingValue, setEditingValue] = useState<string>(''); // State for the input value
+  const valueInputRef = useRef<HTMLInputElement>(null); // Ref for the value input
 
 
   const getLocalStorageKeyForWarehouse = (warehouseId: string) => {
@@ -651,6 +655,88 @@ export default function Home() {
  }, [countingList, currentWarehouseId, toast, getWarehouseName]);
 
 
+ // Handler to set product count or stock directly, handling confirmation dialog
+ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 'count' | 'stock', newValue: number) => {
+     if (newValue < 0 || isNaN(newValue)) {
+         toast({ variant: "destructive", title: "Valor Inválido", description: "La cantidad o stock debe ser un número positivo." });
+         return;
+     }
+
+     const warehouseId = currentWarehouseId;
+     let needsConfirmation = false;
+     let productToConfirm: DisplayProduct | null = null;
+     let updatedProductDescription = '';
+     let originalValue = -1; // Added for toast message
+
+     setCountingList(prevList => {
+         const index = prevList.findIndex(p => p.barcode === barcodeToUpdate && p.warehouseId === warehouseId);
+         if (index === -1) return prevList;
+
+         const updatedList = [...prevList];
+         const product = updatedList[index];
+         updatedProductDescription = product.description;
+
+         if (type === 'count') {
+             originalValue = product.count;
+             // Confirmation logic when setting count directly
+             if (product.stock !== 0 && newValue === product.stock && originalValue !== product.stock) {
+                 needsConfirmation = true;
+                 productToConfirm = { ...product };
+             }
+
+             if (needsConfirmation) {
+                 updatedList[index] = { ...product }; // Keep current state temporarily
+             } else {
+                 updatedList[index] = { ...product, count: newValue, lastUpdated: format(new Date(), 'yyyy-MM-dd HH:mm:ss') };
+             }
+         } else { // type === 'stock'
+             originalValue = product.stock;
+             updatedList[index] = { ...product, stock: newValue, lastUpdated: format(new Date(), 'yyyy-MM-dd HH:mm:ss') };
+         }
+         return updatedList;
+     });
+
+     // Update stock in IndexedDB if stock changed
+     if (type === 'stock') {
+         try {
+             const itemToUpdate: InventoryItem = {
+                 barcode: barcodeToUpdate,
+                 warehouseId: warehouseId,
+                 stock: newValue,
+                 count: countingList.find(p => p.barcode === barcodeToUpdate && p.warehouseId === warehouseId)?.count ?? 0,
+                 lastUpdated: format(new Date(), 'yyyy-MM-dd HH:mm:ss')
+             };
+             await addOrUpdateInventoryItem(itemToUpdate);
+             toast({ title: "Stock Actualizado", description: `Stock de ${updatedProductDescription} (${getWarehouseName(warehouseId)}) actualizado a ${newValue} en la base de datos.` });
+         } catch (error) {
+             console.error("Failed to update stock in DB:", error);
+             toast({ variant: "destructive", title: "Error DB", description: "No se pudo actualizar el stock en la base de datos." });
+             // Revert stock change in state
+             setCountingList(prevList => {
+                 const index = prevList.findIndex(p => p.barcode === barcodeToUpdate && p.warehouseId === warehouseId);
+                 if (index === -1) return prevList;
+                 const revertedList = [...prevList];
+                 revertedList[index] = { ...revertedList[index], stock: originalValue }; // Use originalValue
+                 return revertedList;
+             });
+         }
+     }
+
+     // Handle confirmation dialog
+     if (needsConfirmation && productToConfirm && type === 'count') {
+         setConfirmProductBarcode(productToConfirm.barcode);
+         // Set confirmAction based on whether the new value is higher or lower than original, though 'set' is more accurate
+         setConfirmAction(newValue > originalValue ? 'increment' : 'decrement');
+         setIsConfirmDialogOpen(true);
+     } else if (type === 'count' && !needsConfirmation) {
+         toast({ title: "Cantidad Modificada", description: `Cantidad de ${updatedProductDescription} (${getWarehouseName(warehouseId)}) establecida en ${newValue}.` });
+     }
+
+     setIsEditingValueInDialog(false); // Exit edit mode after setting the value
+
+ }, [countingList, currentWarehouseId, toast, getWarehouseName]);
+
+
  // Specific handler for increment button click
  const handleIncrement = useCallback((barcode: string, type: 'count' | 'stock') => {
     modifyProductValue(barcode, type, 1);
@@ -804,17 +890,20 @@ export default function Home() {
     const handleOpenQuantityDialog = useCallback((product: DisplayProduct) => {
         setSelectedProductForDialog(product);
         setOpenQuantityDialog(true);
+        setIsEditingValueInDialog(false); // Reset edit mode
     }, []);
 
     const handleOpenStockDialog = useCallback((product: DisplayProduct) => {
         setSelectedProductForDialog(product);
         setOpenStockDialog(true);
+        setIsEditingValueInDialog(false); // Reset edit mode
     }, []);
 
     const handleCloseDialogs = () => {
         setOpenQuantityDialog(false);
         setOpenStockDialog(false);
         setSelectedProductForDialog(null); // Clear selected product when closing
+        setIsEditingValueInDialog(false); // Ensure edit mode is off
     };
 
      // --- Warehouse Selection ---
@@ -988,6 +1077,7 @@ export default function Home() {
         setIsScanning(false);
     };
 
+
     // --- Dialog Renderers ---
     const renderModifyDialog = (
         isOpen: boolean,
@@ -1005,6 +1095,50 @@ export default function Home() {
             `Ajuste el stock del producto en este almacén (${getWarehouseName(currentWarehouseId)}). Este cambio se reflejará en la base de datos.` :
             `Ajuste la cantidad contada manualmente en ${getWarehouseName(currentWarehouseId)}.`;
 
+        // Handler for clicking the value to start editing
+        const handleValueClick = () => {
+            setEditingValue(currentValue.toString()); // Initialize input with current value
+            setIsEditingValueInDialog(true);
+            // Focus the input after state update
+            requestAnimationFrame(() => {
+                valueInputRef.current?.focus();
+                valueInputRef.current?.select();
+            });
+        };
+
+        // Handler for submitting the edited value
+        const handleValueSubmit = (e: React.FormEvent) => {
+            e.preventDefault();
+            const newValueInt = parseInt(editingValue, 10);
+            if (!isNaN(newValueInt)) {
+                handleSetProductValue(product.barcode, type, newValueInt);
+            } else {
+                toast({ variant: "destructive", title: "Entrada Inválida", description: "Por favor, ingrese un número válido." });
+            }
+            setIsEditingValueInDialog(false); // Exit edit mode
+        };
+
+         // Handler for input change
+         const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+            setEditingValue(e.target.value.replace(/\D/g, '')); // Allow only digits
+        };
+
+         // Handler for input blur (exit edit mode if clicked outside)
+         const handleInputBlur = () => {
+            // Submit if the value changed? Or just exit? Let's just exit for simplicity.
+            // Consider adding a check icon/button to explicitly save.
+             setIsEditingValueInDialog(false);
+         };
+
+         const handleInputKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+             if (e.key === 'Enter') {
+                 handleValueSubmit(e);
+             } else if (e.key === 'Escape') {
+                 setIsEditingValueInDialog(false);
+             }
+         };
+
+
         return (
              <Dialog open={isOpen} onOpenChange={(openState) => { if (!openState) handleCloseDialogs(); else setIsOpen(true); }}>
                 <DialogContent className="sm:max-w-[425px] bg-white dark:bg-gray-900 text-black dark:text-white border-teal-500 rounded-lg shadow-xl p-6">
@@ -1020,29 +1154,52 @@ export default function Home() {
                             {descriptionText}
                         </DialogDescription>
                     </DialogHeader>
-                    <div className="grid gap-4 py-6">
+                     <div className="grid gap-4 py-6">
                          <div className="flex justify-around items-center">
-                            <Button
-                                size="lg"
-                                className="p-4 rounded-full bg-red-500 hover:bg-red-600 text-white text-2xl shadow-md transition-transform transform hover:scale-105 w-16 h-16 sm:w-20 sm:h-20 flex items-center justify-center"
-                                onClick={() => handleDecrement(product.barcode, type)}
-                                aria-label={`Disminuir ${type}`}
-                            >
-                                <Minus className="h-8 w-8 sm:h-10 sm:w-10" />
-                            </Button>
-                            <div className="text-5xl sm:text-6xl font-bold mx-4 sm:mx-6 text-gray-800 dark:text-gray-100 tabular-nums select-none">
-                                {currentValue}
-                            </div>
-                            <Button
-                                size="lg"
-                                className="p-4 rounded-full bg-green-500 hover:bg-green-600 text-white text-2xl shadow-md transition-transform transform hover:scale-105 w-16 h-16 sm:w-20 sm:h-20 flex items-center justify-center"
-                                onClick={() => handleIncrement(product.barcode, type)}
-                                aria-label={`Aumentar ${type}`}
-                            >
-                                <Plus className="h-8 w-8 sm:h-10 sm:w-10" />
-                            </Button>
-                        </div>
-                    </div>
+                             <Button
+                                 size="lg"
+                                 className="p-4 rounded-full bg-red-500 hover:bg-red-600 text-white text-2xl shadow-md transition-transform transform hover:scale-105 w-16 h-16 sm:w-20 sm:h-20 flex items-center justify-center"
+                                 onClick={() => handleDecrement(product.barcode, type)}
+                                 aria-label={`Disminuir ${type}`}
+                                 disabled={isEditingValueInDialog} // Disable buttons while editing
+                             >
+                                 <Minus className="h-8 w-8 sm:h-10 sm:w-10" />
+                             </Button>
+                             {isEditingValueInDialog ? (
+                                <form onSubmit={handleValueSubmit} className="flex-grow mx-2 sm:mx-4">
+                                    <Input
+                                        ref={valueInputRef}
+                                        type="number"
+                                         pattern="\d*"
+                                        inputMode="numeric"
+                                        value={editingValue}
+                                        onChange={handleInputChange}
+                                        onBlur={handleInputBlur}
+                                        onKeyDown={handleInputKeyDown}
+                                         className="text-5xl sm:text-6xl font-bold text-center w-full h-full p-0 border-2 border-blue-500 dark:bg-gray-800 dark:text-gray-100 tabular-nums focus:outline-none focus:ring-2 focus:ring-blue-400 rounded-md"
+                                        aria-label="Editar valor"
+                                    />
+                                </form>
+                            ) : (
+                                <div
+                                    className="text-5xl sm:text-6xl font-bold mx-4 sm:mx-6 text-gray-800 dark:text-gray-100 tabular-nums select-none cursor-pointer hover:text-blue-600 dark:hover:text-blue-400"
+                                    onClick={handleValueClick}
+                                    title={`Click para editar ${type}`}
+                                >
+                                    {currentValue}
+                                </div>
+                            )}
+                             <Button
+                                 size="lg"
+                                 className="p-4 rounded-full bg-green-500 hover:bg-green-600 text-white text-2xl shadow-md transition-transform transform hover:scale-105 w-16 h-16 sm:w-20 sm:h-20 flex items-center justify-center"
+                                 onClick={() => handleIncrement(product.barcode, type)}
+                                 aria-label={`Aumentar ${type}`}
+                                  disabled={isEditingValueInDialog} // Disable buttons while editing
+                             >
+                                 <Plus className="h-8 w-8 sm:h-10 sm:w-10" />
+                             </Button>
+                         </div>
+                     </div>
                     <DialogFooter className="mt-4">
                          <DialogClose asChild>
                              <Button type="button" variant="outline" className="border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700" onClick={handleCloseDialogs}>
@@ -1281,3 +1438,5 @@ export default function Home() {
     </div>
   );
 }
+
+    

@@ -1,7 +1,6 @@
-// Ensure this file starts with "use client" if it uses client-side hooks like useState, useEffect, etc.
 "use client";
 
-// Import updated types
+// Ensure this file starts with "use client" if it uses client-side hooks like useState, useEffect, etc.
 import type { ProductDetail, InventoryItem } from '@/types/product'; // Keep DisplayProduct if used elsewhere, but focus on Detail and Inventory
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useIsMobile } from "@/hooks/use-mobile";
@@ -14,7 +13,7 @@ import {
     deleteProductCompletely, // Use this for full deletion
     clearDatabaseCompletely, // Use this for full clear
     addOrUpdateInventoryItem,
-    // getInventoryItemsForProduct, // Might not be needed directly here
+    getInventoryItem, // Need this to get current stock for editing
     getAllInventoryItems,
     addInventoryItemsInBulk,
     addProductDetailsInBulk,
@@ -54,14 +53,14 @@ import {
 // import { Textarea } from "@/components/ui/textarea"; // Not used?
 import { format } from 'date-fns'; // Keep format if needed for display
 
-// Schema for editing Product Detail - ADD STOCK for creation
+// Schema for editing Product Detail - include stock for add/edit
 const productDetailSchema = z.object({
   barcode: z.string().min(1, { message: "El código de barras es requerido." }),
   description: z.string().min(1, { message: "La descripción es requerida." }),
   provider: z.string().optional(),
-  stock: z.preprocess( // Add stock field for initial creation
+  stock: z.preprocess( // Keep preprocess for string to number conversion
     (val) => (val === "" || val === undefined || val === null ? 0 : Number(val)),
-    z.number().min(0, { message: "El stock debe ser mayor o igual a 0." }).optional().default(0)
+    z.number().min(0, { message: "El stock debe ser mayor o igual a 0." }) // No optional/default needed if always present
   ),
 });
 type ProductDetailValues = z.infer<typeof productDetailSchema>;
@@ -249,7 +248,7 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = () => {
 
   const productDetailForm = useForm<ProductDetailValues>({
     resolver: zodResolver(productDetailSchema),
-    defaultValues: { barcode: "", description: "", provider: "Desconocido", stock: 0 }, // Add stock default
+    defaultValues: { barcode: "", description: "", provider: "Desconocido", stock: 0 }, // Include stock default
   });
   const { handleSubmit: handleDetailSubmit, reset: resetDetailForm, control: detailControl, setValue: setDetailValue } = productDetailForm;
 
@@ -293,24 +292,27 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = () => {
     }
 
     setIsProcessing(true);
-    setProcessingStatus(isUpdating ? "Actualizando detalle..." : "Agregando producto...");
+    setProcessingStatus(isUpdating ? "Actualizando producto..." : "Agregando producto...");
     try {
         // Add or update the product detail
         await addOrUpdateProductDetail(detailData);
 
-        // If adding a NEW product, also add the initial inventory item for 'main' warehouse
-        if (!isUpdating) {
-            const initialInventoryItem: InventoryItem = {
-                barcode: detailData.barcode,
-                warehouseId: 'main', // Default to 'main' warehouse
-                stock: data.stock ?? 0, // Use stock from form
-                count: 0, // Initial count is 0
-                lastUpdated: new Date().toISOString(),
-            };
-            await addOrUpdateInventoryItem(initialInventoryItem);
-            // Update local inventory state as well
-             setInventoryItems(prevItems => [...prevItems, initialInventoryItem]);
+        // Get current count for the item, default to 0 if not found
+        let currentCount = 0;
+        if (isUpdating) {
+            const existingItem = await getInventoryItem(detailData.barcode, 'main');
+            currentCount = existingItem?.count ?? 0;
         }
+
+         // Add or update the inventory item for 'main' warehouse with the new stock
+        const inventoryItemData: InventoryItem = {
+            barcode: detailData.barcode,
+            warehouseId: 'main', // Assume 'main' warehouse for this edit form
+            stock: data.stock ?? 0, // Use stock from form
+            count: currentCount, // Keep existing count or 0 for new
+            lastUpdated: new Date().toISOString(),
+        };
+        await addOrUpdateInventoryItem(inventoryItemData);
 
         // Update local product details state
         setProductDetails(prevDetails => {
@@ -324,10 +326,22 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = () => {
             }
         });
 
+        // Update local inventory state
+         setInventoryItems(prevItems => {
+             const existingInvIndex = prevItems.findIndex(i => i.barcode === inventoryItemData.barcode && i.warehouseId === inventoryItemData.warehouseId);
+             if (existingInvIndex > -1) {
+                 const newItems = [...prevItems];
+                 newItems[existingInvIndex] = inventoryItemData;
+                 return newItems;
+             } else {
+                 return [...prevItems, inventoryItemData]; // Add new item
+             }
+         });
+
 
         toast({
-            title: isUpdating ? "Detalle Actualizado" : "Producto Agregado",
-            description: `${detailData.description} (${detailData.barcode}) ha sido ${isUpdating ? 'actualizado' : 'agregado con stock inicial'}.`,
+            title: isUpdating ? "Producto Actualizado" : "Producto Agregado",
+            description: `${detailData.description} (${detailData.barcode}) ha sido ${isUpdating ? 'actualizado (incluyendo stock en almacén principal)' : 'agregado con stock inicial'}.`,
         });
         resetDetailForm({ barcode: "", description: "", provider: "Desconocido", stock: 0 }); // Reset form including stock
         setIsEditModalOpen(false);
@@ -345,7 +359,7 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = () => {
         setIsProcessing(false);
         setProcessingStatus("");
     }
-}, [selectedDetail, toast, resetDetailForm]); // Removed handleUpdateInventory dependency as it's integrated
+}, [selectedDetail, toast, resetDetailForm]); // Added getInventoryItem
 
 
   const handleDeleteProduct = useCallback(async (barcode: string | null) => {
@@ -405,20 +419,22 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = () => {
 
   // --- Dialog and Alert Triggers ---
 
-  const handleOpenEditDialog = useCallback((detail: ProductDetail | null) => {
+  const handleOpenEditDialog = useCallback(async (detail: ProductDetail | null) => {
     setSelectedDetail(detail);
     if (detail) {
+         // Fetch current stock for the 'main' warehouse when editing
+         const mainInventory = await getInventoryItem(detail.barcode, 'main');
         resetDetailForm({
             barcode: detail.barcode || "",
             description: detail.description || "",
             provider: detail.provider || "Desconocido",
-            stock: 0, // Stock is not editable here, only on creation
+            stock: mainInventory?.stock ?? 0, // Set stock from 'main' inventory or default 0
         });
     } else {
-        resetDetailForm({ barcode: "", description: "", provider: "Desconocido", stock: 0 }); // Reset with stock
+        resetDetailForm({ barcode: "", description: "", provider: "Desconocido", stock: 0 }); // Reset with stock for adding
     }
     setIsEditModalOpen(true);
-  }, [resetDetailForm]);
+  }, [resetDetailForm, setDetailValue]); // Added setDetailValue, getInventoryItem
 
   const triggerDeleteProductAlert = useCallback((barcode: string | null) => {
       if (!barcode) {
@@ -770,9 +786,9 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = () => {
       <Dialog open={isEditModalOpen} onOpenChange={(isOpen) => { if (!isOpen) { setIsEditModalOpen(false); setSelectedDetail(null); resetDetailForm(); } else { setIsEditModalOpen(true); } }}>
         <DialogContent className="sm:max-w-lg dark:bg-gray-800 dark:text-white">
           <DialogHeader>
-            <DialogTitle className="dark:text-gray-100">{selectedDetail ? "Editar Detalle Producto" : "Agregar Nuevo Producto"}</DialogTitle>
+            <DialogTitle className="dark:text-gray-100">{selectedDetail ? "Editar Producto" : "Agregar Nuevo Producto"}</DialogTitle>
             <DialogDescription className="dark:text-gray-400">
-              {selectedDetail ? "Modifica los detalles del producto. El stock se gestiona por almacén." : "Añade un nuevo producto (detalle general) y su stock inicial para el almacén principal."}
+              {selectedDetail ? "Modifica los detalles del producto y su stock en el almacén principal." : "Añade un nuevo producto (detalle general) y su stock inicial para el almacén principal."}
             </DialogDescription>
           </DialogHeader>
           <Form {...productDetailForm}>
@@ -816,23 +832,21 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = () => {
                   </FormItem>
                 )}
               />
-              {/* Stock field only visible when adding a new product */}
-              {!selectedDetail && (
-                <FormField
-                    control={detailControl}
-                    name="stock"
-                    render={({ field }) => (
-                    <FormItem>
-                        <FormLabel className="dark:text-gray-200">Stock Inicial (Almacén Principal) *</FormLabel>
-                        <FormControl>
-                        <Input type="number" {...field} aria-required="true" disabled={isProcessing} className="dark:bg-gray-700 dark:border-gray-600"/>
-                        </FormControl>
-                         <FormDescUi className="text-xs dark:text-gray-400">Este stock se asignará al almacén 'Principal'.</FormDescUi>
-                        <FormMessage />
-                    </FormItem>
-                    )}
-                />
-               )}
+              {/* Stock field always visible now for add/edit */}
+              <FormField
+                  control={detailControl}
+                  name="stock"
+                  render={({ field }) => (
+                  <FormItem>
+                      <FormLabel className="dark:text-gray-200">Stock (Almacén Principal) *</FormLabel>
+                      <FormControl>
+                      <Input type="number" {...field} aria-required="true" disabled={isProcessing} className="dark:bg-gray-700 dark:border-gray-600"/>
+                      </FormControl>
+                       <FormDescUi className="text-xs dark:text-gray-400">Este stock se aplica al almacén 'Principal'.</FormDescUi>
+                      <FormMessage />
+                  </FormItem>
+                  )}
+              />
 
                <DialogFooter className="flex flex-col-reverse sm:flex-row sm:justify-between w-full pt-6 gap-2">
                     {selectedDetail && (
@@ -863,4 +877,3 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = () => {
     </div>
   );
 };
-    

@@ -26,6 +26,8 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { format } from 'date-fns';
 import { Minus, Plus, Trash, RefreshCw, Warehouse as WarehouseIcon, Camera, AlertCircle } from "lucide-react"; // Added Camera, AlertCircle
 import React, { useCallback, useEffect, useRef, useState } from "react";
+// Import ZXing library for barcode scanning
+import { BrowserMultiFormatReader, NotFoundException } from '@zxing/library';
 // Update imports for new DB functions
 import {
     addOrUpdateInventoryItem,
@@ -70,6 +72,7 @@ export default function Home() {
   const [isRefreshingStock, setIsRefreshingStock] = useState(false);
   const [isScanning, setIsScanning] = useState(false); // State to control camera scanning view/modal
   const [hasCameraPermission, setHasCameraPermission] = useState<boolean | null>(null); // State for camera permission
+  const scannerReaderRef = useRef<BrowserMultiFormatReader | null>(null); // Ref for the scanner reader instance
 
 
   const getLocalStorageKeyForWarehouse = (warehouseId: string) => {
@@ -165,8 +168,7 @@ export default function Home() {
   }, [currentWarehouseId]);
 
 
-  const playBeep = useCallback(() => {
-    // (Keep the existing playBeep implementation)
+  const playBeep = useCallback((frequency = 660, duration = 150) => {
      if (typeof window !== 'undefined' && (window.AudioContext || (window as any).webkitAudioContext)) {
         try {
              const audioCtx = new (window.AudioContext || (window as any).webkitAudioContext)();
@@ -174,19 +176,19 @@ export default function Home() {
              const gainNode = audioCtx.createGain();
 
              oscillator.type = 'sine';
-             oscillator.frequency.setValueAtTime(660, audioCtx.currentTime);
+             oscillator.frequency.setValueAtTime(frequency, audioCtx.currentTime);
              gainNode.gain.setValueAtTime(0.5, audioCtx.currentTime);
-             gainNode.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.15);
+             gainNode.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + duration / 1000);
 
              oscillator.connect(gainNode);
              gainNode.connect(audioCtx.destination);
 
              oscillator.start(audioCtx.currentTime);
-             oscillator.stop(audioCtx.currentTime + 0.15);
+             oscillator.stop(audioCtx.currentTime + duration / 1000);
 
              setTimeout(() => {
                 audioCtx.close().catch(err => console.warn("Error closing AudioContext:", err));
-            }, 200);
+            }, duration + 50);
 
         } catch (error) {
              console.error("Error playing beep sound:", error);
@@ -198,8 +200,8 @@ export default function Home() {
   }, []);
 
   // Handles adding or incrementing a product in the counting list for the current warehouse
- const handleAddProduct = useCallback(async () => {
-    const trimmedBarcode = barcode.trim(); // Trim whitespace
+ const handleAddProduct = useCallback(async (barcodeToAdd?: string) => {
+    const trimmedBarcode = (barcodeToAdd ?? barcode).trim(); // Use provided barcode or state, then trim
 
     if (!trimmedBarcode) {
       toast({
@@ -243,6 +245,7 @@ export default function Home() {
             title: "Cantidad aumentada",
             description: `${descriptionForToast} cantidad aumentada a ${newCount}.`,
         });
+        playBeep(880, 100); // Higher pitch beep for increment
 
     } else {
         // Product not in the current counting list, fetch details and inventory item
@@ -261,9 +264,10 @@ export default function Home() {
                      title: "Producto agregado",
                      description: `${newProductForList.description} agregado al inventario (${WAREHOUSES.find(w=>w.id===currentWarehouseId)?.name}).`,
                  });
+                 playBeep(660, 150); // Standard beep for new product
              } else {
                 // Product detail not found in DB at all
-                 playBeep(); // Play beep for unknown product
+                 playBeep(440, 300); // Lower pitch, longer beep for unknown product
                 // Create a new product detail and a new inventory item
                  const newProductDetail: ProductDetail = {
                     barcode: trimmedBarcode,
@@ -618,57 +622,82 @@ export default function Home() {
     };
 
     // --- Camera Scanning Logic ---
-    // Effect to request camera permission and set up video stream
-    useEffect(() => {
-        const getCameraPermission = async () => {
-        if (!isScanning) {
-            // If not scanning, ensure any existing stream is stopped
-            if (videoRef.current && videoRef.current.srcObject) {
-                (videoRef.current.srcObject as MediaStream).getTracks().forEach(track => track.stop());
-                videoRef.current.srcObject = null;
+     // Effect to request camera permission and set up video stream/scanning
+     useEffect(() => {
+        const initScanner = async () => {
+            if (!isScanning || !videoRef.current) {
+                 if (scannerReaderRef.current) {
+                    scannerReaderRef.current.reset(); // Stop scanning
+                    scannerReaderRef.current = null;
+                }
+                // Also stop the video stream if scanning stops
+                if (videoRef.current && videoRef.current.srcObject) {
+                    (videoRef.current.srcObject as MediaStream).getTracks().forEach(track => track.stop());
+                    videoRef.current.srcObject = null;
+                }
+                setHasCameraPermission(null); // Reset permission status
+                return;
             }
-            setHasCameraPermission(null); // Reset permission status
-            return;
-        }
 
-        try {
-            const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" } }); // Prefer back camera
-            setHasCameraPermission(true);
+            // Initialize the scanner reader if it doesn't exist
+            if (!scannerReaderRef.current) {
+                scannerReaderRef.current = new BrowserMultiFormatReader();
+            }
+            const reader = scannerReaderRef.current;
 
-            if (videoRef.current) {
+            try {
+                // Get camera permission and stream
+                const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" } });
+                setHasCameraPermission(true);
                 videoRef.current.srcObject = stream;
-            }
-            // **TODO: Integrate barcode scanning library here**
-            // Example using a placeholder function:
-            // startBarcodeScanner(videoRef.current, (detectedBarcode) => {
-            //     setBarcode(detectedBarcode);
-            //     setIsScanning(false); // Optionally close scanner after detection
-            //     handleAddProduct(); // Optionally add product immediately
-            // });
 
-        } catch (error) {
-            console.error('Error accessing camera:', error);
-            setHasCameraPermission(false);
-            toast({
-            variant: 'destructive',
-            title: 'Acceso a Cámara Denegado',
-            description: 'Por favor, habilita los permisos de cámara en la configuración de tu navegador para usar esta función.',
-            });
-            setIsScanning(false); // Close scanning view if permission denied
-        }
+                 // Start continuous scanning
+                 reader.decodeFromVideoDevice(undefined, videoRef.current, (result, err) => {
+                    if (result) {
+                         console.log('Barcode detected:', result.getText());
+                         setBarcode(result.getText()); // Update barcode state
+                         setIsScanning(false); // Close scanner UI
+                         playBeep(900, 80); // Short, high beep for scan success
+                         // Optionally add product immediately
+                         // Note: handleAddProduct uses the 'barcode' state, which might not update immediately
+                         // Pass the detected barcode directly for reliability
+                         handleAddProduct(result.getText());
+                    }
+                    if (err && !(err instanceof NotFoundException)) {
+                        // Log errors other than barcode not found (which is expected during scanning)
+                         console.error('Scanning error:', err);
+                         // Optionally show a toast for persistent errors
+                         // toast({ variant: 'destructive', title: 'Error de Escaneo', description: 'Ocurrió un error al intentar leer el código de barras.' });
+                    }
+                 });
+
+            } catch (error) {
+                console.error('Error accessing camera or starting scanner:', error);
+                setHasCameraPermission(false);
+                toast({
+                    variant: 'destructive',
+                    title: 'Acceso a Cámara Denegado',
+                    description: 'Por favor, habilita los permisos de cámara en la configuración de tu navegador para usar esta función.',
+                });
+                setIsScanning(false); // Close scanning view if permission denied/error
+            }
         };
 
-        getCameraPermission();
+        initScanner();
 
-        // Cleanup function to stop the stream when component unmounts or scanning stops
+        // Cleanup function
         return () => {
-            if (videoRef.current && videoRef.current.srcObject) {
-                (videoRef.current.srcObject as MediaStream).getTracks().forEach(track => track.stop());
+            if (scannerReaderRef.current) {
+                scannerReaderRef.current.reset(); // Ensure scanner stops
+                scannerReaderRef.current = null;
             }
-            // **TODO: Stop barcode scanner library here**
-            // stopBarcodeScanner();
+             if (videoRef.current && videoRef.current.srcObject) {
+                 (videoRef.current.srcObject as MediaStream).getTracks().forEach(track => track.stop());
+                 videoRef.current.srcObject = null;
+             }
         };
-    }, [isScanning, toast]); // Re-run effect when isScanning changes
+     }, [isScanning, toast, playBeep, handleAddProduct]); // Add dependencies
+
 
     // Handler to start scanning
     const handleScanButtonClick = () => {
@@ -869,8 +898,7 @@ export default function Home() {
                 </div>
                <DialogFooter className="mt-4">
                    <Button variant="outline" onClick={handleStopScanning}>Cancelar</Button>
-                   {/* TODO: Add button/logic to trigger scan manually if library requires it */}
-                   {/* <Button>Escanear</Button> */}
+                   {/* No need for manual scan button with continuous scanning */}
                </DialogFooter>
            </DialogContent>
        </Dialog>
@@ -949,7 +977,7 @@ export default function Home() {
                  <Camera className="h-5 w-5" />
              </Button>
              <Button
-               onClick={handleAddProduct}
+               onClick={() => handleAddProduct()} // Ensure handleAddProduct is called without args here
                className="bg-teal-600 hover:bg-teal-700 text-white rounded-md shadow-sm px-5 py-2 transition-colors duration-200"
                aria-label="Agregar producto al almacén actual"
                disabled={isDbLoading} // Disable while loading
@@ -1094,3 +1122,4 @@ export default function Home() {
             {renderScannerView()} {/* Render the scanner dialog */}
     </div>
   );
+}

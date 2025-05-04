@@ -73,6 +73,7 @@ export default function Home() {
   const [isScanning, setIsScanning] = useState(false); // State to control camera scanning view/modal
   const [hasCameraPermission, setHasCameraPermission] = useState<boolean | null>(null); // State for camera permission
   const scannerReaderRef = useRef<BrowserMultiFormatReader | null>(null); // Ref for the scanner reader instance
+  const streamRef = useRef<MediaStream | null>(null); // Ref to hold the camera stream
 
 
   const getLocalStorageKeyForWarehouse = (warehouseId: string) => {
@@ -186,17 +187,20 @@ export default function Home() {
              oscillator.start(audioCtx.currentTime);
              oscillator.stop(audioCtx.currentTime + duration / 1000);
 
-             setTimeout(() => {
-                audioCtx.close().catch(err => console.warn("Error closing AudioContext:", err));
-            }, duration + 50);
+             // Close context after sound finishes playing to release resources
+             const closeTimeout = setTimeout(() => {
+                 audioCtx.close().catch(err => console.warn("Error closing AudioContext:", err));
+             }, duration + 100); // Slightly longer timeout to ensure sound plays
+
+             return () => clearTimeout(closeTimeout); // Cleanup function for timeout
 
         } catch (error) {
              console.error("Error playing beep sound:", error);
         }
-
     } else {
         console.warn("AudioContext not supported in this browser. Cannot play beep sound.");
     }
+    return () => {}; // Return empty cleanup if AudioContext not supported
   }, []);
 
   // Handles adding or incrementing a product in the counting list for the current warehouse
@@ -371,8 +375,10 @@ export default function Home() {
 
      // Update stock in IndexedDB *after* state update if stock changed
      if (type === 'stock') {
-        const currentStockValue = countingList.find(p => p.barcode === barcodeToUpdate && p.warehouseId === warehouseId)?.stock ?? 0;
-        const newStock = currentStockValue + change;
+        // Use the original value for calculation to avoid race conditions with state update
+        const originalStockValue = countingList.find(p => p.barcode === barcodeToUpdate && p.warehouseId === warehouseId)?.stock ?? 0;
+        const newStock = originalStockValue + change;
+
 
          if (newStock >= 0) {
              try {
@@ -401,7 +407,7 @@ export default function Home() {
                     const index = prevList.findIndex(p => p.barcode === barcodeToUpdate && p.warehouseId === warehouseId);
                     if (index === -1) return prevList;
                     const revertedList = [...prevList];
-                    revertedList[index] = { ...revertedList[index], stock: originalValue }; // Revert to original stock
+                    revertedList[index] = { ...revertedList[index], stock: originalStockValue }; // Revert to original stock
                     return revertedList;
                 });
             }
@@ -412,7 +418,7 @@ export default function Home() {
                  const index = prevList.findIndex(p => p.barcode === barcodeToUpdate && p.warehouseId === warehouseId);
                  if (index === -1) return prevList;
                  const revertedList = [...prevList];
-                 revertedList[index] = { ...revertedList[index], stock: originalValue }; // Revert to original stock
+                 revertedList[index] = { ...revertedList[index], stock: originalStockValue }; // Revert to original stock
                  return revertedList;
              });
         }
@@ -622,62 +628,100 @@ export default function Home() {
     };
 
     // --- Camera Scanning Logic ---
-     // Effect to request camera permission and set up video stream/scanning
-     useEffect(() => {
+
+    // Function to stop camera stream and release resources
+    const stopCameraStream = useCallback(() => {
+        if (streamRef.current) {
+            streamRef.current.getTracks().forEach(track => track.stop());
+            streamRef.current = null;
+            console.log("Camera stream stopped.");
+        }
+         if (videoRef.current) {
+            videoRef.current.srcObject = null; // Clear video source
+        }
+    }, []);
+
+    // Effect to request camera permission and set up video stream/scanning
+    useEffect(() => {
+        let reader: BrowserMultiFormatReader | null = null;
+        let cancelled = false; // Flag to prevent updates after component unmounts or effect cleans up
+
         const initScanner = async () => {
-            if (!isScanning || !videoRef.current) {
-                 if (scannerReaderRef.current) {
-                    scannerReaderRef.current.reset(); // Stop scanning
-                    scannerReaderRef.current = null;
-                }
-                // Also stop the video stream if scanning stops
-                if (videoRef.current && videoRef.current.srcObject) {
-                    (videoRef.current.srcObject as MediaStream).getTracks().forEach(track => track.stop());
-                    videoRef.current.srcObject = null;
+             if (!isScanning) {
+                stopCameraStream(); // Stop stream when not scanning
+                if (reader) {
+                    reader.reset(); // Ensure scanner resets
+                    reader = null;
                 }
                 setHasCameraPermission(null); // Reset permission status
                 return;
             }
 
-            // Initialize the scanner reader if it doesn't exist
-            if (!scannerReaderRef.current) {
-                scannerReaderRef.current = new BrowserMultiFormatReader();
-            }
-            const reader = scannerReaderRef.current;
+             if (!videoRef.current) {
+                 console.error("Video element ref is not available.");
+                 return;
+             }
+
+             // Initialize the scanner reader only once per activation
+             if (!reader) {
+                 reader = new BrowserMultiFormatReader();
+             }
 
             try {
-                // Get camera permission and stream
+                // Request camera permission and get stream
+                console.log("Requesting camera permission...");
                 const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" } });
+                 if (cancelled) { // Check if cancelled during async operation
+                     stream.getTracks().forEach(track => track.stop());
+                     return;
+                 }
+
+                console.log("Camera permission granted.");
                 setHasCameraPermission(true);
-                videoRef.current.srcObject = stream;
+                streamRef.current = stream; // Store the stream
+
+                 // Attach stream to video element if it's still mounted
+                 if (videoRef.current) {
+                     videoRef.current.srcObject = stream;
+                      // Wait for video to be ready to play
+                     await videoRef.current.play();
+                     console.log("Video stream attached and playing.");
+                 } else {
+                     console.warn("Video ref became null before attaching stream.");
+                     stream.getTracks().forEach(track => track.stop()); // Stop stream if video ref lost
+                     return;
+                 }
 
                  // Start continuous scanning
+                 console.log("Starting barcode decoding...");
                  reader.decodeFromVideoDevice(undefined, videoRef.current, (result, err) => {
-                    if (result) {
-                         console.log('Barcode detected:', result.getText());
-                         setBarcode(result.getText()); // Update barcode state
-                         setIsScanning(false); // Close scanner UI
-                         playBeep(900, 80); // Short, high beep for scan success
-                         // Optionally add product immediately
-                         // Note: handleAddProduct uses the 'barcode' state, which might not update immediately
-                         // Pass the detected barcode directly for reliability
-                         handleAddProduct(result.getText());
-                    }
-                    if (err && !(err instanceof NotFoundException)) {
-                        // Log errors other than barcode not found (which is expected during scanning)
-                         console.error('Scanning error:', err);
-                         // Optionally show a toast for persistent errors
-                         // toast({ variant: 'destructive', title: 'Error de Escaneo', description: 'Ocurrió un error al intentar leer el código de barras.' });
-                    }
+                      if (cancelled) return; // Don't process if cancelled
+
+                      if (result) {
+                          console.log('Barcode detected:', result.getText());
+                          setBarcode(result.getText()); // Update barcode state
+                          setIsScanning(false); // Close scanner UI
+                          playBeep(900, 80); // Short, high beep for scan success
+                          // Pass the detected barcode directly for reliability
+                          handleAddProduct(result.getText());
+                      }
+                      if (err && !(err instanceof NotFoundException)) {
+                          console.error('Scanning error:', err);
+                          // Optionally show a toast for persistent errors
+                          // toast({ variant: 'destructive', title: 'Error de Escaneo', description: 'Ocurrió un error al intentar leer el código de barras.' });
+                      }
                  });
 
-            } catch (error) {
+            } catch (error: any) {
+                if (cancelled) return; // Don't update state if cancelled
+
                 console.error('Error accessing camera or starting scanner:', error);
                 setHasCameraPermission(false);
                 toast({
                     variant: 'destructive',
                     title: 'Acceso a Cámara Denegado',
-                    description: 'Por favor, habilita los permisos de cámara en la configuración de tu navegador para usar esta función.',
+                    description: `Por favor, habilita los permisos de cámara en la configuración de tu navegador. Error: ${error.message}`,
+                    duration: 9000
                 });
                 setIsScanning(false); // Close scanning view if permission denied/error
             }
@@ -687,25 +731,27 @@ export default function Home() {
 
         // Cleanup function
         return () => {
-            if (scannerReaderRef.current) {
-                scannerReaderRef.current.reset(); // Ensure scanner stops
-                scannerReaderRef.current = null;
-            }
-             if (videoRef.current && videoRef.current.srcObject) {
-                 (videoRef.current.srcObject as MediaStream).getTracks().forEach(track => track.stop());
-                 videoRef.current.srcObject = null;
+            console.log("Cleaning up camera effect...");
+            cancelled = true; // Set cancelled flag
+            stopCameraStream(); // Stop the stream on cleanup
+             if (reader) {
+                 reader.reset(); // Reset the scanner reader
+                 reader = null;
              }
         };
-     }, [isScanning, toast, playBeep, handleAddProduct]); // Add dependencies
+     }, [isScanning, toast, playBeep, handleAddProduct, stopCameraStream]); // Added dependencies
 
 
     // Handler to start scanning
     const handleScanButtonClick = () => {
+        console.log("Scan button clicked, setting isScanning to true.");
+        setHasCameraPermission(null); // Reset permission status before starting
         setIsScanning(true);
     };
 
     // Handler to stop scanning
     const handleStopScanning = () => {
+        console.log("Stop scanning button clicked, setting isScanning to false.");
         setIsScanning(false);
     };
 

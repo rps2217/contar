@@ -1,4 +1,3 @@
-
 "use client";
 
 import type { DisplayProduct, InventoryItem, ProductDetail } from '@/types/product'; // Import updated types
@@ -38,24 +37,33 @@ import {
     addOrUpdateProductDetail, // Need this if adding unknown products
     getInventoryItemsForWarehouse, // Need this for refresh stock
 } from '@/lib/indexeddb-helpers';
+import { WarehouseManagement } from "@/components/warehouse-management";
 
 const LOCAL_STORAGE_COUNTING_LIST_KEY_PREFIX = 'stockCounterPro_countingList_';
 const LOCAL_STORAGE_WAREHOUSE_KEY = 'stockCounterPro_currentWarehouse';
+const LOCAL_STORAGE_WAREHOUSES_KEY = 'stockCounterPro_warehouses';
 
-// Sample warehouses - in a real app, this might come from a config or DB
-const WAREHOUSES = [
-    { id: 'main', name: 'Almacén Principal' },
-    { id: 'pharmacy1', name: 'Farmacia 1' },
-    { id: 'storage', name: 'Depósito' },
-];
+// const WAREHOUSES = [
+//     { id: 'main', name: 'Almacén Principal' },
+//     { id: 'pharmacy1', name: 'Farmacia 1' },
+//     { id: 'storage', name: 'Depósito' },
+// ];
 
 export default function Home() {
   const [barcode, setBarcode] = useState("");
+  const [warehouses, setWarehouses] = useState(() => {
+    if (typeof window !== 'undefined') {
+      const storedWarehouses = localStorage.getItem(LOCAL_STORAGE_WAREHOUSES_KEY);
+      return storedWarehouses ? JSON.parse(storedWarehouses) : [{ id: 'main', name: 'Almacén Principal' }];
+    }
+    return [{ id: 'main', name: 'Almacén Principal' }]; // Default warehouses
+  });
+
   const [currentWarehouseId, setCurrentWarehouseId] = useState<string>(() => {
      if (typeof window !== 'undefined') {
-      return localStorage.getItem(LOCAL_STORAGE_WAREHOUSE_KEY) || WAREHOUSES[0].id;
+      return localStorage.getItem(LOCAL_STORAGE_WAREHOUSE_KEY) || warehouses[0].id;
     }
-    return WAREHOUSES[0].id; // Default warehouse
+    return warehouses[0].id; // Default warehouse
   });
   const [countingList, setCountingList] = useState<DisplayProduct[]>([]); // Products in the current count session for the selected warehouse
   const { toast } = useToast();
@@ -80,7 +88,6 @@ export default function Home() {
   const getLocalStorageKeyForWarehouse = (warehouseId: string) => {
     return `${LOCAL_STORAGE_COUNTING_LIST_KEY_PREFIX}${warehouseId}`;
   };
-
 
   // Function to load data for the selected warehouse
   const loadWarehouseData = useCallback(async (warehouseId: string) => {
@@ -169,6 +176,18 @@ export default function Home() {
     }
   }, [currentWarehouseId]);
 
+    useEffect(() => {
+    if (typeof window !== 'undefined') {
+      localStorage.setItem(LOCAL_STORAGE_WAREHOUSES_KEY, JSON.stringify(warehouses));
+    }
+  }, [warehouses]);
+
+
+   const getWarehouseName = (warehouseId: string) => {
+    const warehouse = warehouses.find(w => w.id === warehouseId);
+    return warehouse ? warehouse.name : 'Unknown Warehouse';
+  };
+
 
   const playBeep = useCallback((frequency = 660, duration = 150) => {
      if (typeof window !== 'undefined' && (window.AudioContext || (window as any).webkitAudioContext)) {
@@ -209,7 +228,7 @@ export default function Home() {
     return () => {}; // Return empty cleanup if AudioContext not supported
   }, []);
 
-  // Handles adding or incrementing a product in the counting list for the current warehouse
+ // Handles adding or incrementing a product in the counting list for the current warehouse
  const handleAddProduct = useCallback(async (barcodeToAdd?: string) => {
     const trimmedBarcode = (barcodeToAdd ?? barcode).trim(); // Use provided barcode or state, then trim
 
@@ -272,7 +291,7 @@ export default function Home() {
                  setCountingList(prevList => [newProductForList, ...prevList]);
                  toast({
                      title: "Producto agregado",
-                     description: `${newProductForList.description} agregado al inventario (${WAREHOUSES.find(w=>w.id===currentWarehouseId)?.name}).`,
+                     description: `${newProductForList.description} agregado al inventario (${getWarehouseName(currentWarehouseId)}).`,
                  });
                  playBeep(660, 150); // Standard beep for new product
              } else {
@@ -307,7 +326,7 @@ export default function Home() {
                  toast({
                      variant: "destructive",
                      title: "Producto desconocido",
-                     description: `Producto ${trimmedBarcode} no encontrado. Agregado con stock 0 al inventario (${WAREHOUSES.find(w=>w.id===currentWarehouseId)?.name}).`,
+                     description: `Producto ${trimmedBarcode} no encontrado. Agregado con stock 0 al inventario (${getWarehouseName(currentWarehouseId)}).`,
                      duration: 5000,
                  });
              }
@@ -323,7 +342,7 @@ export default function Home() {
         barcodeInputRef.current?.focus();
     });
 
- }, [barcode, countingList, currentWarehouseId, toast, playBeep]);
+ }, [barcode, countingList, currentWarehouseId, toast, playBeep, warehouses]);
 
 
  // --- Quantity/Stock Modification Callbacks for the specific warehouse ---
@@ -399,7 +418,7 @@ export default function Home() {
                 };
                  await addOrUpdateInventoryItem(itemToUpdate); // This handles both add and update
 
-                 toast({ title: "Stock Actualizado", description: `Stock de ${updatedProductDescription} (${WAREHOUSES.find(w=>w.id===warehouseId)?.name}) actualizado a ${newStock} en la base de datos.` });
+                 toast({ title: "Stock Actualizado", description: `Stock de ${updatedProductDescription} (${getWarehouseName(warehouseId)}) actualizado a ${newStock} en la base de datos.` });
 
                  // Refresh ProductDatabase component's view if it's currently visible?
                  // This might require passing a refresh callback or using a shared state management.
@@ -440,10 +459,10 @@ export default function Home() {
     } else if (type === 'count' && !needsConfirmation) {
         // Toast for non-confirmed count changes
          const finalCountValue = originalValue + change;
-         toast({ title: "Cantidad Modificada", description: `Cantidad de ${updatedProductDescription} (${WAREHOUSES.find(w=>w.id===warehouseId)?.name}) cambiada a ${finalCountValue < 0 ? 0 : finalCountValue}.` });
+         toast({ title: "Cantidad Modificada", description: `Cantidad de ${updatedProductDescription} (${getWarehouseName(warehouseId)}) cambiada a ${finalCountValue < 0 ? 0 : finalCountValue}.` });
     }
 
- }, [countingList, currentWarehouseId, toast]);
+ }, [countingList, currentWarehouseId, toast, warehouses]);
 
 
  // Specific handler for increment button click
@@ -479,13 +498,13 @@ export default function Home() {
           };
           return updatedList;
       });
-      toast({ title: "Cantidad Modificada", description: `Cantidad de ${descriptionForToast} (${WAREHOUSES.find(w=>w.id===warehouseId)?.name}) cambiada a ${newCount}.` });
+      toast({ title: "Cantidad Modificada", description: `Cantidad de ${descriptionForToast} (${getWarehouseName(warehouseId)}) cambiada a ${newCount}.` });
     }
     // Reset confirmation state
     setIsConfirmDialogOpen(false);
     setConfirmProductBarcode(null);
     setConfirmAction(null);
- }, [currentWarehouseId, confirmProductBarcode, confirmAction, toast]);
+ }, [currentWarehouseId, confirmProductBarcode, confirmAction, toast, warehouses]);
 
 
  // --- Deletion Handlers ---
@@ -501,13 +520,13 @@ export default function Home() {
         setCountingList(prevList => prevList.filter(p => !(p.barcode === productToDelete.barcode && p.warehouseId === warehouseId)));
         toast({
             title: "Producto eliminado",
-            description: `${descriptionForToast} ha sido eliminado del inventario actual (${WAREHOUSES.find(w=>w.id===warehouseId)?.name}).`,
+            description: `${descriptionForToast} ha sido eliminado del inventario actual (${getWarehouseName(warehouseId)}).`,
             variant: "default"
         });
     }
     setIsDeleteDialogOpen(false);
     setProductToDelete(null);
- }, [productToDelete, toast]);
+ }, [productToDelete, toast, warehouses]);
 
  // --- Export Functionality ---
  const handleExport = useCallback(() => {
@@ -519,7 +538,7 @@ export default function Home() {
         // Add warehouse name to exported data
         const dataToExport = countingList.map(p => ({
             ...p,
-            warehouseName: WAREHOUSES.find(w => w.id === p.warehouseId)?.name || p.warehouseId // Add warehouse name
+            warehouseName: getWarehouseName(p.warehouseId) // Add warehouse name
         }));
 
         const csvData = convertToCSV(dataToExport); // Pass modified data
@@ -532,12 +551,12 @@ export default function Home() {
         link.click();
         document.body.removeChild(link);
         URL.revokeObjectURL(link.href);
-        toast({ title: "Exportado", description: `Inventario para ${WAREHOUSES.find(w=>w.id===currentWarehouseId)?.name} exportado a CSV.` });
+        toast({ title: "Exportado", description: `Inventario para ${getWarehouseName(currentWarehouseId)} exportado a CSV.` });
     } catch (error) {
         console.error("Error exporting inventory:", error);
         toast({ variant: "destructive", title: "Error de Exportación", description: "No se pudo generar el archivo CSV." });
     }
- }, [countingList, currentWarehouseId, toast]);
+ }, [countingList, currentWarehouseId, toast, warehouses]);
 
  // Converts an array of DisplayProduct objects (with potential warehouseName) to a CSV string
  const convertToCSV = (data: (DisplayProduct & { warehouseName?: string })[]) => {
@@ -594,16 +613,16 @@ export default function Home() {
         });
       });
 
-      toast({ title: "Stock Actualizado", description: `Los stocks para ${WAREHOUSES.find(w=>w.id===currentWarehouseId)?.name} han sido actualizados.` });
+      toast({ title: "Stock Actualizado", description: `Los stocks para ${getWarehouseName(currentWarehouseId)} han sido actualizados.` });
       console.log("Stock counts refreshed for warehouse:", currentWarehouseId);
 
     } catch (error) {
       console.error(`Error refreshing stock counts for warehouse ${currentWarehouseId}:`, error);
-      toast({ variant: "destructive", title: "Error al Actualizar Stock", description: `No se pudieron actualizar los stocks desde la base de datos para ${WAREHOUSES.find(w=>w.id===currentWarehouseId)?.name}.` });
+      toast({ variant: "destructive", title: "Error al Actualizar Stock", description: `No se pudieron actualizar los stocks desde la base de datos para ${getWarehouseName(currentWarehouseId)}. ` });
     } finally {
       setIsRefreshingStock(false);
     }
- }, [currentWarehouseId, toast]);
+ }, [currentWarehouseId, toast, warehouses]);
 
 
     // --- Dialog Openers ---
@@ -632,6 +651,27 @@ export default function Home() {
             // Data loading for the new warehouse is handled by the useEffect watching currentWarehouseId
         }
     };
+
+
+     const handleAddWarehouse = (newWarehouse: { id: string; name: string }) => {
+    setWarehouses(prevWarehouses => {
+      const isDuplicate = prevWarehouses.some(warehouse => warehouse.id === newWarehouse.id);
+      if (isDuplicate) {
+        toast({
+          variant: 'destructive',
+          title: 'Error',
+          description: 'Warehouse ID already exists. Please use a unique ID.',
+        });
+        return prevWarehouses; // Return the previous state without modifications
+      }
+      return [...prevWarehouses, newWarehouse];
+    });
+  };
+
+  const handleUpdateWarehouses = (updatedWarehouses: { id: string; name: string }[]) => {
+    setWarehouses(updatedWarehouses);
+  };
+
 
     // --- Camera Scanning Logic ---
 
@@ -787,7 +827,7 @@ export default function Home() {
                         <DialogTitle className="text-center text-xl font-semibold text-gray-800 dark:text-gray-200">
                             <span className="flex items-center justify-center gap-2">
                                 <WarehouseIcon className="h-6 w-6 text-teal-600"/>
-                                {WAREHOUSES.find(w => w.id === currentWarehouseId)?.name}
+                                {getWarehouseName(currentWarehouseId)}
                             </span>
                              Ajustar Cantidad ({product.description})
                         </DialogTitle>
@@ -845,7 +885,7 @@ export default function Home() {
                        <DialogTitle className="text-center text-xl font-semibold text-gray-800 dark:text-gray-200">
                              <span className="flex items-center justify-center gap-2">
                                 <WarehouseIcon className="h-6 w-6 text-teal-600"/>
-                                {WAREHOUSES.find(w => w.id === currentWarehouseId)?.name}
+                                {getWarehouseName(currentWarehouseId)}
                             </span>
                            Ajustar Stock ({product.description})
                        </DialogTitle>
@@ -914,7 +954,7 @@ export default function Home() {
                <AlertDialogHeader>
                    <AlertDialogTitle>Confirmar Eliminación</AlertDialogTitle>
                    <AlertDialogDescription>
-                       ¿Estás seguro de que deseas eliminar el producto "{productToDelete?.description}" del inventario actual ({WAREHOUSES.find(w=>w.id===productToDelete?.warehouseId)?.name})? Esta acción no se puede deshacer.
+                       ¿Estás seguro de que deseas eliminar el producto "{productToDelete?.description}" del inventario actual ({getWarehouseName(productToDelete?.warehouseId)})? Esta acción no se puede deshacer.
                    </AlertDialogDescription>
                </AlertDialogHeader>
                <AlertDialogFooter>
@@ -982,7 +1022,7 @@ export default function Home() {
                     <SelectValue placeholder="Seleccionar Almacén" />
                 </SelectTrigger>
                 <SelectContent>
-                    {WAREHOUSES.map((warehouse) => (
+                    {warehouses.map((warehouse) => (
                     <SelectItem key={warehouse.id} value={warehouse.id}>
                         {warehouse.name}
                     </SelectItem>
@@ -999,13 +1039,19 @@ export default function Home() {
               value="Contador"
               className="data-[state=active]:bg-teal-600 data-[state=active]:text-white data-[state=inactive]:text-gray-600 dark:data-[state=inactive]:text-gray-300 py-2 px-4 rounded-md transition-colors duration-200 ease-in-out font-medium"
            >
-               Contador ({WAREHOUSES.find(w => w.id === currentWarehouseId)?.name})
+               Contador ({getWarehouseName(currentWarehouseId)})
            </TabsTrigger>
            <TabsTrigger
               value="Base de Datos"
               className="data-[state=active]:bg-teal-600 data-[state=active]:text-white data-[state=inactive]:text-gray-600 dark:data-[state=inactive]:text-gray-300 py-2 px-4 rounded-md transition-colors duration-200 ease-in-out font-medium"
             >
                 Base de Datos General
+            </TabsTrigger>
+              <TabsTrigger
+              value="Almacenes"
+              className="data-[state=active]:bg-teal-600 data-[state=active]:text-white data-[state=inactive]:text-gray-600 dark:data-[state=inactive]:text-gray-300 py-2 px-4 rounded-md transition-colors duration-200 ease-in-out font-medium"
+            >
+                Almacenes
             </TabsTrigger>
          </TabsList>
 
@@ -1063,7 +1109,7 @@ export default function Home() {
 
            <ScrollArea className="h-[calc(100vh-310px)] md:h-[calc(100vh-280px)] border rounded-lg shadow-sm bg-white dark:bg-gray-800">
             <Table>
-               <TableCaption className="py-3 text-sm text-gray-500 dark:text-gray-400">Inventario para {WAREHOUSES.find(w => w.id === currentWarehouseId)?.name}.</TableCaption>
+               <TableCaption className="py-3 text-sm text-gray-500 dark:text-gray-400">Inventario para {getWarehouseName(currentWarehouseId)}.</TableCaption>
                <TableHeader className="bg-gray-50 dark:bg-gray-700 sticky top-0 z-10 shadow-sm">
                  <TableRow>
                    <TableHead className="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider w-[35%] sm:w-2/5">Descripción</TableHead>
@@ -1101,7 +1147,7 @@ export default function Home() {
                      <TableCell
                          className="px-4 py-3 text-center text-gray-600 dark:text-gray-300 cursor-pointer hover:text-teal-700 dark:hover:text-teal-400 hover:font-semibold tabular-nums"
                          onClick={() => handleOpenStockDialog(product)}
-                         title={`Editar stock para ${product.description} en ${WAREHOUSES.find(w=>w.id===currentWarehouseId)?.name}`}
+                         title={`Editar stock para ${product.description} en ${getWarehouseName(currentWarehouseId)}`}
                          aria-label={`Editar stock para ${product.description}`}
                      >
                            {product.stock ?? 0}
@@ -1109,7 +1155,7 @@ export default function Home() {
                      <TableCell
                        className="px-4 py-3 text-center text-gray-600 dark:text-gray-300 cursor-pointer hover:text-teal-700 dark:hover:text-teal-400 hover:font-semibold tabular-nums"
                        onClick={() => handleOpenQuantityDialog(product)}
-                       title={`Editar cantidad para ${product.description} en ${WAREHOUSES.find(w=>w.id===currentWarehouseId)?.name}`}
+                       title={`Editar cantidad para ${product.description} en ${getWarehouseName(currentWarehouseId)}`}
                         aria-label={`Editar cantidad para ${product.description}`}
                      >
                        {product.count ?? 0}
@@ -1168,7 +1214,7 @@ export default function Home() {
                  disabled={countingList.length === 0 || isDbLoading}
                  aria-label="Exportar inventario actual a CSV"
              >
-                  Exportar Inventario ({WAREHOUSES.find(w=>w.id===currentWarehouseId)?.name})
+                  Exportar Inventario ({getWarehouseName(currentWarehouseId)})
              </Button>
           </div>
         </TabsContent>
@@ -1177,6 +1223,14 @@ export default function Home() {
            {/* Pass a function to trigger refresh or manage DB state */}
            <ProductDatabase />
          </TabsContent>
+
+          <TabsContent value="Almacenes">
+             <WarehouseManagement
+                warehouses={warehouses}
+                onAddWarehouse={handleAddWarehouse}
+                onUpdateWarehouses={handleUpdateWarehouses}
+              />
+           </TabsContent>
       </Tabs>
 
             {renderQuantityDialog()}
@@ -1187,5 +1241,3 @@ export default function Home() {
     </div>
   );
 }
-
-

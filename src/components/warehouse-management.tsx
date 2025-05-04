@@ -36,6 +36,7 @@ import {
 } from "@/components/ui/dialog"; // Import Dialog components
 import { Trash, Edit, Plus, Warehouse as WarehouseIcon } from "lucide-react"; // Ensure you have these icons
 import { cn } from "@/lib/utils";
+import { format } from 'date-fns'; // Import format function
 
 interface Warehouse {
   id: string;
@@ -76,9 +77,10 @@ export const WarehouseManagement: React.FC<WarehouseManagementProps> = ({
       return;
     }
 
-    // If ID is empty, generate a timestamp
+    // If ID is empty, generate a timestamp ID including date and time
     if (!warehouseId) {
-      warehouseId = `wh_${Date.now().toString()}`;
+       // Format: YYYYMMDD_HHMMSS
+       warehouseId = `wh_${format(new Date(), 'yyyyMMdd_HHmmss')}`;
        toast({
         title: "ID Generado",
         description: `Se ha generado un ID de almacén automático: ${warehouseId}`,
@@ -185,7 +187,7 @@ export const WarehouseManagement: React.FC<WarehouseManagementProps> = ({
             />
           </div>
            <p className="text-xs text-muted-foreground dark:text-gray-400 mt-1">
-                Si deja el ID vacío, se generará uno automáticamente (ej. wh_17...). Si lo introduce, debe ser único y sin espacios (se convertirá a minúsculas).
+                Si deja el ID vacío, se generará uno automáticamente (ej. wh_20240729_103055). Si lo introduce, debe ser único y sin espacios (se convertirá a minúsculas).
            </p>
           <Button onClick={handleAddWarehouse}>
             <Plus className="mr-2 h-4 w-4" />

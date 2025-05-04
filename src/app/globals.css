@@ -8,76 +8,80 @@ body {
 
 @layer base {
   :root {
-    --background: 220 43% 97%;
-    --foreground: 180 2% 12%;
+    /* Eye-friendly Light Theme */
+    --background: 210 40% 98%; /* Very light cool grey */
+    --foreground: 215 15% 30%; /* Dark slate grey */
     --card: 0 0% 100%;
-    --card-foreground: 0 0% 3.9%;
+    --card-foreground: 215 15% 30%;
     --popover: 0 0% 100%;
-    --popover-foreground: 0 0% 3.9%;
-    --primary: 180 100% 25%;
-    --primary-foreground: 0 0% 100%;
-    --secondary: 0 0% 96.1%;
-    --secondary-foreground: 0 0% 9%;
-    --muted: 0 0% 96.1%;
-    --muted-foreground: 0 0% 45.1%;
-    --accent: 161 72% 56%;
-    --accent-foreground: 0 0% 100%;
-    --destructive: 0 84.2% 60.2%;
+    --popover-foreground: 215 15% 30%;
+    --primary: 195 60% 45%; /* Soft teal/blue */
+    --primary-foreground: 210 40% 98%; /* Light background color */
+    --secondary: 210 30% 94%; /* Light grey */
+    --secondary-foreground: 215 15% 30%;
+    --muted: 210 30% 94%;
+    --muted-foreground: 215 10% 50%; /* Muted grey */
+    --accent: 180 55% 60%; /* Brighter soft teal */
+    --accent-foreground: 215 15% 15%; /* Darker for contrast on accent */
+    --destructive: 0 70% 55%; /* Adjusted red */
     --destructive-foreground: 0 0% 98%;
-    --border: 0 0% 89.8%;
-    --input: 0 0% 89.8%;
-    --ring: 0 0% 3.9%;
-    --chart-1: 12 76% 61%;
-    --chart-2: 173 58% 39%;
-    --chart-3: 197 37% 24%;
+    --border: 210 20% 88%; /* Lighter border */
+    --input: 210 20% 88%;
+    --ring: 195 60% 55%; /* Ring color matching primary */
+    --chart-1: 195 60% 45%;
+    --chart-2: 180 55% 60%;
+    --chart-3: 210 50% 55%;
     --chart-4: 43 74% 66%;
     --chart-5: 27 87% 67%;
     --radius: 0.5rem;
-    --sidebar-background: 0 0% 98%;
-    --sidebar-foreground: 240 5.3% 26.1%;
-    --sidebar-primary: 240 5.9% 10%;
+
+    /* Sidebar (can keep similar or adjust slightly) */
+    --sidebar-background: 210 35% 96%;
+    --sidebar-foreground: 215 15% 35%;
+    --sidebar-primary: 195 60% 40%; /* Slightly darker primary for sidebar */
     --sidebar-primary-foreground: 0 0% 98%;
-    --sidebar-accent: 240 4.8% 95.9%;
-    --sidebar-accent-foreground: 240 5.9% 10%;
-    --sidebar-border: 220 13% 91%;
-    --sidebar-ring: 217.2 91.2% 59.8%;
+    --sidebar-accent: 210 30% 90%;
+    --sidebar-accent-foreground: 195 60% 35%;
+    --sidebar-border: 210 20% 85%;
+    --sidebar-ring: 195 60% 55%;
   }
+
   .dark {
-    --background: 205 12% 12%;
-    --foreground: 0 0% 98%;
-    --card: 0 0% 3.9%;
-    --card-foreground: 0 0% 98%;
-    --popover: 0 0% 3.9%;
-    --popover-foreground: 0 0% 98%;
-    --primary: 207 90% 75%;
-    --primary-foreground: 0 0% 0%;
-    --secondary: 0 0% 14.9%;
-    --secondary-foreground: 0 0% 98%;
-    --muted: 0 0% 14.9%;
-    --muted-foreground: 0 0% 63.9%;
-    --accent: 180 100% 25%;
-    --accent-foreground: 0 0% 98%;
-    --destructive: 0 62.8% 30.6%;
+     /* Eye-friendly Dark Theme */
+    --background: 215 20% 15%; /* Dark blue-grey */
+    --foreground: 210 15% 90%; /* Light grey */
+    --card: 215 20% 18%; /* Slightly lighter card background */
+    --card-foreground: 210 15% 90%;
+    --popover: 215 20% 18%;
+    --popover-foreground: 210 15% 90%;
+    --primary: 205 70% 65%; /* Lighter muted blue */
+    --primary-foreground: 215 20% 10%; /* Dark background for contrast */
+    --secondary: 215 15% 25%; /* Darker secondary */
+    --secondary-foreground: 210 15% 85%;
+    --muted: 215 15% 25%;
+    --muted-foreground: 210 10% 60%; /* Muted light grey */
+    --accent: 195 60% 55%; /* Slightly brighter muted blue */
+    --accent-foreground: 210 15% 95%; /* Lighter for contrast on accent */
+    --destructive: 0 60% 50%; /* Adjusted dark red */
     --destructive-foreground: 0 0% 98%;
-    --border: 0 0% 14.9%;
-    --input: 0 0% 14.9%;
-    --ring: 0 0% 83.1%;
-    --chart-1: 220 70% 50%;
-    --chart-2: 160 60% 45%;
-    --chart-3: 30 80% 55%;
-    --chart-4: 280 65% 60%;
-    --chart-5: 340 75% 55%;
-    --sidebar-background: 240 5.9% 10%;
-    --sidebar-foreground: 240 4.8% 95.9%;
-    --sidebar-primary: 224.3 76.3% 48%;
-    --sidebar-primary-foreground: 0 0% 100%;
-    --sidebar-accent: 240 3.7% 15.9%;
-    --sidebar-accent-foreground: 240 4.8% 95.9%;
-    --sidebar-border: 240 3.7% 15.9%;
-    --sidebar-ring: 217.2 91.2% 59.8%;
-    --light-blue: #E3F2FD;
-    --white: #FFFFFF;
-    --teal: #008080;
+    --border: 215 15% 30%; /* Darker border */
+    --input: 215 15% 30%;
+    --ring: 205 70% 70%; /* Ring color matching primary */
+    --chart-1: 205 70% 65%;
+    --chart-2: 195 60% 55%;
+    --chart-3: 215 50% 60%;
+    --chart-4: 43 70% 60%;
+    --chart-5: 27 80% 65%;
+
+     /* Sidebar Dark (can keep similar or adjust slightly) */
+    --sidebar-background: 215 20% 12%; /* Slightly darker sidebar */
+    --sidebar-foreground: 210 15% 88%;
+    --sidebar-primary: 205 70% 60%; /* Slightly adjusted sidebar primary */
+    --sidebar-primary-foreground: 215 20% 8%;
+    --sidebar-accent: 215 15% 22%;
+    --sidebar-accent-foreground: 205 70% 70%;
+    --sidebar-border: 215 15% 28%;
+    --sidebar-ring: 205 70% 70%;
   }
 }
 
@@ -87,6 +91,8 @@ body {
   }
   body {
     @apply bg-background text-foreground;
+    /* Add transition for smoother theme changes */
+    transition: background-color 0.3s ease, color 0.3s ease;
   }
 }
 
@@ -96,7 +102,30 @@ body {
     max-width: 90%; /* Adjust as needed */
   }
 
-  .md\:w-\[400px\] {
-    width: 600px; /* Adjust as needed */
+  /* Increase width for better desktop layout if needed */
+  .md\:w-\[800px\] {
+    width: 800px;
   }
+   .lg\:w-\[1000px\] {
+      width: 1000px;
+   }
+
 }
+
+/* Additional styling adjustments for better visual comfort */
+h1, h2, h3, h4, h5, h6 {
+    letter-spacing: -0.02em; /* Slightly tighter letter spacing for headings */
+}
+
+input, button, select, textarea {
+    /* Ensure interactive elements have clear focus states */
+    @apply focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 focus:ring-offset-background;
+}
+
+/* Slightly softer shadows */
+.shadow-sm { box-shadow: 0 1px 2px 0 hsla(var(--foreground) / 0.04); }
+.shadow { box-shadow: 0 1px 3px 0 hsla(var(--foreground) / 0.06), 0 1px 2px -1px hsla(var(--foreground) / 0.05); }
+.shadow-md { box-shadow: 0 4px 6px -1px hsla(var(--foreground) / 0.06), 0 2px 4px -2px hsla(var(--foreground) / 0.05); }
+.shadow-lg { box-shadow: 0 10px 15px -3px hsla(var(--foreground) / 0.06), 0 4px 6px -4px hsla(var(--foreground) / 0.05); }
+.shadow-xl { box-shadow: 0 20px 25px -5px hsla(var(--foreground) / 0.06), 0 8px 10px -6px hsla(var(--foreground) / 0.05); }
+.shadow-inner { box-shadow: inset 0 2px 4px 0 hsla(var(--foreground) / 0.04); }

@@ -453,7 +453,7 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = ({
       setIsAlertOpen(true);
   }, [databaseProducts, toast]);
 
- const handleDeleteConfirmation = useCallback(() => {
+  const handleDeleteConfirmation = useCallback(() => {
     console.log(`Confirming action: ${alertAction}`);
     if (alertAction === 'deleteProduct' && productToDelete) {
       handleDeleteProduct(productToDelete.barcode); // Pass barcode

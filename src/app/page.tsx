@@ -724,10 +724,16 @@ export default function Home() {
         <TabsContent value="Contador">
           <div className="flex items-center mb-4 gap-2">
             <Input
-              type="text"
+              type="number" // Change type to number for numeric input only
+              pattern="\d*" // Add pattern to reinforce numeric input on mobile
+              inputMode="numeric" // Hint for mobile keyboards
               placeholder="Escanear o ingresar código de barras"
               value={barcode}
-              onChange={(e) => setBarcode(e.target.value)}
+              onChange={(e) => {
+                  // Allow only digits
+                  const numericValue = e.target.value.replace(/\D/g, '');
+                  setBarcode(numericValue);
+              }}
               className="mr-2 flex-grow bg-yellow-100 border-teal-300 focus:ring-teal-500 focus:border-teal-500 rounded-md shadow-sm"
               ref={barcodeInputRef}
               onKeyDown={handleKeyDown}

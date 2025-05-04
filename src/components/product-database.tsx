@@ -1,29 +1,26 @@
 "use client";
 
-// Ensure this file starts with "use client" if it uses client-side hooks like useState, useEffect, etc.
-import type { ProductDetail, InventoryItem } from '@/types/product'; // Keep DisplayProduct if used elsewhere, but focus on Detail and Inventory
+import type { ProductDetail, InventoryItem } from '@/types/product';
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
-// Import updated DB helpers
 import {
     addOrUpdateProductDetail,
     getAllProductDetails,
-    deleteProductCompletely, // Use this for full deletion
-    clearDatabaseCompletely, // Use this for full clear
+    deleteProductCompletely,
+    clearDatabaseCompletely,
     addOrUpdateInventoryItem,
-    getInventoryItem, // Need this to get current stock for editing
+    getInventoryItem,
     getAllInventoryItems,
     addInventoryItemsInBulk,
     addProductDetailsInBulk,
-    // openDB // Keep openDB if needed for direct access, but prefer helpers
 } from '@/lib/indexeddb-helpers';
 import {
     Edit, FileDown, Filter, Save, Trash, Upload, AlertCircle, Warehouse as WarehouseIcon
 } from "lucide-react";
-import Papa from 'papaparse'; // Using PapaParse for robust CSV parsing
-import * as React from "react"; // Import React
+import Papa from 'papaparse';
+import * as React from "react";
 import { useCallback, useEffect, useState } from "react";
 import { useForm } from "react-hook-form";
 import * as z from "zod";
@@ -39,7 +36,7 @@ import {
 } from "@/components/ui/dialog";
 import {
     Form, FormControl, FormDescription as FormDescUi, FormField, FormItem, FormLabel, FormMessage
-} from "@/components/ui/form"; // Renamed FormDescription import
+} from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Progress } from "@/components/ui/progress";
@@ -50,31 +47,259 @@ import {
 import {
     Table, TableBody, TableCaption, TableCell, TableHead, TableHeader, TableRow
 } from "@/components/ui/table";
-// import { Textarea } from "@/components/ui/textarea"; // Not used?
-import { format } from 'date-fns'; // Keep format if needed for display
+import { format } from 'date-fns';
 
-// Schema for editing Product Detail - include stock for add/edit
+// --- Zod Schema ---
 const productDetailSchema = z.object({
   barcode: z.string().min(1, { message: "El código de barras es requerido." }),
   description: z.string().min(1, { message: "La descripción es requerida." }),
   provider: z.string().optional(),
-  stock: z.preprocess( // Keep preprocess for string to number conversion
+  stock: z.preprocess(
     (val) => (val === "" || val === undefined || val === null ? 0 : Number(val)),
-    z.number().min(0, { message: "El stock debe ser mayor o igual a 0." }) // No optional/default needed if always present
+    z.number().min(0, { message: "El stock debe ser mayor o igual a 0." })
   ),
 });
 type ProductDetailValues = z.infer<typeof productDetailSchema>;
 
+// --- Helper Components ---
 
-// Removed props for databaseProducts/setDatabaseProducts as state is managed locally now
-interface ProductDatabaseProps {
-    // Add props if needed for interaction, e.g., onDatabaseUpdate callback
+interface ProductTableProps {
+  productDetails: ProductDetail[];
+  inventoryItems: InventoryItem[];
+  isLoading: boolean;
+  searchTerm: string;
+  selectedProviderFilter: string;
+  onEdit: (detail: ProductDetail) => void;
 }
+
+const ProductTable: React.FC<ProductTableProps> = ({
+  productDetails,
+  inventoryItems,
+  isLoading,
+  searchTerm,
+  selectedProviderFilter,
+  onEdit,
+}) => {
+    const filteredDetails = React.useMemo(() => {
+        return productDetails.filter(detail => {
+            const searchTermLower = searchTerm.toLowerCase();
+            const matchesSearch = searchTerm === "" ||
+                                (detail.barcode || '').toLowerCase().includes(searchTermLower) ||
+                                (detail.description || '').toLowerCase().includes(searchTermLower) ||
+                                (detail.provider || '').toLowerCase().includes(searchTermLower);
+            const matchesProvider = selectedProviderFilter === 'all' || (detail.provider || "Desconocido") === selectedProviderFilter;
+            return matchesSearch && matchesProvider;
+        });
+    }, [productDetails, searchTerm, selectedProviderFilter]);
+
+  return (
+     <ScrollArea className="border rounded-lg shadow-sm h-[calc(100vh-480px)] md:h-[calc(100vh-420px)] bg-white dark:bg-gray-800">
+         <Table>
+            <TableCaption className="dark:text-gray-400">
+               {isLoading ? "Cargando..." :
+               filteredDetails.length === 0
+                 ? (productDetails.length > 0 ? 'No hay productos que coincidan con la búsqueda/filtro.' : 'La base de datos está vacía.')
+                 : `Mostrando ${filteredDetails.length} de ${productDetails.length} productos.`
+               }
+           </TableCaption>
+            <TableHeader className="sticky top-0 bg-background dark:bg-gray-700 z-10 shadow-sm">
+             <TableRow>
+               <TableHead className="w-[25%] px-3 py-3 dark:text-gray-300">Código Barras</TableHead>
+               <TableHead className="w-[40%] px-3 py-3 dark:text-gray-300">Descripción (Click para editar)</TableHead>
+               <TableHead className="w-[20%] px-3 py-3 hidden md:table-cell dark:text-gray-300">Proveedor</TableHead>
+                <TableHead className="w-[15%] px-3 py-3 text-right dark:text-gray-300">Stock Total</TableHead>
+             </TableRow>
+           </TableHeader>
+           <TableBody>
+             {isLoading ? (
+                 <TableRow>
+                     <TableCell colSpan={4} className="text-center py-10 text-muted-foreground dark:text-gray-400">
+                         Cargando datos...
+                     </TableCell>
+                 </TableRow>
+             ) : filteredDetails.length === 0 ? (
+                   <TableRow>
+                       <TableCell colSpan={4} className="text-center py-10 text-muted-foreground dark:text-gray-400">
+                           {productDetails.length > 0 ? "No hay productos que coincidan." : "La base de datos está vacía."}
+                       </TableCell>
+                   </TableRow>
+               ) : (
+                   filteredDetails.map((detail) => {
+                       const totalStock = inventoryItems
+                           .filter(item => item.barcode === detail.barcode)
+                           .reduce((sum, item) => sum + (item.stock || 0), 0);
+
+                       return (
+                           <TableRow key={detail.barcode} className="hover:bg-muted/50 dark:hover:bg-gray-700 text-sm transition-colors duration-150">
+                               <TableCell className="px-3 py-2 font-medium dark:text-gray-100" aria-label={`Código ${detail.barcode}`}>
+                                   {detail.barcode}
+                               </TableCell>
+                               <TableCell
+                                   className="px-3 py-2 cursor-pointer hover:text-primary dark:hover:text-teal-400 hover:underline dark:text-gray-100"
+                                   onClick={() => onEdit(detail)}
+                                   aria-label={`Editar producto ${detail.description}`}
+                                   title={`Editar ${detail.description}`}
+                               >
+                                   {detail.description}
+                               </TableCell>
+                               <TableCell className="px-3 py-2 hidden md:table-cell text-muted-foreground dark:text-gray-300" aria-label={`Proveedor ${detail.provider}`}>
+                                   {detail.provider || 'N/A'}
+                               </TableCell>
+                                <TableCell className="px-3 py-2 text-right font-medium tabular-nums text-muted-foreground dark:text-gray-300" aria-label={`Stock total ${totalStock}`}>
+                                  {totalStock}
+                                </TableCell>
+                           </TableRow>
+                       );
+                   })
+               )}
+           </TableBody>
+         </Table>
+       </ScrollArea>
+  );
+};
+
+interface EditProductDialogProps {
+  isOpen: boolean;
+  setIsOpen: (open: boolean) => void;
+  selectedDetail: ProductDetail | null;
+  setSelectedDetail: (detail: ProductDetail | null) => void;
+  onSubmit: (data: ProductDetailValues) => void;
+  onDelete: (barcode: string | null) => void;
+  isProcessing: boolean;
+  initialStock: number;
+}
+
+const EditProductDialog: React.FC<EditProductDialogProps> = ({
+  isOpen,
+  setIsOpen,
+  selectedDetail,
+  setSelectedDetail,
+  onSubmit,
+  onDelete,
+  isProcessing,
+  initialStock
+}) => {
+  const productDetailForm = useForm<ProductDetailValues>({
+    resolver: zodResolver(productDetailSchema),
+    defaultValues: { barcode: "", description: "", provider: "Desconocido", stock: 0 },
+  });
+  const { handleSubmit: handleDetailSubmit, reset: resetDetailForm, control: detailControl, setValue } = productDetailForm;
+
+   // Effect to update form values when selectedDetail changes or dialog opens
+   useEffect(() => {
+    if (isOpen && selectedDetail) {
+        resetDetailForm({
+            barcode: selectedDetail.barcode || "",
+            description: selectedDetail.description || "",
+            provider: selectedDetail.provider || "Desconocido",
+            stock: initialStock, // Use initialStock passed as prop
+        });
+    } else if (!isOpen) {
+         resetDetailForm({ barcode: "", description: "", provider: "Desconocido", stock: 0 });
+         setSelectedDetail(null); // Ensure selectedDetail is cleared when dialog closes
+    }
+   }, [isOpen, selectedDetail, resetDetailForm, initialStock, setSelectedDetail]); // Added initialStock and setSelectedDetail
+
+  const handleClose = () => {
+    setIsOpen(false);
+    // Resetting form and selectedDetail is handled by the useEffect above
+  };
+
+  return (
+    <Dialog open={isOpen} onOpenChange={(openState) => { if (!openState) handleClose(); else setIsOpen(true); }}>
+        <DialogContent className="sm:max-w-lg dark:bg-gray-800 dark:text-white">
+          <DialogHeader>
+            <DialogTitle className="dark:text-gray-100">{selectedDetail ? "Editar Producto" : "Agregar Nuevo Producto"}</DialogTitle>
+            <DialogDescription className="dark:text-gray-400">
+              {selectedDetail ? "Modifica los detalles del producto y su stock en el almacén principal." : "Añade un nuevo producto (detalle general) y su stock inicial para el almacén principal."}
+            </DialogDescription>
+          </DialogHeader>
+          <Form {...productDetailForm}>
+            <form onSubmit={handleDetailSubmit(onSubmit)} className="space-y-4 p-2">
+              <FormField
+                control={detailControl}
+                name="barcode"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel className="dark:text-gray-200">Código de Barras *</FormLabel>
+                    <FormControl>
+                       <Input type="text" {...field} readOnly={!!selectedDetail} aria-required="true" disabled={isProcessing} className="dark:bg-gray-700 dark:border-gray-600"/>
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+              <FormField
+                control={detailControl}
+                name="description"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel className="dark:text-gray-200">Descripción *</FormLabel>
+                    <FormControl>
+                       <Input type="text" {...field} aria-required="true" disabled={isProcessing} className="dark:bg-gray-700 dark:border-gray-600"/>
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+              <FormField
+                control={detailControl}
+                name="provider"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel className="dark:text-gray-200">Proveedor</FormLabel>
+                    <FormControl>
+                      <Input type="text" {...field} placeholder="Opcional" disabled={isProcessing} className="dark:bg-gray-700 dark:border-gray-600"/>
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+              <FormField
+                  control={detailControl}
+                  name="stock"
+                  render={({ field }) => (
+                  <FormItem>
+                      <FormLabel className="dark:text-gray-200">Stock (Almacén Principal) *</FormLabel>
+                      <FormControl>
+                      <Input type="number" {...field} aria-required="true" disabled={isProcessing} className="dark:bg-gray-700 dark:border-gray-600"/>
+                      </FormControl>
+                       <FormDescUi className="text-xs dark:text-gray-400">Este stock se aplica al almacén 'Principal'.</FormDescUi>
+                      <FormMessage />
+                  </FormItem>
+                  )}
+              />
+               <DialogFooter className="flex flex-col-reverse sm:flex-row sm:justify-between w-full pt-6 gap-2">
+                    {selectedDetail && (
+                        <Button
+                            type="button"
+                            variant="destructive"
+                            onClick={() => onDelete(selectedDetail.barcode)}
+                            className="sm:mr-auto"
+                            disabled={isProcessing}
+                        >
+                            <Trash className="mr-2 h-4 w-4" /> Eliminar Producto
+                        </Button>
+                    )}
+                    {!selectedDetail && <div className="sm:mr-auto"></div>}
+                    <div className="flex gap-2 justify-end">
+                         <Button type="button" variant="outline" onClick={handleClose} disabled={isProcessing} className="dark:text-gray-300 dark:border-gray-600 dark:hover:bg-gray-700">Cancelar</Button>
+                         <Button type="submit" disabled={isProcessing} className="dark:bg-teal-600 dark:hover:bg-teal-700">
+                             {isProcessing ? "Guardando..." : (selectedDetail ? <><Save className="mr-2 h-4 w-4" /> Guardar Cambios</> : "Agregar Producto")}
+                         </Button>
+                    </div>
+                </DialogFooter>
+            </form>
+          </Form>
+        </DialogContent>
+      </Dialog>
+  );
+};
 
 // --- Google Sheet Parsing Logic (Position-Based) ---
 const parseGoogleSheetUrl = (sheetUrl: string): { spreadsheetId: string | null; gid: string } => {
     try {
-        new URL(sheetUrl); // Basic URL validation
+        new URL(sheetUrl);
     } catch (error) {
         console.error("Invalid Google Sheet URL provided:", sheetUrl, error);
         throw new Error("URL de Hoja de Google inválida.");
@@ -83,7 +308,7 @@ const parseGoogleSheetUrl = (sheetUrl: string): { spreadsheetId: string | null; 
     const gidMatch = sheetUrl.match(/[#&]gid=([0-9]+)/);
 
     const spreadsheetId = spreadsheetIdMatch ? spreadsheetIdMatch[1] : null;
-    const gid = gidMatch ? gidMatch[1] : '0'; // Default to first sheet
+    const gid = gidMatch ? gidMatch[1] : '0';
 
     if (!spreadsheetId) {
          console.warn("Could not extract spreadsheet ID from URL:", sheetUrl);
@@ -92,7 +317,7 @@ const parseGoogleSheetUrl = (sheetUrl: string): { spreadsheetId: string | null; 
     return { spreadsheetId, gid };
 };
 
-// Updated function to parse both details and inventory (assuming specific sheet format)
+// Updated function to parse both details and inventory (position-based)
 async function fetchAndParseGoogleSheetData(sheetUrl: string): Promise<{ details: ProductDetail[], inventory: InventoryItem[] }> {
     const { spreadsheetId, gid } = parseGoogleSheetUrl(sheetUrl);
     const csvExportUrl = `https://docs.google.com/spreadsheets/d/${spreadsheetId}/export?format=csv&gid=${gid}`;
@@ -100,13 +325,11 @@ async function fetchAndParseGoogleSheetData(sheetUrl: string): Promise<{ details
 
     let response: Response;
     try {
-        // Bypass cache for fresh data
         const urlWithCacheBust = `${csvExportUrl}&_=${new Date().getTime()}`;
         response = await fetch(urlWithCacheBust, { cache: "no-store" });
     } catch (error: any) {
         console.error("Network error fetching Google Sheet:", error);
         let userMessage = "Error de red al obtener la hoja. Verifique su conexión y la URL.";
-        // Add more specific error details if possible
         if (error.message?.includes('Failed to fetch')) {
             userMessage += " Posible problema de CORS o conectividad, o la URL es incorrecta.";
         } else {
@@ -118,9 +341,8 @@ async function fetchAndParseGoogleSheetData(sheetUrl: string): Promise<{ details
     if (!response.ok) {
         const status = response.status;
         const statusText = response.statusText;
-        // Attempt to read the error body for more context
         const errorBody = await response.text().catch(() => "Could not read error response body.");
-        console.error(`Failed to fetch Google Sheet data: ${status} ${statusText}`, { url: csvExportUrl, body: errorBody.substring(0, 500) }); // Log first 500 chars of body
+        console.error(`Failed to fetch Google Sheet data: ${status} ${statusText}`, { url: csvExportUrl, body: errorBody.substring(0, 500) });
 
         let userMessage = `Error ${status} al obtener datos. `;
         if (status === 400) userMessage += "Verifique la URL y asegúrese de que el ID de la hoja (gid=...) sea correcto.";
@@ -134,7 +356,6 @@ async function fetchAndParseGoogleSheetData(sheetUrl: string): Promise<{ details
     const csvText = await response.text();
     console.log(`Successfully fetched CSV data (length: ${csvText.length}). Parsing...`);
 
-
      // --- Robust CSV Parsing Logic - Rely on Column Position ---
      const lines = csvText.split(/\r?\n/);
      if (lines.length < 1) {
@@ -144,7 +365,6 @@ async function fetchAndParseGoogleSheetData(sheetUrl: string): Promise<{ details
 
      const productDetails: ProductDetail[] = [];
      const inventoryItems: InventoryItem[] = [];
-     // Assuming the 'main' warehouse ID. Adjust if needed.
      const defaultWarehouseId = 'main';
 
       // Find header row index (skip potential empty leading lines)
@@ -166,7 +386,6 @@ async function fetchAndParseGoogleSheetData(sheetUrl: string): Promise<{ details
          const line = lines[i].trim();
          if (!line) continue; // Skip empty lines
 
-         // Parse using PapaParse for robustness with quotes and commas
          const result = Papa.parse<string[]>(line, { delimiter: ',', skipEmptyLines: true });
 
          if (result.errors.length > 0) {
@@ -191,7 +410,7 @@ async function fetchAndParseGoogleSheetData(sheetUrl: string): Promise<{ details
              console.warn(`Skipping row ${i + 1}: Missing or empty barcode (Column 1). Line: "${line}"`);
              continue;
          }
-          if (barcode.length > 100) { // Example validation
+          if (barcode.length > 100) {
              console.warn(`Skipping row ${i + 1}: Barcode too long (${barcode.length} chars). Line: "${line}"`);
              continue;
           }
@@ -205,15 +424,12 @@ async function fetchAndParseGoogleSheetData(sheetUrl: string): Promise<{ details
             stockMain = 0;
          }
 
-
-         // Add Product Detail
          productDetails.push({
              barcode: barcode,
              description: description,
              provider: provider,
          });
 
-         // Add Inventory Item for 'main' warehouse
          inventoryItems.push({
              barcode: barcode,
              warehouseId: defaultWarehouseId,
@@ -228,29 +444,24 @@ async function fetchAndParseGoogleSheetData(sheetUrl: string): Promise<{ details
 
 // --- React Component ---
 
-export const ProductDatabase: React.FC<ProductDatabaseProps> = () => {
+export const ProductDatabase: React.FC = () => {
   const { toast } = useToast();
-  const [productDetails, setProductDetails] = useState<ProductDetail[]>([]); // Local state for details
-  const [inventoryItems, setInventoryItems] = useState<InventoryItem[]>([]); // Local state for inventory items
-  const [isLoading, setIsLoading] = useState(true); // Loading state for initial DB load
-  const [isEditModalOpen, setIsEditModalOpen] = useState(false); // State for Add/Edit Detail Dialog
-  const [selectedDetail, setSelectedDetail] = useState<ProductDetail | null>(null); // Detail being edited
-  const [isAlertOpen, setIsAlertOpen] = useState(false); // State for Confirmation Dialogs
-  const [alertAction, setAlertAction] = useState<'deleteProduct' | 'clearDatabase' | null>(null); // Type of confirmation
-  const [productToDeleteBarcode, setProductToDeleteBarcode] = useState<string | null>(null); // Barcode for delete confirmation
+  const [productDetails, setProductDetails] = useState<ProductDetail[]>([]);
+  const [inventoryItems, setInventoryItems] = useState<InventoryItem[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const [isEditModalOpen, setIsEditModalOpen] = useState(false);
+  const [selectedDetail, setSelectedDetail] = useState<ProductDetail | null>(null);
+  const [initialStockForEdit, setInitialStockForEdit] = useState<number>(0); // State to hold stock for the edit dialog
+  const [isAlertOpen, setIsAlertOpen] = useState(false);
+  const [alertAction, setAlertAction] = useState<'deleteProduct' | 'clearDatabase' | null>(null);
+  const [productToDeleteBarcode, setProductToDeleteBarcode] = useState<string | null>(null);
   const [uploadProgress, setUploadProgress] = useState(0);
-  const [isProcessing, setIsProcessing] = useState(false); // Combined loading/processing state
-  const [processingStatus, setProcessingStatus] = useState<string>(""); // Detailed status message
+  const [isProcessing, setIsProcessing] = useState(false);
+  const [processingStatus, setProcessingStatus] = useState<string>("");
   const [googleSheetUrl, setGoogleSheetUrl] = useState("");
   const [searchTerm, setSearchTerm] = useState("");
   const [selectedProviderFilter, setSelectedProviderFilter] = useState<string>("all");
-  const isMobile = useIsMobile();
-
-  const productDetailForm = useForm<ProductDetailValues>({
-    resolver: zodResolver(productDetailSchema),
-    defaultValues: { barcode: "", description: "", provider: "Desconocido", stock: 0 }, // Include stock default
-  });
-  const { handleSubmit: handleDetailSubmit, reset: resetDetailForm, control: detailControl, setValue: setDetailValue } = productDetailForm;
+  const isMobile = useIsMobile(); // Use hook if needed for responsiveness
 
   // Load initial data from IndexedDB on mount
   const loadInitialData = useCallback(async () => {
@@ -259,7 +470,7 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = () => {
     try {
         const [details, inventory] = await Promise.all([
             getAllProductDetails(),
-            getAllInventoryItems() // Load all inventory items initially
+            getAllInventoryItems()
         ]);
         setProductDetails(details);
         setInventoryItems(inventory);
@@ -276,12 +487,12 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = () => {
     loadInitialData();
   }, [loadInitialData]);
 
-  // --- CRUD Handlers (Interacting with IndexedDB and Local State) ---
+  // --- CRUD Handlers ---
 
- const handleAddOrUpdateDetail = useCallback(async (data: ProductDetailValues) => {
+ const handleAddOrUpdateDetailSubmit = useCallback(async (data: ProductDetailValues) => {
     const isUpdating = !!selectedDetail;
     const detailData: ProductDetail = {
-        barcode: isUpdating ? selectedDetail.barcode : data.barcode.trim(), // Keep original barcode on update
+        barcode: isUpdating ? selectedDetail.barcode : data.barcode.trim(),
         description: data.description.trim() || `Producto ${data.barcode.trim()}`,
         provider: data.provider?.trim() || "Desconocido",
     };
@@ -294,27 +505,24 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = () => {
     setIsProcessing(true);
     setProcessingStatus(isUpdating ? "Actualizando producto..." : "Agregando producto...");
     try {
-        // Add or update the product detail
         await addOrUpdateProductDetail(detailData);
 
-        // Get current count for the item, default to 0 if not found
         let currentCount = 0;
         if (isUpdating) {
             const existingItem = await getInventoryItem(detailData.barcode, 'main');
             currentCount = existingItem?.count ?? 0;
         }
 
-         // Add or update the inventory item for 'main' warehouse with the new stock
         const inventoryItemData: InventoryItem = {
             barcode: detailData.barcode,
-            warehouseId: 'main', // Assume 'main' warehouse for this edit form
-            stock: data.stock ?? 0, // Use stock from form
-            count: currentCount, // Keep existing count or 0 for new
+            warehouseId: 'main',
+            stock: data.stock ?? 0,
+            count: currentCount,
             lastUpdated: new Date().toISOString(),
         };
         await addOrUpdateInventoryItem(inventoryItemData);
 
-        // Update local product details state
+        // Update local states
         setProductDetails(prevDetails => {
             const existingIndex = prevDetails.findIndex(d => d.barcode === detailData.barcode);
             if (existingIndex > -1) {
@@ -322,11 +530,9 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = () => {
                 newDetails[existingIndex] = detailData;
                 return newDetails;
             } else {
-                return [detailData, ...prevDetails]; // Add new to top
+                return [detailData, ...prevDetails];
             }
         });
-
-        // Update local inventory state
          setInventoryItems(prevItems => {
              const existingInvIndex = prevItems.findIndex(i => i.barcode === inventoryItemData.barcode && i.warehouseId === inventoryItemData.warehouseId);
              if (existingInvIndex > -1) {
@@ -334,18 +540,15 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = () => {
                  newItems[existingInvIndex] = inventoryItemData;
                  return newItems;
              } else {
-                 return [...prevItems, inventoryItemData]; // Add new item
+                 return [...prevItems, inventoryItemData];
              }
          });
-
 
         toast({
             title: isUpdating ? "Producto Actualizado" : "Producto Agregado",
             description: `${detailData.description} (${detailData.barcode}) ha sido ${isUpdating ? 'actualizado (incluyendo stock en almacén principal)' : 'agregado con stock inicial'}.`,
         });
-        resetDetailForm({ barcode: "", description: "", provider: "Desconocido", stock: 0 }); // Reset form including stock
-        setIsEditModalOpen(false);
-        setSelectedDetail(null);
+        setIsEditModalOpen(false); // Close dialog on success
     } catch (error: any) {
         console.error("Detail/Inventory operation failed", error);
         let errorMessage = `Error al ${isUpdating ? 'actualizar' : 'guardar'} el producto.`;
@@ -359,7 +562,7 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = () => {
         setIsProcessing(false);
         setProcessingStatus("");
     }
-}, [selectedDetail, toast, resetDetailForm]); // Added getInventoryItem
+ }, [selectedDetail, toast]); // Dependencies
 
 
   const handleDeleteProduct = useCallback(async (barcode: string | null) => {
@@ -370,7 +573,7 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = () => {
       setIsProcessing(true);
       setProcessingStatus("Eliminando producto...");
       try {
-        await deleteProductCompletely(barcode); // Use the new helper
+        await deleteProductCompletely(barcode);
         // Update local states
         setProductDetails(prev => prev.filter(d => d.barcode !== barcode));
         setInventoryItems(prev => prev.filter(i => i.barcode !== barcode));
@@ -378,31 +581,26 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = () => {
           title: "Producto Eliminado",
           description: `El producto ${barcode} y todo su inventario asociado han sido eliminados.`,
         });
+        setIsEditModalOpen(false); // Close edit dialog if open for deleted product
+        setIsAlertOpen(false); // Close confirmation dialog
+        setProductToDeleteBarcode(null);
+        setAlertAction(null);
       } catch (error: any) {
         console.error("Failed to delete product completely", error);
         toast({ variant: "destructive", title: "Error al Eliminar", description: `No se pudo eliminar: ${error.message}` });
-      } finally {
-          setIsProcessing(false);
-          setProcessingStatus("");
-          setIsAlertOpen(false);
-          setProductToDeleteBarcode(null);
-          setAlertAction(null);
-          // Close edit dialog if it was for the deleted product
-          if (selectedDetail?.barcode === barcode) {
-             setIsEditModalOpen(false);
-             setSelectedDetail(null);
-             resetDetailForm();
-          }
+        setIsProcessing(false);
+        setProcessingStatus("");
       }
-  }, [toast, resetDetailForm, selectedDetail]);
+      // No finally needed here as it's handled within the try/catch now
+  }, [toast]);
 
 
   const handleClearDatabase = useCallback(async () => {
     setIsProcessing(true);
     setProcessingStatus("Borrando base de datos...");
     try {
-      await clearDatabaseCompletely(); // Use the new helper
-      setProductDetails([]); // Clear local states
+      await clearDatabaseCompletely();
+      setProductDetails([]);
       setInventoryItems([]);
       toast({ title: "Base de Datos Borrada", description: "Todos los productos y el inventario han sido eliminados." });
     } catch (error: any) {
@@ -420,21 +618,16 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = () => {
   // --- Dialog and Alert Triggers ---
 
   const handleOpenEditDialog = useCallback(async (detail: ProductDetail | null) => {
-    setSelectedDetail(detail);
     if (detail) {
-         // Fetch current stock for the 'main' warehouse when editing
          const mainInventory = await getInventoryItem(detail.barcode, 'main');
-        resetDetailForm({
-            barcode: detail.barcode || "",
-            description: detail.description || "",
-            provider: detail.provider || "Desconocido",
-            stock: mainInventory?.stock ?? 0, // Set stock from 'main' inventory or default 0
-        });
+         setInitialStockForEdit(mainInventory?.stock ?? 0); // Set initial stock for the dialog
+         setSelectedDetail(detail);
     } else {
-        resetDetailForm({ barcode: "", description: "", provider: "Desconocido", stock: 0 }); // Reset with stock for adding
+        setInitialStockForEdit(0); // Default stock for new product
+        setSelectedDetail(null);
     }
     setIsEditModalOpen(true);
-  }, [resetDetailForm, setDetailValue]); // Added setDetailValue, getInventoryItem
+  }, []);
 
   const triggerDeleteProductAlert = useCallback((barcode: string | null) => {
       if (!barcode) {
@@ -487,27 +680,32 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = () => {
             const { details, inventory } = await fetchAndParseGoogleSheetData(googleSheetUrl);
             const totalItemsToLoad = details.length + inventory.length;
              let itemsLoaded = 0;
+             const batchSize = 100; // Process in batches
 
              if (totalItemsToLoad === 0) {
                  toast({ title: "Hoja Vacía o Sin Datos Válidos", description: "No se encontraron productos válidos en la hoja.", variant: "default" });
              } else {
-                 // --- Incremental Database Update ---
+                 // --- Incremental Database Update in Batches ---
                  setProcessingStatus(`Actualizando detalles (${details.length})...`);
-                 await addProductDetailsInBulk(details);
-                 itemsLoaded += details.length;
-                 setUploadProgress(Math.round((itemsLoaded / totalItemsToLoad) * 100));
-
+                 for (let i = 0; i < details.length; i += batchSize) {
+                     const batch = details.slice(i, i + batchSize);
+                     await addProductDetailsInBulk(batch);
+                     itemsLoaded += batch.length;
+                     setUploadProgress(Math.round((itemsLoaded / totalItemsToLoad) * 100));
+                     await new Promise(resolve => setTimeout(resolve, 10)); // Small delay to prevent blocking UI thread
+                 }
 
                  setProcessingStatus(`Actualizando inventario (${inventory.length})...`);
-                 await addInventoryItemsInBulk(inventory);
-                  itemsLoaded += inventory.length;
-                 setUploadProgress(Math.round((itemsLoaded / totalItemsToLoad) * 100));
+                 for (let i = 0; i < inventory.length; i += batchSize) {
+                     const batch = inventory.slice(i, i + batchSize);
+                     await addInventoryItemsInBulk(batch);
+                     itemsLoaded += batch.length;
+                     setUploadProgress(Math.round((itemsLoaded / totalItemsToLoad) * 100));
+                      await new Promise(resolve => setTimeout(resolve, 10)); // Small delay
+                 }
 
                  console.log("Bulk add/update to IndexedDB completed.");
-
-                 // After DB update, refresh the local state
                  await loadInitialData(); // Reload data to reflect changes
-
                  toast({ title: "Carga Completa", description: `Se procesaron ${details.length} detalles y ${inventory.length} registros de inventario desde la Hoja de Google.` });
              }
 
@@ -521,7 +719,7 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = () => {
             setUploadProgress(0);
             console.log("Google Sheet load process finished.");
         }
-    }, [googleSheetUrl, toast, loadInitialData]); // Added loadInitialData dependency
+    }, [googleSheetUrl, toast, loadInitialData]);
 
 
   // --- Export and Filtering ---
@@ -531,9 +729,8 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = () => {
        toast({ title: "Base de Datos Vacía", description: "No hay detalles de producto para exportar." });
        return;
      }
-     // Exporting just the details for now. Exporting combined data needs more logic.
      try {
-         const csvData = convertDetailsToCSV(productDetails); // Use a dedicated CSV converter
+         const csvData = convertDetailsToCSV(productDetails);
          const blob = new Blob([`\uFEFF${csvData}`], { type: "text/csv;charset=utf-8;" });
          const link = document.createElement("a");
          link.href = URL.createObjectURL(blob);
@@ -547,7 +744,7 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = () => {
           console.error("Error exporting database details:", error);
           toast({ variant: "destructive", title: "Error de Exportación", description: "No se pudo generar el archivo CSV." });
      }
-   }, [productDetails, toast]); // Added toast dependency
+   }, [productDetails, toast]);
 
     // Converts product details data to CSV format string
     const convertDetailsToCSV = useCallback((data: ProductDetail[]) => {
@@ -565,21 +762,6 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = () => {
         ]);
         return [headers.join(","), ...rows.map((row) => row.join(","))].join("\n");
     }, []);
-
-
-   // Filter products based on search term and provider selection
-   // Now filters based on productDetails state
-   const filteredDetails = React.useMemo(() => {
-        return productDetails.filter(detail => {
-            const searchTermLower = searchTerm.toLowerCase();
-            const matchesSearch = searchTerm === "" ||
-                                (detail.barcode || '').toLowerCase().includes(searchTermLower) ||
-                                (detail.description || '').toLowerCase().includes(searchTermLower) ||
-                                (detail.provider || '').toLowerCase().includes(searchTermLower);
-            const matchesProvider = selectedProviderFilter === 'all' || (detail.provider || "Desconocido") === selectedProviderFilter;
-            return matchesSearch && matchesProvider;
-        });
-    }, [productDetails, searchTerm, selectedProviderFilter]);
 
     // Generate unique provider options from productDetails
     const providerOptions = React.useMemo(() => {
@@ -663,7 +845,7 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = () => {
              </Button>
          </div>
          <p id="google-sheet-info" className="text-xs text-muted-foreground dark:text-gray-400 mt-1">
-               Asegúrese de que la hoja sea pública ('Cualquier persona con el enlace'). Se leerán columnas por posición: 1:Cód. Barras, 2:Descripción, 3:Proveedor, 4:Stock (para almacén 'main').
+               Asegúrese de que la hoja sea pública ('Cualquier persona con el enlace puede ver'). Se leerán columnas por posición: 1:Cód. Barras, 2:Descripción, 3:Proveedor, 4:Stock (para almacén 'main').
          </p>
          {isProcessing && (
              <div className="mt-4 space-y-1">
@@ -687,193 +869,53 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = () => {
           )}
        </div>
 
-
-      {/* --- Confirmation Dialog (for Delete/Clear) --- */}
+       {/* Confirmation Dialog */}
        <AlertDialog open={isAlertOpen} onOpenChange={setIsAlertOpen}>
-         <AlertDialogContent>
-           <AlertDialogHeader>
-             <AlertDialogTitle>¿Estás realmente seguro?</AlertDialogTitle>
-             <AlertDialogDescription>
-               {alertAction === 'deleteProduct' && productToDeleteBarcode ?
-                 `Estás a punto de eliminar permanentemente el producto con código "${productToDeleteBarcode}" y todo su inventario asociado. Esta acción no se puede deshacer.`
-                  : alertAction === 'clearDatabase' ?
-                  "Estás a punto de eliminar TODOS los productos y el inventario de la base de datos local permanentemente. Esta acción no se puede deshacer."
-                  : "Esta acción no se puede deshacer."
-                 }
-             </AlertDialogDescription>
-           </AlertDialogHeader>
-           <AlertDialogFooter>
-             <AlertDialogCancel onClick={() => setIsAlertOpen(false)}>Cancelar</AlertDialogCancel>
-             <AlertDialogAction
-                 onClick={handleDeleteConfirmation}
-                 className={cn(
-                     (alertAction === 'clearDatabase' || alertAction === 'deleteProduct') && "bg-red-600 hover:bg-red-700"
-                 )}
-              >
-               {alertAction === 'deleteProduct' ? "Sí, Eliminar Producto" : alertAction === 'clearDatabase' ? "Sí, Borrar Todo" : "Confirmar"}
-             </AlertDialogAction>
-           </AlertDialogFooter>
-         </AlertDialogContent>
+           <AlertDialogContent>
+               <AlertDialogHeader>
+                   <AlertDialogTitle>¿Estás realmente seguro?</AlertDialogTitle>
+                   <AlertDialogDescription>
+                       {alertAction === 'deleteProduct' && productToDeleteBarcode ?
+                           `Estás a punto de eliminar permanentemente el producto con código "${productToDeleteBarcode}" y todo su inventario asociado. Esta acción no se puede deshacer.`
+                           : alertAction === 'clearDatabase' ?
+                               "Estás a punto de eliminar TODOS los productos y el inventario de la base de datos local permanentemente. Esta acción no se puede deshacer."
+                               : "Esta acción no se puede deshacer."
+                       }
+                   </AlertDialogDescription>
+               </AlertDialogHeader>
+               <AlertDialogFooter>
+                   <AlertDialogCancel onClick={() => setIsAlertOpen(false)}>Cancelar</AlertDialogCancel>
+                   <AlertDialogAction
+                       onClick={handleDeleteConfirmation}
+                       className={cn(alertAction === 'clearDatabase' && "bg-red-600 hover:bg-red-700")}
+                   >
+                       {alertAction === 'deleteProduct' ? "Sí, Eliminar Producto" : alertAction === 'clearDatabase' ? "Sí, Borrar Todo" : "Confirmar"}
+                   </AlertDialogAction>
+               </AlertDialogFooter>
+           </AlertDialogContent>
        </AlertDialog>
 
+      {/* Products Table */}
+       <ProductTable
+           productDetails={productDetails}
+           inventoryItems={inventoryItems}
+           isLoading={isLoading}
+           searchTerm={searchTerm}
+           selectedProviderFilter={selectedProviderFilter}
+           onEdit={handleOpenEditDialog}
+       />
 
-      {/* --- Products Table (Displays Product Details) --- */}
-       <ScrollArea className="border rounded-lg shadow-sm h-[calc(100vh-480px)] md:h-[calc(100vh-420px)] bg-white dark:bg-gray-800">
-         <Table>
-            <TableCaption className="dark:text-gray-400">
-               {isLoading ? "Cargando..." :
-               filteredDetails.length === 0
-                 ? (productDetails.length > 0 ? 'No hay productos que coincidan con la búsqueda/filtro.' : 'La base de datos está vacía.')
-                 : `Mostrando ${filteredDetails.length} de ${productDetails.length} productos.`
-               }
-           </TableCaption>
-            <TableHeader className="sticky top-0 bg-background dark:bg-gray-700 z-10 shadow-sm">
-             <TableRow>
-               <TableHead className="w-[25%] px-3 py-3 dark:text-gray-300">Código Barras</TableHead>
-               <TableHead className="w-[40%] px-3 py-3 dark:text-gray-300">Descripción (Click para editar)</TableHead>
-               <TableHead className="w-[20%] px-3 py-3 hidden md:table-cell dark:text-gray-300">Proveedor</TableHead>
-                <TableHead className="w-[15%] px-3 py-3 text-right dark:text-gray-300">Stock Total</TableHead>
-             </TableRow>
-           </TableHeader>
-           <TableBody>
-             {isLoading ? (
-                 <TableRow>
-                     <TableCell colSpan={4} className="text-center py-10 text-muted-foreground dark:text-gray-400">
-                         Cargando datos...
-                     </TableCell>
-                 </TableRow>
-             ) : filteredDetails.length === 0 ? (
-                   <TableRow>
-                       <TableCell colSpan={4} className="text-center py-10 text-muted-foreground dark:text-gray-400">
-                           {productDetails.length > 0 ? "No hay productos que coincidan." : "La base de datos está vacía."}
-                       </TableCell>
-                   </TableRow>
-               ) : (
-                   filteredDetails.map((detail) => {
-                      // Calculate total stock across all warehouses for display
-                       const totalStock = inventoryItems
-                           .filter(item => item.barcode === detail.barcode)
-                           .reduce((sum, item) => sum + (item.stock || 0), 0);
-
-                       return (
-                           <TableRow key={detail.barcode} className="hover:bg-muted/50 dark:hover:bg-gray-700 text-sm transition-colors duration-150">
-                               <TableCell className="px-3 py-2 font-medium dark:text-gray-100" aria-label={`Código ${detail.barcode}`}>
-                                   {detail.barcode}
-                               </TableCell>
-                               <TableCell
-                                   className="px-3 py-2 cursor-pointer hover:text-primary dark:hover:text-teal-400 hover:underline dark:text-gray-100"
-                                   onClick={() => handleOpenEditDialog(detail)}
-                                   aria-label={`Editar producto ${detail.description}`}
-                                   title={`Editar ${detail.description}`}
-                               >
-                                   {detail.description}
-                               </TableCell>
-                               <TableCell className="px-3 py-2 hidden md:table-cell text-muted-foreground dark:text-gray-300" aria-label={`Proveedor ${detail.provider}`}>
-                                   {detail.provider || 'N/A'}
-                               </TableCell>
-                                <TableCell className="px-3 py-2 text-right font-medium tabular-nums text-muted-foreground dark:text-gray-300" aria-label={`Stock total ${totalStock}`}>
-                                  {totalStock}
-                                </TableCell>
-                           </TableRow>
-                       );
-                   })
-               )}
-           </TableBody>
-         </Table>
-       </ScrollArea>
-
-      {/* --- Add/Edit Product Detail Dialog --- */}
-      <Dialog open={isEditModalOpen} onOpenChange={(isOpen) => { if (!isOpen) { setIsEditModalOpen(false); setSelectedDetail(null); resetDetailForm(); } else { setIsEditModalOpen(true); } }}>
-        <DialogContent className="sm:max-w-lg dark:bg-gray-800 dark:text-white">
-          <DialogHeader>
-            <DialogTitle className="dark:text-gray-100">{selectedDetail ? "Editar Producto" : "Agregar Nuevo Producto"}</DialogTitle>
-            <DialogDescription className="dark:text-gray-400">
-              {selectedDetail ? "Modifica los detalles del producto y su stock en el almacén principal." : "Añade un nuevo producto (detalle general) y su stock inicial para el almacén principal."}
-            </DialogDescription>
-          </DialogHeader>
-          <Form {...productDetailForm}>
-            <form onSubmit={handleDetailSubmit(handleAddOrUpdateDetail)} className="space-y-4 p-2">
-              <FormField
-                control={detailControl}
-                name="barcode"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel className="dark:text-gray-200">Código de Barras *</FormLabel>
-                    <FormControl>
-                       <Input type="text" {...field} readOnly={!!selectedDetail} aria-required="true" disabled={isProcessing} className="dark:bg-gray-700 dark:border-gray-600"/>
-                    </FormControl>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
-              <FormField
-                control={detailControl}
-                name="description"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel className="dark:text-gray-200">Descripción *</FormLabel>
-                    <FormControl>
-                       <Input type="text" {...field} aria-required="true" disabled={isProcessing} className="dark:bg-gray-700 dark:border-gray-600"/>
-                    </FormControl>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
-              <FormField
-                control={detailControl}
-                name="provider"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel className="dark:text-gray-200">Proveedor</FormLabel>
-                    <FormControl>
-                      <Input type="text" {...field} placeholder="Opcional" disabled={isProcessing} className="dark:bg-gray-700 dark:border-gray-600"/>
-                    </FormControl>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
-              {/* Stock field always visible now for add/edit */}
-              <FormField
-                  control={detailControl}
-                  name="stock"
-                  render={({ field }) => (
-                  <FormItem>
-                      <FormLabel className="dark:text-gray-200">Stock (Almacén Principal) *</FormLabel>
-                      <FormControl>
-                      <Input type="number" {...field} aria-required="true" disabled={isProcessing} className="dark:bg-gray-700 dark:border-gray-600"/>
-                      </FormControl>
-                       <FormDescUi className="text-xs dark:text-gray-400">Este stock se aplica al almacén 'Principal'.</FormDescUi>
-                      <FormMessage />
-                  </FormItem>
-                  )}
-              />
-
-               <DialogFooter className="flex flex-col-reverse sm:flex-row sm:justify-between w-full pt-6 gap-2">
-                    {selectedDetail && (
-                        <Button
-                            type="button"
-                            variant="destructive"
-                            onClick={() => triggerDeleteProductAlert(selectedDetail.barcode)}
-                            className="sm:mr-auto"
-                            disabled={isProcessing}
-                        >
-                            <Trash className="mr-2 h-4 w-4" /> Eliminar Producto (y todo su inventario)
-                        </Button>
-                    )}
-                    {!selectedDetail && <div className="sm:mr-auto"></div> /* Spacer */}
-                    <div className="flex gap-2 justify-end">
-                         <DialogClose asChild>
-                             <Button type="button" variant="outline" disabled={isProcessing} className="dark:text-gray-300 dark:border-gray-600 dark:hover:bg-gray-700">Cancelar</Button>
-                         </DialogClose>
-                          <Button type="submit" disabled={isProcessing} className="dark:bg-teal-600 dark:hover:bg-teal-700">
-                             {isProcessing ? "Guardando..." : (selectedDetail ? <><Save className="mr-2 h-4 w-4" /> Guardar Cambios</> : "Agregar Producto")}
-                         </Button>
-                    </div>
-                </DialogFooter>
-            </form>
-          </Form>
-        </DialogContent>
-      </Dialog>
+      {/* Add/Edit Product Dialog */}
+      <EditProductDialog
+          isOpen={isEditModalOpen}
+          setIsOpen={setIsEditModalOpen}
+          selectedDetail={selectedDetail}
+          setSelectedDetail={setSelectedDetail}
+          onSubmit={handleAddOrUpdateDetailSubmit}
+          onDelete={triggerDeleteProductAlert} // Pass the trigger function
+          isProcessing={isProcessing}
+          initialStock={initialStockForEdit}
+       />
     </div>
   );
 };

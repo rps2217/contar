@@ -25,7 +25,7 @@ import {
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { WarehouseManagement } from "@/components/warehouse-management";
 import { format } from 'date-fns';
-import { Minus, Plus, Trash, RefreshCw, Warehouse as WarehouseIcon, Camera, AlertCircle } from "lucide-react";
+import { Minus, Plus, Trash, RefreshCw, Warehouse as WarehouseIcon, Camera, AlertCircle, Search } from "lucide-react";
 import React, { useCallback, useEffect, useRef, useState } from "react";
 // Import ZXing library for barcode scanning
 import { BrowserMultiFormatReader, NotFoundException } from '@zxing/library';
@@ -150,7 +150,7 @@ const CountingListTable: React.FC<CountingListTableProps> = ({
   onIncrement,
 }) => {
   return (
-    <ScrollArea className="h-[calc(100vh-310px)] md:h-[calc(100vh-280px)] border rounded-lg shadow-sm bg-white dark:bg-gray-800">
+    <ScrollArea className="h-[calc(100vh-360px)] md:h-[calc(100vh-330px)] border rounded-lg shadow-sm bg-white dark:bg-gray-800">
         <Table>
            <TableCaption className="py-3 text-sm text-gray-500 dark:text-gray-400">Inventario para {warehouseName}.</TableCaption>
            <TableHeader className="bg-gray-50 dark:bg-gray-700 sticky top-0 z-10 shadow-sm">
@@ -204,7 +204,7 @@ const CountingListTable: React.FC<CountingListTableProps> = ({
                    {product.count ?? 0}
                  </TableCell>
                   <TableCell className="hidden md:table-cell px-4 py-3 text-gray-500 dark:text-gray-400 text-xs">
-                      {product.lastUpdated ? format(new Date(product.lastUpdated), 'PPpp', { timeZone: 'auto' }) : 'N/A'}
+                      {product.lastUpdated ? format(new Date(product.lastUpdated), 'PPpp') : 'N/A'}
                   </TableCell>
                    <TableCell className="hidden md:table-cell px-4 py-3 text-center">
                        {product.count === product.stock && product.stock !== 0 ? (
@@ -239,12 +239,19 @@ const CountingListTable: React.FC<CountingListTableProps> = ({
                  </TableCell>
                </TableRow>
              ))}
-             {countingList.length === 0 && (
+             {countingList.length === 0 && !isLoading && (
                <TableRow>
                  <TableCell colSpan={7} className="text-center px-4 py-10 text-gray-500 dark:text-gray-400">
-                   {isLoading ? "Cargando datos del almacén..." : "No hay productos en este inventario. Escanea un código de barras para empezar."}
+                   No hay productos en este inventario. Escanea un código de barras para empezar.
                  </TableCell>
                </TableRow>
+             )}
+             {isLoading && (
+                 <TableRow>
+                     <TableCell colSpan={7} className="text-center px-4 py-10 text-gray-500 dark:text-gray-400">
+                         Cargando datos del almacén...
+                     </TableCell>
+                 </TableRow>
              )}
            </TableBody>
          </Table>
@@ -272,6 +279,7 @@ export default function Home() {
     return warehouses[0].id; // Default warehouse
   });
   const [countingList, setCountingList] = useState<DisplayProduct[]>([]); // Products in the current count session for the selected warehouse
+  const [searchTerm, setSearchTerm] = useState(""); // State for the search term
   const { toast } = useToast();
   const barcodeInputRef = useRef<HTMLInputElement>(null);
   const videoRef = useRef<HTMLVideoElement>(null); // Ref for the video element
@@ -869,7 +877,7 @@ export default function Home() {
 
              // Ensure videoRef is available before proceeding
              if (!videoRef.current) {
-                console.warn("Video element ref not available yet. Retrying...");
+                 console.warn("Video element ref not available yet. Retrying...");
                  // Retry after a short delay
                  setTimeout(() => {
                      if (isScanning && !cancelled) {
@@ -1137,6 +1145,19 @@ export default function Home() {
     toast({ title: "Conteo por Proveedor Iniciado", description: `Cargados ${productsToCount.length} productos.` });
  }, [toast]);
 
+  // Filter counting list based on search term
+  const filteredCountingList = React.useMemo(() => {
+    const lowerSearchTerm = searchTerm.toLowerCase();
+    if (!lowerSearchTerm) {
+      return countingList; // No search term, return full list
+    }
+    return countingList.filter(product =>
+      product.description.toLowerCase().includes(lowerSearchTerm) ||
+      product.barcode.includes(lowerSearchTerm) ||
+      (product.provider || '').toLowerCase().includes(lowerSearchTerm)
+    );
+  }, [countingList, searchTerm]);
+
 
   // --- Main Component Render ---
   return (
@@ -1196,8 +1217,20 @@ export default function Home() {
                 isRefreshingStock={isRefreshingStock}
                 inputRef={barcodeInputRef}
             />
+            {/* Search Input for Counting List */}
+             <div className="relative mb-4">
+                <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
+                <Input
+                    type="search"
+                    placeholder="Buscar en inventario actual..."
+                    value={searchTerm}
+                    onChange={(e) => setSearchTerm(e.target.value)}
+                    className="pl-8 w-full bg-white dark:bg-gray-800 border-gray-300 dark:border-gray-600"
+                    aria-label="Buscar en lista de conteo"
+                />
+            </div>
            <CountingListTable
-                countingList={countingList}
+                countingList={filteredCountingList} // Use filtered list here
                 warehouseName={getWarehouseName(currentWarehouseId)}
                 isLoading={isDbLoading}
                 onDeleteRequest={handleDeleteRequest}

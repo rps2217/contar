@@ -63,6 +63,8 @@ const productDetailSchema = z.object({
 });
 type ProductDetailValues = z.infer<typeof productDetailSchema>;
 
+const GOOGLE_SHEET_URL_LOCALSTORAGE_KEY = 'stockCounterPro_googleSheetUrl';
+
 // --- Helper Components ---
 
 interface ProductTableProps {
@@ -369,20 +371,15 @@ async function fetchAndParseGoogleSheetData(sheetUrl: string): Promise<{ details
      const inventoryItems: InventoryItem[] = [];
      const defaultWarehouseId = 'main';
 
-      // Find header row index (skip potential empty leading lines)
-      let headerRowIndex = 0;
-      while (headerRowIndex < lines.length && !lines[headerRowIndex].trim()) {
-          headerRowIndex++;
-      }
-      const startDataRow = headerRowIndex + 1; // Data starts after the header
+      // Skip header row - Data starts from the second row (index 1)
+     const startDataRow = 1;
 
-      if (startDataRow >= lines.length) {
-          console.warn("CSV contains only a header row or is empty.");
-          return { details: [], inventory: [] };
-      }
+     if (startDataRow >= lines.length) {
+         console.warn("CSV contains only a header row or is empty.");
+         return { details: [], inventory: [] };
+     }
 
-     console.log(`Processing data starting from row ${startDataRow + 1} (1-based index). Header found at row ${headerRowIndex + 1}.`);
-
+     console.log(`Processing data starting from row ${startDataRow + 1} (1-based index).`);
 
      for (let i = startDataRow; i < lines.length; i++) {
          const line = lines[i].trim();
@@ -394,8 +391,8 @@ async function fetchAndParseGoogleSheetData(sheetUrl: string): Promise<{ details
              console.warn(`Skipping row ${i + 1} due to parsing errors: ${result.errors[0].message}. Line: "${line}"`);
              continue;
          }
-         if (!result.data || result.data.length === 0 || !result.data[0] || result.data[0].length === 0) {
-             console.warn(`Skipping row ${i + 1}: No data parsed. Line: "${line}"`);
+         if (!result.data || result.data.length === 0 || !result.data[0] || result.data[0].length < 4) { // Check if at least 4 columns exist
+             console.warn(`Skipping row ${i + 1}: Insufficient columns or no data parsed. Line: "${line}"`);
              continue;
          }
 
@@ -495,6 +492,25 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = ({ currentWarehou
   useEffect(() => {
     loadInitialData();
   }, [loadInitialData]);
+
+  // Load and save Google Sheet URL from localStorage
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      const savedUrl = localStorage.getItem(GOOGLE_SHEET_URL_LOCALSTORAGE_KEY);
+      if (savedUrl) {
+        setGoogleSheetUrl(savedUrl);
+      }
+    }
+  }, []);
+
+  const handleGoogleSheetUrlChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const newUrl = e.target.value;
+    setGoogleSheetUrl(newUrl);
+    if (typeof window !== 'undefined') {
+      localStorage.setItem(GOOGLE_SHEET_URL_LOCALSTORAGE_KEY, newUrl);
+    }
+  };
+
 
   // --- CRUD Handlers ---
 
@@ -597,8 +613,9 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = ({ currentWarehou
       } catch (error: any) {
         console.error("Failed to delete product completely", error);
         toast({ variant: "destructive", title: "Error al Eliminar", description: `No se pudo eliminar: ${error.message}` });
-        setIsProcessing(false);
-        setProcessingStatus("");
+      } finally {
+            setIsProcessing(false);
+            setProcessingStatus("");
       }
       // No finally needed here as it's handled within the try/catch now
   }, [toast]);
@@ -904,7 +921,7 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = ({ currentWarehou
              type="url"
              placeholder="URL de Hoja de Google (pública y compartida)"
              value={googleSheetUrl}
-             onChange={(e) => setGoogleSheetUrl(e.target.value)}
+             onChange={handleGoogleSheetUrlChange}
              className="flex-grow h-10 dark:bg-gray-700 dark:border-gray-600 dark:text-white"
              disabled={isProcessing || isLoading}
              aria-describedby="google-sheet-info"
@@ -915,7 +932,7 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = ({ currentWarehou
              </Button>
          </div>
          <p id="google-sheet-info" className="text-xs text-muted-foreground dark:text-gray-400 mt-1">
-               Asegúrese de que la hoja sea pública ('Cualquier persona con el enlace puede ver'). Se leerán columnas por posición: 1:Cód. Barras, 2:Descripción, 3:Proveedor, 4:Stock (para almacén 'main').
+               Asegúrese de que la hoja sea pública ('Cualquier persona con el enlace puede ver'). Se leerán las 4 primeras columnas por posición: 1:Código Barras, 2:Descripción, 3:Proveedor, 4:Stock (para almacén 'main').
          </p>
          {isProcessing && (
              <div className="mt-4 space-y-1">

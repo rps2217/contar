@@ -24,6 +24,15 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import {
+    Dialog,
+    DialogClose,
+    DialogContent,
+    DialogDescription,
+    DialogFooter,
+    DialogHeader,
+    DialogTitle,
+} from "@/components/ui/dialog"; // Import Dialog components
 import { Trash, Edit, Plus, Warehouse as WarehouseIcon } from "lucide-react"; // Ensure you have these icons
 import { cn } from "@/lib/utils";
 
@@ -95,7 +104,14 @@ export const WarehouseManagement: React.FC<WarehouseManagementProps> = ({
   }, []);
 
   const handleSaveEdit = () => {
-    if (!warehouseToEdit) return;
+    if (!warehouseToEdit || !editWarehouseName.trim()) {
+       toast({
+        variant: "destructive",
+        title: "Error",
+        description: "El nombre del almacén no puede estar vacío.",
+      });
+      return;
+    }
 
     const updatedWarehouses = warehouses.map(w =>
       w.id === warehouseToEdit.id ? { ...warehouseToEdit, name: editWarehouseName.trim() } : w
@@ -120,22 +136,29 @@ export const WarehouseManagement: React.FC<WarehouseManagementProps> = ({
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-        <div className="space-y-2">
+        <div className="space-y-2 p-4 border rounded-lg bg-card dark:bg-gray-800 shadow-sm">
           <h3 className="text-lg font-semibold">Agregar Nuevo Almacén</h3>
-          <div className="grid grid-cols-2 gap-2">
+          <div className="grid grid-cols-1 gap-2">
             <Input
               type="text"
-              placeholder="ID del Almacén"
+              placeholder="ID del Almacén (ej. 'almacen2')"
               value={newWarehouseId}
-              onChange={(e) => setNewWarehouseId(e.target.value)}
+              onChange={(e) => setNewWarehouseId(e.target.value.toLowerCase().replace(/\s+/g, ''))} // Ensure ID is lowercase and has no spaces
+              className="dark:bg-gray-700 dark:border-gray-600 dark:text-white"
+              aria-label="ID del nuevo almacén"
             />
             <Input
               type="text"
-              placeholder="Nombre del Almacén"
+              placeholder="Nombre del Almacén (ej. 'Almacén Secundario')"
               value={newWarehouseName}
               onChange={(e) => setNewWarehouseName(e.target.value)}
+              className="dark:bg-gray-700 dark:border-gray-600 dark:text-white"
+              aria-label="Nombre del nuevo almacén"
             />
           </div>
+           <p className="text-xs text-muted-foreground dark:text-gray-400 mt-1">
+                El ID debe ser único y no contener espacios (se convertirá a minúsculas).
+           </p>
           <Button onClick={handleAddWarehouse}>
             <Plus className="mr-2 h-4 w-4" />
             Agregar Almacén
@@ -144,43 +167,54 @@ export const WarehouseManagement: React.FC<WarehouseManagementProps> = ({
 
         <div className="space-y-2">
           <h3 className="text-lg font-semibold">Almacenes Existentes</h3>
-          <ScrollArea className="max-h-[300px] border rounded-md shadow-sm">
+          <ScrollArea className="max-h-[300px] border rounded-md shadow-sm bg-white dark:bg-gray-800">
             <Table>
-              <TableCaption>Lista de almacenes existentes.</TableCaption>
-              <TableHeader>
+              <TableCaption className="dark:text-gray-400">Lista de almacenes existentes.</TableCaption>
+              <TableHeader className="sticky top-0 bg-background dark:bg-gray-700 z-10 shadow-sm">
                 <TableRow>
-                  <TableHead className="w-[100px]">ID</TableHead>
-                  <TableHead>Nombre</TableHead>
-                  <TableHead className="text-right">Acciones</TableHead>
+                  <TableHead className="w-[100px] dark:text-gray-300">ID</TableHead>
+                  <TableHead className="dark:text-gray-300">Nombre</TableHead>
+                  <TableHead className="text-right dark:text-gray-300">Acciones</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {warehouses.map((warehouse) => (
-                  <TableRow key={warehouse.id}>
-                    <TableCell className="font-medium">{warehouse.id}</TableCell>
-                    <TableCell>{warehouse.name}</TableCell>
+                {warehouses.length > 0 ? warehouses.map((warehouse) => (
+                  <TableRow key={warehouse.id} className="hover:bg-muted/50 dark:hover:bg-gray-700 text-sm transition-colors duration-150">
+                    <TableCell className="font-medium dark:text-gray-100">{warehouse.id}</TableCell>
+                    <TableCell className="dark:text-gray-100">{warehouse.name}</TableCell>
                     <TableCell className="text-right">
                       <Button
                         variant="ghost"
                         size="sm"
                         onClick={() => handleOpenEditDialog(warehouse)}
                         aria-label={`Editar ${warehouse.name}`}
+                        className="text-blue-600 dark:text-blue-400 hover:text-blue-700 dark:hover:text-blue-300"
                       >
-                        <Edit className="mr-2 h-4 w-4" />
+                        <Edit className="mr-1 h-4 w-4" />
                         Editar
                       </Button>
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        onClick={() => handleDeleteRequest(warehouse)}
-                         aria-label={`Borrar ${warehouse.name}`}
-                      >
-                        <Trash className="mr-2 h-4 w-4" />
-                        Borrar
-                      </Button>
+                      {/* Prevent deleting the 'main' warehouse */}
+                      {warehouse.id !== 'main' && (
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => handleDeleteRequest(warehouse)}
+                           aria-label={`Borrar ${warehouse.name}`}
+                           className="text-red-600 dark:text-red-400 hover:text-red-700 dark:hover:text-red-300"
+                        >
+                          <Trash className="mr-1 h-4 w-4" />
+                          Borrar
+                        </Button>
+                      )}
                     </TableCell>
                   </TableRow>
-                ))}
+                )) : (
+                   <TableRow>
+                     <TableCell colSpan={3} className="text-center py-4 text-muted-foreground dark:text-gray-400">
+                       No hay almacenes definidos.
+                     </TableCell>
+                   </TableRow>
+                )}
               </TableBody>
             </Table>
           </ScrollArea>
@@ -193,7 +227,7 @@ export const WarehouseManagement: React.FC<WarehouseManagementProps> = ({
           <AlertDialogHeader>
             <AlertDialogTitle>¿Estás seguro?</AlertDialogTitle>
             <AlertDialogDescription>
-              ¿Estás seguro de que deseas eliminar el almacén "{warehouseToDelete?.name}"? Esta acción no se puede deshacer.
+              ¿Estás seguro de que deseas eliminar el almacén "{warehouseToDelete?.name}"? Esta acción no se puede deshacer y podría afectar los datos de inventario asociados.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
@@ -209,33 +243,40 @@ export const WarehouseManagement: React.FC<WarehouseManagementProps> = ({
 
       {/* Edit Dialog */}
       <Dialog open={isEditDialogOpen} onOpenChange={setIsEditDialogOpen}>
-        <DialogContent className="sm:max-w-[425px]">
+        <DialogContent className="sm:max-w-[425px] bg-white dark:bg-gray-900 text-black dark:text-white border-teal-500 rounded-lg shadow-xl p-6">
           <DialogHeader>
-            <DialogTitle>Editar Almacén</DialogTitle>
-            <DialogDescription>
-              Editar el nombre del almacén.
+            <DialogTitle className="text-center text-xl font-semibold text-gray-800 dark:text-gray-200">
+                <span className="flex items-center justify-center gap-2">
+                    <WarehouseIcon className="h-6 w-6 text-teal-600"/>
+                    Editar Almacén ({warehouseToEdit?.id})
+                </span>
+            </DialogTitle>
+            <DialogDescription className="text-center text-gray-600 dark:text-gray-400 mt-1">
+              Modifica el nombre de este almacén.
             </DialogDescription>
           </DialogHeader>
           <div className="grid gap-4 py-4">
             <div className="grid grid-cols-4 items-center gap-4">
-              <label htmlFor="name" className="text-right">
+              <label htmlFor="name" className="text-right font-medium text-gray-700 dark:text-gray-300">
                 Nombre
               </label>
               <Input
                 id="name"
                 value={editWarehouseName}
                 onChange={(e) => setEditWarehouseName(e.target.value)}
-                className="col-span-3"
+                className="col-span-3 dark:bg-gray-700 dark:border-gray-600 dark:text-white"
+                placeholder="Nombre del Almacén"
+                aria-label="Nuevo nombre del almacén"
               />
             </div>
           </div>
-          <DialogFooter>
+          <DialogFooter className="mt-4 flex justify-end gap-2">
             <DialogClose asChild>
-              <Button type="button" variant="secondary">
+              <Button type="button" variant="outline" className="border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700">
                 Cancelar
               </Button>
             </DialogClose>
-            <Button type="button" onClick={handleSaveEdit}>
+            <Button type="button" onClick={handleSaveEdit} className="bg-teal-600 hover:bg-teal-700 text-white">
               Guardar Cambios
             </Button>
           </DialogFooter>

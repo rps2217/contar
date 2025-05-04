@@ -1,4 +1,3 @@
-
 "use client";
 
 import type { DisplayProduct, InventoryItem, ProductDetail } from '@/types/product'; // Import updated types
@@ -8,6 +7,7 @@ import {
     AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
     AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle
 } from "@/components/ui/alert-dialog";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"; // Added Alert
 import { Button } from "@/components/ui/button";
 import {
     Dialog, DialogClose, DialogContent, DialogDescription, DialogFooter,
@@ -24,7 +24,7 @@ import {
 } from "@/components/ui/table";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { format } from 'date-fns';
-import { Minus, Plus, Trash, RefreshCw, Warehouse as WarehouseIcon } from "lucide-react"; // Added WarehouseIcon
+import { Minus, Plus, Trash, RefreshCw, Warehouse as WarehouseIcon, Camera, AlertCircle } from "lucide-react"; // Added Camera, AlertCircle
 import React, { useCallback, useEffect, useRef, useState } from "react";
 // Update imports for new DB functions
 import {
@@ -33,6 +33,7 @@ import {
     getAllDisplayProductsForWarehouse,
     getProductDetail,
     addOrUpdateProductDetail, // Need this if adding unknown products
+    getInventoryItemsForWarehouse, // Need this for refresh stock
 } from '@/lib/indexeddb-helpers';
 
 const LOCAL_STORAGE_COUNTING_LIST_KEY_PREFIX = 'stockCounterPro_countingList_';
@@ -54,9 +55,9 @@ export default function Home() {
     return WAREHOUSES[0].id; // Default warehouse
   });
   const [countingList, setCountingList] = useState<DisplayProduct[]>([]); // Products in the current count session for the selected warehouse
-  // Note: databaseProducts state is now managed within ProductDatabase component
   const { toast } = useToast();
   const barcodeInputRef = useRef<HTMLInputElement>(null);
+  const videoRef = useRef<HTMLVideoElement>(null); // Ref for the video element
   const [openQuantityDialog, setOpenQuantityDialog] = useState(false);
   const [openStockDialog, setOpenStockDialog] = useState(false);
   const [selectedProductForDialog, setSelectedProductForDialog] = useState<DisplayProduct | null>(null);
@@ -67,6 +68,9 @@ export default function Home() {
   const [productToDelete, setProductToDelete] = useState<DisplayProduct | null>(null);
   const [isDbLoading, setIsDbLoading] = useState(true); // Loading state for initial data load for the warehouse
   const [isRefreshingStock, setIsRefreshingStock] = useState(false);
+  const [isScanning, setIsScanning] = useState(false); // State to control camera scanning view/modal
+  const [hasCameraPermission, setHasCameraPermission] = useState<boolean | null>(null); // State for camera permission
+
 
   const getLocalStorageKeyForWarehouse = (warehouseId: string) => {
     return `${LOCAL_STORAGE_COUNTING_LIST_KEY_PREFIX}${warehouseId}`;
@@ -195,7 +199,7 @@ export default function Home() {
 
   // Handles adding or incrementing a product in the counting list for the current warehouse
  const handleAddProduct = useCallback(async () => {
-    const trimmedBarcode = barcode.trim();
+    const trimmedBarcode = barcode.trim(); // Trim whitespace
 
     if (!trimmedBarcode) {
       toast({
@@ -203,8 +207,10 @@ export default function Home() {
         title: "Error",
         description: "Por favor, introduce un código de barras válido.",
       });
-      setBarcode("");
-      barcodeInputRef.current?.focus();
+      setBarcode(""); // Clear input after showing error
+      requestAnimationFrame(() => { // Use requestAnimationFrame for focus consistency
+          barcodeInputRef.current?.focus();
+      });
       return;
     }
 
@@ -257,7 +263,7 @@ export default function Home() {
                  });
              } else {
                 // Product detail not found in DB at all
-                 playBeep();
+                 playBeep(); // Play beep for unknown product
                 // Create a new product detail and a new inventory item
                  const newProductDetail: ProductDetail = {
                     barcode: trimmedBarcode,
@@ -298,7 +304,7 @@ export default function Home() {
         }
     }
 
-    setBarcode("");
+    setBarcode(""); // Clear input after adding/incrementing
     requestAnimationFrame(() => {
         barcodeInputRef.current?.focus();
     });
@@ -611,6 +617,68 @@ export default function Home() {
         }
     };
 
+    // --- Camera Scanning Logic ---
+    // Effect to request camera permission and set up video stream
+    useEffect(() => {
+        const getCameraPermission = async () => {
+        if (!isScanning) {
+            // If not scanning, ensure any existing stream is stopped
+            if (videoRef.current && videoRef.current.srcObject) {
+                (videoRef.current.srcObject as MediaStream).getTracks().forEach(track => track.stop());
+                videoRef.current.srcObject = null;
+            }
+            setHasCameraPermission(null); // Reset permission status
+            return;
+        }
+
+        try {
+            const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" } }); // Prefer back camera
+            setHasCameraPermission(true);
+
+            if (videoRef.current) {
+                videoRef.current.srcObject = stream;
+            }
+            // **TODO: Integrate barcode scanning library here**
+            // Example using a placeholder function:
+            // startBarcodeScanner(videoRef.current, (detectedBarcode) => {
+            //     setBarcode(detectedBarcode);
+            //     setIsScanning(false); // Optionally close scanner after detection
+            //     handleAddProduct(); // Optionally add product immediately
+            // });
+
+        } catch (error) {
+            console.error('Error accessing camera:', error);
+            setHasCameraPermission(false);
+            toast({
+            variant: 'destructive',
+            title: 'Acceso a Cámara Denegado',
+            description: 'Por favor, habilita los permisos de cámara en la configuración de tu navegador para usar esta función.',
+            });
+            setIsScanning(false); // Close scanning view if permission denied
+        }
+        };
+
+        getCameraPermission();
+
+        // Cleanup function to stop the stream when component unmounts or scanning stops
+        return () => {
+            if (videoRef.current && videoRef.current.srcObject) {
+                (videoRef.current.srcObject as MediaStream).getTracks().forEach(track => track.stop());
+            }
+            // **TODO: Stop barcode scanner library here**
+            // stopBarcodeScanner();
+        };
+    }, [isScanning, toast]); // Re-run effect when isScanning changes
+
+    // Handler to start scanning
+    const handleScanButtonClick = () => {
+        setIsScanning(true);
+    };
+
+    // Handler to stop scanning
+    const handleStopScanning = () => {
+        setIsScanning(false);
+    };
 
     // --- Dialog Renderers (Adjusted for better clarity) ---
     const renderQuantityDialog = () => {
@@ -766,6 +834,49 @@ export default function Home() {
        </AlertDialog>
    );
 
+   // --- Camera Scanning Modal/View ---
+   const renderScannerView = () => (
+       <Dialog open={isScanning} onOpenChange={setIsScanning}>
+           <DialogContent className="max-w-md w-full p-4 bg-white dark:bg-gray-800 rounded-lg shadow-xl">
+               <DialogHeader>
+                   <DialogTitle className="text-center text-lg font-semibold text-gray-800 dark:text-gray-200">Escanear Código de Barras</DialogTitle>
+                   <DialogDescription className="text-center text-sm text-gray-600 dark:text-gray-400">
+                       Apunta la cámara al código de barras.
+                   </DialogDescription>
+               </DialogHeader>
+                <div className="my-4 relative aspect-video">
+                    {/* Always render video tag to attach stream */}
+                    <video ref={videoRef} className="w-full aspect-video rounded-md bg-black" autoPlay muted playsInline />
+                    {/* Overlay for visual scanning area (optional) */}
+                    <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+                        <div className="w-3/4 h-1/2 border-2 border-red-500 rounded-md opacity-75"></div>
+                    </div>
+                     {/* Loading/Permission State Handling */}
+                    {hasCameraPermission === null && (
+                       <div className="absolute inset-0 flex items-center justify-center bg-black bg-opacity-50 text-white">Cargando cámara...</div>
+                    )}
+                    {hasCameraPermission === false && (
+                       <div className="absolute inset-0 flex items-center justify-center bg-black bg-opacity-75 p-4 rounded-md">
+                         <Alert variant="destructive" className="w-full">
+                           <AlertCircle className="h-4 w-4" />
+                           <AlertTitle>Acceso a Cámara Requerido</AlertTitle>
+                           <AlertDescription>
+                             Permite el acceso a la cámara en la configuración de tu navegador.
+                           </AlertDescription>
+                         </Alert>
+                       </div>
+                     )}
+                </div>
+               <DialogFooter className="mt-4">
+                   <Button variant="outline" onClick={handleStopScanning}>Cancelar</Button>
+                   {/* TODO: Add button/logic to trigger scan manually if library requires it */}
+                   {/* <Button>Escanear</Button> */}
+               </DialogFooter>
+           </DialogContent>
+       </Dialog>
+   );
+
+
   // --- Main Component Render ---
   return (
     <div className="container mx-auto p-4">
@@ -811,11 +922,12 @@ export default function Home() {
           <div className="flex items-center mb-4 gap-2">
             <Input
                type="number"
-               pattern="\d*"
-               inputMode="numeric"
+               pattern="\d*" // Ensures numeric keyboard on mobile if supported
+               inputMode="numeric" // Better semantic for numeric input
                placeholder="Escanear o ingresar código de barras"
                value={barcode}
                onChange={(e) => {
+                   // Ensure only digits are entered (optional, as type="number" helps)
                    const numericValue = e.target.value.replace(/\D/g, '');
                    setBarcode(numericValue);
                }}
@@ -824,6 +936,18 @@ export default function Home() {
                onKeyDown={handleKeyDown}
                 aria-label="Código de barras"
              />
+             {/* Add Scan Button */}
+             <Button
+                onClick={handleScanButtonClick}
+                variant="outline"
+                size="icon"
+                className="text-blue-600 dark:text-blue-400 border-blue-300 dark:border-blue-600 hover:bg-blue-50 dark:hover:bg-blue-900 hover:text-blue-700 dark:hover:text-blue-300"
+                aria-label="Escanear código de barras con la cámara"
+                title="Escanear con Cámara"
+                disabled={isDbLoading || isScanning} // Disable while loading or already scanning
+             >
+                 <Camera className="h-5 w-5" />
+             </Button>
              <Button
                onClick={handleAddProduct}
                className="bg-teal-600 hover:bg-teal-700 text-white rounded-md shadow-sm px-5 py-2 transition-colors duration-200"
@@ -967,6 +1091,6 @@ export default function Home() {
             {renderStockDialog()}
             {renderConfirmationDialog()}
             {renderDeleteConfirmationDialog()}
+            {renderScannerView()} {/* Render the scanner dialog */}
     </div>
   );
-}

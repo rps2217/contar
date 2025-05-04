@@ -1034,7 +1034,7 @@ export default function Home() {
 
 
       <Tabs defaultValue="Contador" className="w-full md:w-[800px] lg:w-[1000px] mx-auto">
-         <TabsList className="grid w-full grid-cols-2 bg-gray-100 dark:bg-gray-800 p-1 rounded-lg mb-4 shadow-inner">
+         <TabsList className="grid w-full grid-cols-3 bg-gray-100 dark:bg-gray-800 p-1 rounded-lg mb-4 shadow-inner">
            <TabsTrigger
               value="Contador"
               className="data-[state=active]:bg-teal-600 data-[state=active]:text-white data-[state=inactive]:text-gray-600 dark:data-[state=inactive]:text-gray-300 py-2 px-4 rounded-md transition-colors duration-200 ease-in-out font-medium"

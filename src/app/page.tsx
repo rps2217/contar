@@ -1,4 +1,3 @@
-
 "use client";
 
 import type { DisplayProduct, InventoryItem, ProductDetail } from '@/types/product';
@@ -65,7 +64,7 @@ const BarcodeEntry: React.FC<BarcodeEntryProps> = ({
   onScanClick, // This will now open the scan modal
   onRefreshStock,
   isLoading,
-  isScanning, // Used to disable button if modal is open
+  isScanning, // Used to disable button if modal is already open
   isRefreshingStock,
   inputRef
 }) => {
@@ -1385,7 +1384,7 @@ export default function Home() {
                </DialogHeader>
                 <div className="my-4 relative aspect-video">
                     {/* Ensure video element is always rendered to avoid ref issues */}
-                    <video ref={videoRef} className={cn("w-full aspect-video rounded-md bg-black", { 'hidden': !isScanning && hasCameraPermission !== false })} autoPlay muted playsInline />
+                    <video ref={videoRef} className={cn("w-full aspect-video rounded-md bg-black")} autoPlay muted playsInline />
                     {/* Red border overlay */}
                     <div className={cn("absolute inset-0 flex items-center justify-center pointer-events-none", {'hidden': !isScanning})}>
                         <div className="w-3/4 h-1/2 border-2 border-red-500 rounded-md opacity-75"></div>

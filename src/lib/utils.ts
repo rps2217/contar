@@ -11,11 +11,18 @@ export const getLocalStorageItem = <T>(key: string, defaultValue: T): T => {
   if (typeof window === 'undefined') {
     return defaultValue;
   }
+  const item = window.localStorage.getItem(key);
+  if (item === null) {
+    return defaultValue;
+  }
   try {
-    const item = window.localStorage.getItem(key);
-    return item ? JSON.parse(item) : defaultValue;
+    // Attempt to parse the item only if it's not null
+    return JSON.parse(item);
   } catch (error) {
-    console.error(`Error reading localStorage key “${key}”:`, error);
+    console.error(`Error reading and parsing localStorage key “${key}”:`, error);
+    console.warn(`Invalid data found for key "${key}", returning default value. Data was:`, item);
+    // Optionally, remove the invalid item
+    // window.localStorage.removeItem(key);
     return defaultValue;
   }
 };

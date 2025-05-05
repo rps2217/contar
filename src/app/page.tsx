@@ -28,6 +28,7 @@ import {
     getProductDetail,
     addOrUpdateProductDetail,
     getInventoryItemsForWarehouse,
+    getAllProductDetails, // Import function to get all product details
 } from '@/lib/indexeddb-helpers';
 import { backupToGoogleSheet } from './actions/backup-actions';
 import { playBeep } from '@/lib/helpers';
@@ -703,29 +704,48 @@ export default function Home() {
  const handleRefreshStock = useCallback(async () => {
     if (!currentWarehouseId) return;
     setIsRefreshingStock(true);
-    console.log(`Refreshing stock counts for warehouse ${currentWarehouseId} from database...`);
+    console.log(`Refreshing stock and product details for warehouse ${currentWarehouseId} from database...`);
     try {
-      const warehouseInventory = await getInventoryItemsForWarehouse(currentWarehouseId);
+      // Fetch both inventory for the current warehouse and all product details
+      const [warehouseInventory, allProductDetails] = await Promise.all([
+        getInventoryItemsForWarehouse(currentWarehouseId),
+        getAllProductDetails(), // Fetch all product details
+      ]);
+
+      // Create maps for quick lookup
       const inventoryMap = new Map<string, InventoryItem>();
       warehouseInventory.forEach(item => inventoryMap.set(item.barcode, item));
+
+      const detailsMap = new Map<string, ProductDetail>();
+      allProductDetails.forEach(detail => detailsMap.set(detail.barcode, detail));
 
       setCountingList(prevCountingList => {
         return prevCountingList.map(countingProduct => {
           const dbInventoryItem = inventoryMap.get(countingProduct.barcode);
-          // Only update stock if the item exists in the DB for this warehouse
+          const dbProductDetail = detailsMap.get(countingProduct.barcode);
+
+          // Update stock, description, and provider based on DB data
           // Preserve existing count
-          return dbInventoryItem
-            ? { ...countingProduct, stock: dbInventoryItem.stock, lastUpdated: new Date().toISOString() }
-            : countingProduct; // Keep existing data if not found in DB (might be newly added)
+          const updatedStock = dbInventoryItem?.stock ?? countingProduct.stock ?? 0;
+          const updatedDescription = dbProductDetail?.description ?? countingProduct.description;
+          const updatedProvider = dbProductDetail?.provider ?? countingProduct.provider;
+
+          return {
+            ...countingProduct,
+            stock: updatedStock,
+            description: updatedDescription,
+            provider: updatedProvider,
+            lastUpdated: new Date().toISOString(), // Always update timestamp on refresh
+          };
         });
       });
 
-      toast({ title: "Stock Actualizado", description: `Los stocks para ${getWarehouseName(currentWarehouseId)} han sido actualizados.` });
-      console.log("Stock counts refreshed for warehouse:", currentWarehouseId);
+      toast({ title: "Datos Actualizados", description: `Stock y detalles de productos para ${getWarehouseName(currentWarehouseId)} han sido actualizados.` });
+      console.log("Stock and product details refreshed for warehouse:", currentWarehouseId);
 
     } catch (error) {
-      console.error(`Error refreshing stock counts for warehouse ${currentWarehouseId}:`, error);
-      toast({ variant: "destructive", title: "Error al Actualizar Stock", description: `No se pudieron actualizar los stocks desde la base de datos para ${getWarehouseName(currentWarehouseId)}. ` });
+      console.error(`Error refreshing stock and details for warehouse ${currentWarehouseId}:`, error);
+      toast({ variant: "destructive", title: "Error al Actualizar", description: `No se pudieron actualizar los datos desde la base de datos para ${getWarehouseName(currentWarehouseId)}. ` });
     } finally {
       setIsRefreshingStock(false);
     }
@@ -1053,3 +1073,4 @@ export default function Home() {
 
     </div>
   );
+}

@@ -3,7 +3,6 @@
 
 import type { ProductDetail, InventoryItem, DisplayProduct } from '@/types/product';
 import { zodResolver } from "@hookform/resolvers/zod";
-import { useIsMobile } from "@/hooks/use-mobile";
 import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
 import {
@@ -19,7 +18,7 @@ import {
     getInventoryItemsForWarehouse,
 } from '@/lib/indexeddb-helpers';
 import {
-    Edit, FileDown, Filter, Save, Trash, Upload, AlertCircle, Warehouse as WarehouseIcon, Play
+    Edit, FileDown, Filter, Save, Trash, Upload, AlertCircle, Warehouse as WarehouseIcon, Play, Loader2
 } from "lucide-react";
 import Papa from 'papaparse';
 import * as React from "react";
@@ -49,7 +48,6 @@ import {
 import {
     Table, TableBody, TableCaption, TableCell, TableHead, TableHeader, TableRow
 } from "@/components/ui/table";
-import { format } from 'date-fns';
 
 // --- Zod Schema ---
 const productDetailSchema = z.object({
@@ -84,7 +82,7 @@ const ProductTable: React.FC<ProductTableProps> = ({
   searchTerm,
   selectedProviderFilter,
   onEdit,
-  onDelete,
+  onDelete, // Use onDelete which triggers the alert
 }) => {
     const filteredDetails = React.useMemo(() => {
         return productDetails.filter(detail => {
@@ -189,7 +187,7 @@ const EditProductDialog: React.FC<EditProductDialogProps> = ({
     resolver: zodResolver(productDetailSchema),
     defaultValues: { barcode: "", description: "", provider: "Desconocido", stock: 0 },
   });
-  const { handleSubmit: handleDetailSubmit, reset: resetDetailForm, control: detailControl, setValue } = productDetailForm;
+  const { handleSubmit: handleDetailSubmit, reset: resetDetailForm, control: detailControl } = productDetailForm;
 
    // Effect to update form values when selectedDetail changes or dialog opens
    useEffect(() => {
@@ -322,7 +320,6 @@ const parseGoogleSheetUrl = (sheetUrl: string): { spreadsheetId: string | null; 
     return { spreadsheetId, gid };
 };
 
-// Updated function to parse both details and inventory (position-based)
 async function fetchAndParseGoogleSheetData(sheetUrl: string): Promise<{ details: ProductDetail[], inventory: InventoryItem[] }> {
     const { spreadsheetId, gid } = parseGoogleSheetUrl(sheetUrl);
     const csvExportUrl = `https://docs.google.com/spreadsheets/d/${spreadsheetId}/export?format=csv&gid=${gid}`;
@@ -361,78 +358,77 @@ async function fetchAndParseGoogleSheetData(sheetUrl: string): Promise<{ details
     const csvText = await response.text();
     console.log(`Successfully fetched CSV data (length: ${csvText.length}). Parsing...`);
 
-     const lines = csvText.split(/\r?\n/);
-     if (lines.length < 1) {
-         console.warn("CSV data is empty or contains only empty lines.");
-         return { details: [], inventory: [] };
-     }
+    const result = Papa.parse<string[]>(csvText, {
+      header: false, // Treat first row as data
+      skipEmptyLines: true,
+    });
 
-     const productDetails: ProductDetail[] = [];
-     const inventoryItems: InventoryItem[] = [];
-     const defaultWarehouseId = 'main';
-     const startDataRow = 1; // Skip header row
+    if (result.errors.length > 0) {
+      console.warn("Parsing errors encountered:", result.errors);
+      // Optionally throw an error or return partial data based on requirements
+      // throw new Error("Error parsing CSV data.");
+    }
 
-     if (startDataRow >= lines.length) {
-         console.warn("CSV contains only a header row or is empty.");
-         return { details: [], inventory: [] };
-     }
+    const productDetails: ProductDetail[] = [];
+    const inventoryItems: InventoryItem[] = [];
+    const defaultWarehouseId = 'main';
 
-     console.log(`Processing data starting from row ${startDataRow + 1} (1-based index).`);
+    if (result.data.length === 0) {
+        console.warn("CSV data is empty or contains only empty lines.");
+        return { details: [], inventory: [] };
+    }
 
-     for (let i = startDataRow; i < lines.length; i++) {
-         const line = lines[i].trim();
-         if (!line) continue;
+    console.log(`Processing ${result.data.length} data rows (including potential header).`);
 
-         const result = Papa.parse<string[]>(line, { delimiter: ',', skipEmptyLines: true });
+     // Skip header row by starting from index 1 if header: true was used, or 0 if header: false
+    const startDataRow = 1; // Skip header row assumed to be the first
 
-         if (result.errors.length > 0) {
-             console.warn(`Skipping row ${i + 1} due to parsing errors: ${result.errors[0].message}. Line: "${line}"`);
-             continue;
-         }
-         if (!result.data || result.data.length === 0 || !result.data[0] || result.data[0].length < 4) {
-             console.warn(`Skipping row ${i + 1}: Insufficient columns or no data parsed. Expected at least 4 columns. Line: "${line}"`);
-             continue;
-         }
+    for (let i = startDataRow; i < result.data.length; i++) {
+        const values = result.data[i];
 
-         const values = result.data[0];
+        if (!values || values.length < 4) {
+            console.warn(`Skipping row ${i + 1}: Insufficient columns. Expected at least 4. Row:`, values);
+            continue;
+        }
 
-         // --- Column Position Mapping (0-based index) ---
-         const barcode = values[0]?.trim();
-         if (!barcode) {
-             console.warn(`Skipping row ${i + 1}: Missing or empty barcode (Column 1). Line: "${line}"`);
-             continue;
-         }
-          if (barcode.length > 100) { // Basic validation
-             console.warn(`Skipping row ${i + 1}: Barcode too long (${barcode.length} chars). Line: "${line}"`);
-             continue;
-          }
+        // --- Column Position Mapping (0-based index) ---
+        const barcode = values[0]?.trim();
+        if (!barcode) {
+            console.warn(`Skipping row ${i + 1}: Missing or empty barcode (Column 1). Row:`, values);
+            continue;
+        }
+        if (barcode.length > 100) { // Basic validation
+           console.warn(`Skipping row ${i + 1}: Barcode too long (${barcode.length} chars). Row:`, values);
+           continue;
+        }
 
-         const description = values[1]?.trim() || `Producto ${barcode}`;
-         const provider = values[2]?.trim() || "Desconocido";
-         const stockStr = values[3]?.trim() || '0';
-         let stockMain = parseInt(stockStr, 10);
-         if (isNaN(stockMain) || stockMain < 0) {
-            console.warn(`Invalid stock value "${stockStr}" for barcode ${barcode} in row ${i + 1}. Defaulting to 0.`);
-            stockMain = 0;
-         }
+        const description = values[1]?.trim() || `Producto ${barcode}`;
+        const provider = values[2]?.trim() || "Desconocido";
+        const stockStr = values[3]?.trim() || '0';
+        let stockMain = parseInt(stockStr, 10);
+        if (isNaN(stockMain) || stockMain < 0) {
+           console.warn(`Invalid stock value "${stockStr}" for barcode ${barcode} in row ${i + 1}. Defaulting to 0.`);
+           stockMain = 0;
+        }
 
-         productDetails.push({
-             barcode: barcode,
-             description: description,
-             provider: provider,
-         });
+        productDetails.push({
+            barcode: barcode,
+            description: description,
+            provider: provider,
+        });
 
-         inventoryItems.push({
-             barcode: barcode,
-             warehouseId: defaultWarehouseId,
-             stock: stockMain,
-             count: 0,
-             lastUpdated: new Date().toISOString(),
-         });
-     }
-     console.log(`Parsed ${productDetails.length} product details and ${inventoryItems.length} inventory items from CSV.`);
-     return { details: productDetails, inventory: inventoryItems };
- }
+        inventoryItems.push({
+            barcode: barcode,
+            warehouseId: defaultWarehouseId,
+            stock: stockMain,
+            count: 0, // Default count to 0 on import
+            lastUpdated: new Date().toISOString(),
+        });
+    }
+
+    console.log(`Parsed ${productDetails.length} product details and ${inventoryItems.length} inventory items from CSV.`);
+    return { details: productDetails, inventory: inventoryItems };
+}
 
  // --- Props Interface for ProductDatabase ---
  interface ProductDatabaseProps {
@@ -453,14 +449,13 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = ({ currentWarehou
   const [initialStockForEdit, setInitialStockForEdit] = useState<number>(0);
   const [isAlertOpen, setIsAlertOpen] = useState(false);
   const [alertAction, setAlertAction] = useState<'deleteProduct' | 'clearDatabase' | null>(null);
-  const [productToDeleteBarcode, setProductToDeleteBarcode] = useState<string | null>(null);
+  const [productToDelete, setProductToDelete] = useState<ProductDetail | null>(null); // Store the detail to delete
   const [uploadProgress, setUploadProgress] = useState(0);
   const [isProcessing, setIsProcessing] = useState(false);
   const [processingStatus, setProcessingStatus] = useState<string>("");
   const [googleSheetUrl, setGoogleSheetUrl] = useState("");
   const [searchTerm, setSearchTerm] = useState("");
   const [selectedProviderFilter, setSelectedProviderFilter] = useState<string>("all");
-  const isMobile = useIsMobile();
 
   // Load initial data from IndexedDB on mount
   const loadInitialData = useCallback(async () => {
@@ -542,26 +537,7 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = ({ currentWarehou
         await addOrUpdateInventoryItem(inventoryItemData);
 
         // Update local states optimistically but correctly
-        setProductDetails(prevDetails => {
-            const existingIndex = prevDetails.findIndex(d => d.barcode === detailData.barcode);
-            if (existingIndex > -1) {
-                const newDetails = [...prevDetails];
-                newDetails[existingIndex] = detailData;
-                return newDetails;
-            } else {
-                return [detailData, ...prevDetails]; // Add new detail to beginning
-            }
-        });
-         setInventoryItems(prevItems => {
-             const existingInvIndex = prevItems.findIndex(i => i.barcode === inventoryItemData.barcode && i.warehouseId === inventoryItemData.warehouseId);
-             if (existingInvIndex > -1) {
-                 const newItems = [...prevItems];
-                 newItems[existingInvIndex] = inventoryItemData; // Update existing item
-                 return newItems;
-             } else {
-                 return [...prevItems, inventoryItemData]; // Add new inventory item
-             }
-         });
+        await loadInitialData(); // Reload all data to ensure consistency
 
         toast({
             title: isUpdating ? "Producto Actualizado" : "Producto Agregado",
@@ -582,37 +558,38 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = ({ currentWarehou
         setProcessingStatus("");
         setSelectedDetail(null); // Clear selected detail after operation
     }
- }, [selectedDetail, toast]); // Dependencies
+ }, [selectedDetail, toast, loadInitialData]); // Added loadInitialData dependency
 
 
-  const handleDeleteProduct = useCallback(async (barcode: string | null) => {
-      if (!barcode) {
-          toast({ variant: "destructive", title: "Error Interno", description: "No se puede eliminar el producto sin código de barras." });
-          return;
-      }
-      setIsProcessing(true);
-      setProcessingStatus("Eliminando producto...");
-      try {
-        await deleteProductCompletely(barcode);
-        // Update local states
-        setProductDetails(prev => prev.filter(d => d.barcode !== barcode));
-        setInventoryItems(prev => prev.filter(i => i.barcode !== barcode));
-        toast({
-          title: "Producto Eliminado",
-          description: `El producto ${barcode} y todo su inventario asociado han sido eliminados.`,
-        });
-        setIsEditModalOpen(false);
-        setIsAlertOpen(false);
-        setProductToDeleteBarcode(null);
-        setAlertAction(null);
-      } catch (error: any) {
-        console.error("Failed to delete product completely", error);
-        toast({ variant: "destructive", title: "Error al Eliminar", description: `No se pudo eliminar: ${error.message}` });
-      } finally {
-            setIsProcessing(false);
-            setProcessingStatus("");
-      }
-  }, [toast]);
+ const handleDeleteProduct = useCallback(async (barcode: string | null) => {
+    if (!barcode) {
+        toast({ variant: "destructive", title: "Error Interno", description: "No se puede eliminar el producto sin código de barras." });
+        return;
+    }
+    const detailToDelete = productDetails.find(d => d.barcode === barcode); // Get description for toast
+
+    setIsProcessing(true);
+    setProcessingStatus("Eliminando producto...");
+    try {
+      await deleteProductCompletely(barcode);
+      // Update local states by reloading
+      await loadInitialData();
+      toast({
+        title: "Producto Eliminado",
+        description: `El producto ${detailToDelete?.description || barcode} y todo su inventario asociado han sido eliminados.`,
+      });
+      setIsEditModalOpen(false); // Close edit dialog if open
+      setIsAlertOpen(false);     // Close confirmation dialog
+      setProductToDelete(null);  // Clear the product marked for deletion
+      setAlertAction(null);
+    } catch (error: any) {
+      console.error("Failed to delete product completely", error);
+      toast({ variant: "destructive", title: "Error al Eliminar", description: `No se pudo eliminar: ${error.message}` });
+    } finally {
+          setIsProcessing(false);
+          setProcessingStatus("");
+    }
+  }, [toast, loadInitialData, productDetails]); // Added loadInitialData and productDetails
 
 
   const handleClearDatabase = useCallback(async () => {
@@ -649,12 +626,12 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = ({ currentWarehou
     setIsEditModalOpen(true);
   }, []);
 
-  const triggerDeleteProductAlert = useCallback((barcode: string | null) => {
-      if (!barcode) {
+  const triggerDeleteProductAlert = useCallback((detail: ProductDetail | null) => { // Accept detail object
+      if (!detail) {
          toast({ variant: "destructive", title: "Error Interno", description: "Datos del producto no disponibles para eliminar." });
          return;
       }
-      setProductToDeleteBarcode(barcode);
+      setProductToDelete(detail); // Store the detail to delete
       setAlertAction('deleteProduct');
       setIsAlertOpen(true);
   }, [toast]);
@@ -669,17 +646,18 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = ({ currentWarehou
   }, [productDetails, inventoryItems, toast]);
 
    const handleDeleteConfirmation = useCallback(() => {
-        if (alertAction === 'deleteProduct' && productToDeleteBarcode) {
-            handleDeleteProduct(productToDeleteBarcode);
+        if (alertAction === 'deleteProduct' && productToDelete) {
+            handleDeleteProduct(productToDelete.barcode); // Pass barcode
         } else if (alertAction === 'clearDatabase') {
             handleClearDatabase();
         } else {
-            console.warn("Delete confirmation called with invalid state:", { alertAction, productToDeleteBarcode });
-            setIsAlertOpen(false);
-            setProductToDeleteBarcode(null);
-            setAlertAction(null);
+            console.warn("Delete confirmation called with invalid state:", { alertAction, productToDelete });
         }
-    }, [alertAction, productToDeleteBarcode, handleDeleteProduct, handleClearDatabase]);
+        // Reset state regardless of action taken
+        setIsAlertOpen(false);
+        setProductToDelete(null);
+        setAlertAction(null);
+    }, [alertAction, productToDelete, handleDeleteProduct, handleClearDatabase]);
 
 
 
@@ -698,7 +676,7 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = ({ currentWarehou
             const { details, inventory } = await fetchAndParseGoogleSheetData(googleSheetUrl);
             const totalItemsToLoad = details.length + inventory.length;
              let itemsLoaded = 0;
-             const batchSize = 100;
+             const batchSize = 100; // Process in batches
 
              if (totalItemsToLoad === 0) {
                  toast({ title: "Hoja Vacía o Sin Datos Válidos", description: "No se encontraron productos válidos en la hoja.", variant: "default" });
@@ -709,7 +687,8 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = ({ currentWarehou
                      await addProductDetailsInBulk(batch);
                      itemsLoaded += batch.length;
                      setUploadProgress(Math.round((itemsLoaded / totalItemsToLoad) * 100));
-                     await new Promise(resolve => setTimeout(resolve, 10));
+                     // Optional small delay to allow UI update
+                     await new Promise(resolve => setTimeout(resolve, 5));
                  }
 
                  setProcessingStatus(`Actualizando inventario (${inventory.length})...`);
@@ -718,11 +697,12 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = ({ currentWarehou
                      await addInventoryItemsInBulk(batch);
                      itemsLoaded += batch.length;
                      setUploadProgress(Math.round((itemsLoaded / totalItemsToLoad) * 100));
-                      await new Promise(resolve => setTimeout(resolve, 10));
+                      // Optional small delay
+                     await new Promise(resolve => setTimeout(resolve, 5));
                  }
 
                  console.log("Bulk add/update to IndexedDB completed.");
-                 await loadInitialData();
+                 await loadInitialData(); // Reload data after bulk operations
                  toast({ title: "Carga Completa", description: `Se procesaron ${details.length} detalles y ${inventory.length} registros de inventario.` });
              }
 
@@ -937,12 +917,15 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = ({ currentWarehou
              aria-describedby="google-sheet-info"
              />
              <Button variant="secondary" disabled={isProcessing || isLoading || !googleSheetUrl} onClick={handleLoadFromGoogleSheet}>
-                 <Upload className="mr-2 h-4 w-4" />
+                {isProcessing && processingStatus.includes("Google") ?
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" /> :
+                  <Upload className="mr-2 h-4 w-4" />
+                 }
                  {isProcessing && processingStatus.includes("Google") ? 'Cargando...' : 'Cargar Datos'}
              </Button>
          </div>
          <p id="google-sheet-info" className="text-xs text-muted-foreground dark:text-gray-400 mt-1">
-               Asegúrese de que la hoja sea pública ('Cualquier persona con el enlace puede ver'). Se leerán las 4 primeras columnas por posición: 1:Código Barras, 2:Descripción, 3:Proveedor, 4:Stock (para almacén 'main').
+                Asegúrese de que la hoja sea pública ('Cualquier persona con el enlace puede ver'). Se leerán las primeras 4 columnas por posición, ignorando la primera fila (encabezado): 1:Código Barras, 2:Descripción, 3:Proveedor, 4:Stock (para almacén 'main').
          </p>
          {isProcessing && (
              <div className="mt-4 space-y-1">
@@ -972,8 +955,8 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = ({ currentWarehou
                <AlertDialogHeader>
                    <AlertDialogTitle>¿Estás realmente seguro?</AlertDialogTitle>
                    <AlertDialogDescription>
-                       {alertAction === 'deleteProduct' && productToDeleteBarcode ?
-                           `Estás a punto de eliminar permanentemente el producto con código "${productToDeleteBarcode}" y todo su inventario asociado. Esta acción no se puede deshacer.`
+                       {alertAction === 'deleteProduct' && productToDelete ?
+                           `Estás a punto de eliminar permanentemente el producto "${productToDelete.description}" (Código: ${productToDelete.barcode}) y todo su inventario asociado. Esta acción no se puede deshacer.`
                            : alertAction === 'clearDatabase' ?
                                "Estás a punto de eliminar TODOS los productos y el inventario de la base de datos local permanentemente. Esta acción no se puede deshacer."
                                : "Esta acción no se puede deshacer."
@@ -984,9 +967,11 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = ({ currentWarehou
                    <AlertDialogCancel onClick={() => setIsAlertOpen(false)}>Cancelar</AlertDialogCancel>
                    <AlertDialogAction
                        onClick={handleDeleteConfirmation}
-                       className={cn(alertAction === 'clearDatabase' && "bg-red-600 hover:bg-red-700")}
+                       className={cn(alertAction === 'clearDatabase' && "bg-red-600 hover:bg-red-700 text-white")}
+                       disabled={isProcessing}
                    >
-                       {alertAction === 'deleteProduct' ? "Sí, Eliminar Producto" : alertAction === 'clearDatabase' ? "Sí, Borrar Todo" : "Confirmar"}
+                       {isProcessing ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> :
+                       alertAction === 'deleteProduct' ? "Sí, Eliminar Producto" : alertAction === 'clearDatabase' ? "Sí, Borrar Todo" : "Confirmar"}
                    </AlertDialogAction>
                </AlertDialogFooter>
            </AlertDialogContent>
@@ -1000,7 +985,14 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = ({ currentWarehou
            searchTerm={searchTerm}
            selectedProviderFilter={selectedProviderFilter}
            onEdit={handleOpenEditDialog}
-           onDelete={triggerDeleteProductAlert} // Pass trigger for deletion alert
+           onDelete={(barcode) => { // Find the detail to pass to triggerDeleteProductAlert
+                const detail = productDetails.find(d => d.barcode === barcode);
+                if (detail) {
+                     triggerDeleteProductAlert(detail);
+                } else {
+                    toast({variant: "destructive", title: "Error", description: "No se encontró el producto para eliminar."})
+                }
+            }}
        />
 
       {/* Add/Edit Product Dialog */}
@@ -1010,10 +1002,19 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = ({ currentWarehou
           selectedDetail={selectedDetail}
           setSelectedDetail={setSelectedDetail}
           onSubmit={handleAddOrUpdateDetailSubmit}
-          onDelete={triggerDeleteProductAlert}
+          onDelete={(barcode) => { // Find the detail to pass to triggerDeleteProductAlert
+                const detail = productDetails.find(d => d.barcode === barcode);
+                if (detail) {
+                     triggerDeleteProductAlert(detail);
+                } else {
+                    toast({variant: "destructive", title: "Error", description: "No se encontró el producto para eliminar."})
+                }
+            }}
           isProcessing={isProcessing}
           initialStock={initialStockForEdit}
        />
     </div>
   );
 };
+
+    

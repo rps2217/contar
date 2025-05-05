@@ -1,3 +1,4 @@
+
 "use client";
 
 import type { DisplayProduct, InventoryItem, ProductDetail } from '@/types/product';
@@ -516,11 +517,13 @@ export default function Home() {
     }
 
     // Use functional update for setCountingList to ensure we have the latest state
+    let productExists = false;
     setCountingList(prevList => {
         const existingProductIndex = prevList.findIndex((p) => p.barcode === trimmedBarcode && p.warehouseId === currentWarehouseId);
 
         if (existingProductIndex !== -1) {
             // Product exists, increment count
+            productExists = true;
             const productToUpdate = prevList[existingProductIndex];
             const newCount = productToUpdate.count + 1;
             const updatedProductData: DisplayProduct = {
@@ -541,20 +544,13 @@ export default function Home() {
             return updatedList; // Return the updated list
 
         } else {
-            // Product not in list, add it (asynchronously handled outside state update)
-            // For now, just return the previous list and handle the async part below
+            // Product not in list, handle the async part below
             return prevList;
         }
     });
 
-
      // Asynchronous part: fetch details if product was not found in the current list state
-     // Use a snapshot of the list to avoid race conditions with rapid state updates
-     const listSnapshot = [...countingList]; // Create a copy of the current list state
-     const existingProductIndexSnapshot = listSnapshot.findIndex((p) => p.barcode === trimmedBarcode && p.warehouseId === currentWarehouseId);
-
-
-    if (existingProductIndexSnapshot === -1) {
+     if (!productExists) {
         try {
              const displayProduct = await getDisplayProductForWarehouse(trimmedBarcode, currentWarehouseId);
 
@@ -617,7 +613,7 @@ export default function Home() {
         barcodeInputRef.current?.focus();
     });
 
- }, [barcode, countingList, currentWarehouseId, toast, playBeep, getWarehouseName]);
+ }, [barcode, currentWarehouseId, toast, playBeep, getWarehouseName]);
 
 
  // Modify product count or stock, handling confirmation dialog
@@ -671,15 +667,15 @@ export default function Home() {
      // Update stock in IndexedDB if stock changed and no confirmation needed
      if (type === 'stock') {
          try {
-             // Find the product in the *updated* list to get the potentially new stock value
-             const updatedProduct = countingList.find(p => p.barcode === barcodeToUpdate && p.warehouseId === warehouseId);
-             const newStockValue = updatedProduct?.stock ?? 0; // Use the state value after optimistic update
+             // Use the final value calculated above
+             const currentProductState = countingList.find(p => p.barcode === barcodeToUpdate && p.warehouseId === warehouseId);
+             const newStockValue = finalValue; // Use the calculated finalValue
 
              const itemToUpdate: InventoryItem = {
                 barcode: barcodeToUpdate,
                 warehouseId: warehouseId,
-                stock: newStockValue, // Use the calculated finalValue
-                count: updatedProduct?.count ?? 0, // Keep current count
+                stock: newStockValue,
+                count: currentProductState?.count ?? 0, // Keep current count from state
                 lastUpdated: new Date().toISOString()
             };
              await addOrUpdateInventoryItem(itemToUpdate);
@@ -766,14 +762,15 @@ export default function Home() {
      // Update stock in IndexedDB if stock changed
      if (type === 'stock') {
          try {
-              const updatedProduct = countingList.find(p => p.barcode === barcodeToUpdate && p.warehouseId === warehouseId);
-              const newStockValue = updatedProduct?.stock ?? 0; // Use state value after optimistic update
+              // Use the final value calculated above
+              const currentProductState = countingList.find(p => p.barcode === barcodeToUpdate && p.warehouseId === warehouseId);
+              const newStockValue = finalValue;
 
               const itemToUpdate: InventoryItem = {
                  barcode: barcodeToUpdate,
                  warehouseId: warehouseId,
-                 stock: newStockValue, // Use finalValue
-                 count: updatedProduct?.count ?? 0, // Keep current count
+                 stock: newStockValue,
+                 count: currentProductState?.count ?? 0, // Keep current count from state
                  lastUpdated: new Date().toISOString()
              };
              await addOrUpdateInventoryItem(itemToUpdate);
@@ -800,6 +797,7 @@ export default function Home() {
          setIsConfirmDialogOpen(true);
      } else if (type === 'count' && !needsConfirmation) {
          const actionText = sumValue ? "sumada a" : "establecida en";
+         // Use the final value from state after update
          const currentCountValue = countingList.find(p => p.barcode === barcodeToUpdate && p.warehouseId === warehouseId)?.count ?? 0;
          toast({ title: "Cantidad Modificada", description: `Cantidad de ${updatedProductDescription} (${getWarehouseName(warehouseId)}) ${actionText} ${currentCountValue}.` });
      }
@@ -1275,9 +1273,10 @@ export default function Home() {
     ) => {
         if (!product) return null;
         const isStockDialog = type === 'stock';
-        const currentValue = isStockDialog ?
-            (countingList.find(p => p.barcode === product.barcode && p.warehouseId === currentWarehouseId)?.stock ?? 0) :
-            (countingList.find(p => p.barcode === product.barcode && p.warehouseId === currentWarehouseId)?.count ?? 0);
+        // Ensure we get the LATEST value from the state, not from the potentially stale `product` prop
+        const currentProductState = countingList.find(p => p.barcode === product.barcode && p.warehouseId === currentWarehouseId);
+        const currentValue = isStockDialog ? (currentProductState?.stock ?? 0) : (currentProductState?.count ?? 0);
+
         const titleText = isStockDialog ? `Ajustar Stock (${product.description})` : `Ajustar Cantidad (${product.description})`;
         const descriptionText = isStockDialog ?
             `Ajuste el stock del producto en este almacén (${getWarehouseName(currentWarehouseId)}). Este cambio se reflejará en la base de datos.` :
@@ -1376,7 +1375,7 @@ export default function Home() {
                                              variant="outline"
                                              className="bg-green-100 dark:bg-green-900 border-green-500 hover:bg-green-200 dark:hover:bg-green-800 text-green-700 dark:text-green-300"
                                              title="Guardar (Reemplazar)"
-                                             onMouseDown={(e) => e.preventDefault()}
+                                             onMouseDown={(e) => e.preventDefault()} // Prevent blur on button click
                                          >
                                              <Check className="h-4 w-4 mr-1" /> Guardar
                                          </Button>
@@ -1387,7 +1386,7 @@ export default function Home() {
                                               className="bg-blue-100 dark:bg-blue-900 border-blue-500 hover:bg-blue-200 dark:hover:bg-blue-800 text-blue-700 dark:text-blue-300"
                                              onClick={() => handleValueSubmit(null, true)}
                                              title="Sumar a la cantidad actual (Shift+Enter)"
-                                              onMouseDown={(e) => e.preventDefault()}
+                                              onMouseDown={(e) => e.preventDefault()} // Prevent blur on button click
                                          >
                                               <Plus className="h-4 w-4 mr-1" /> Sumar
                                          </Button>
@@ -1553,7 +1552,7 @@ export default function Home() {
                  <div className="flex items-center gap-2">
                      <WarehouseIcon className="h-5 w-5 text-gray-600 dark:text-gray-400"/>
                       <Select value={currentWarehouseId} onValueChange={handleWarehouseChange}>
-                          <SelectTrigger className="w-auto sm:w-[200px] bg-white dark:bg-gray-800 border-gray-300 dark:border-gray-600">
+                          <SelectTrigger className="w-auto min-w-[150px] max-w-[200px] bg-white dark:bg-gray-800 border-gray-300 dark:border-gray-600">
                               <SelectValue placeholder="Seleccionar Almacén" />
                           </SelectTrigger>
                           <SelectContent>
@@ -1567,7 +1566,7 @@ export default function Home() {
                  </div>
               )}
                <Select value={activeSection} onValueChange={handleSectionChange}>
-                    <SelectTrigger className="w-auto sm:w-[200px] bg-white dark:bg-gray-800 border-gray-300 dark:border-gray-600">
+                    <SelectTrigger className="w-auto min-w-[150px] max-w-[200px] bg-white dark:bg-gray-800 border-gray-300 dark:border-gray-600">
                         <SelectValue placeholder="Seleccionar Sección" />
                     </SelectTrigger>
                     <SelectContent>
@@ -1699,4 +1698,5 @@ export default function Home() {
     </div>
   );
 }
+
     

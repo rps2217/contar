@@ -550,8 +550,10 @@ export default function Home() {
 
 
      // Asynchronous part: fetch details if product was not found in the current list state
-     const listSnapshot = countingList; // Take snapshot *before* async call
+     // Use a snapshot of the list to avoid race conditions with rapid state updates
+     const listSnapshot = [...countingList]; // Create a copy of the current list state
      const existingProductIndexSnapshot = listSnapshot.findIndex((p) => p.barcode === trimmedBarcode && p.warehouseId === currentWarehouseId);
+
 
     if (existingProductIndexSnapshot === -1) {
         try {
@@ -573,7 +575,7 @@ export default function Home() {
                  playBeep(660, 150);
              } else {
                 // Product detail not found in DB at all
-                 playBeep(440, 300);
+                 playBeep(440, 300); // Lower pitch for unknown product
                  const newProductDetail: ProductDetail = {
                     barcode: trimmedBarcode,
                     description: `Producto desconocido ${trimmedBarcode}`,
@@ -670,16 +672,19 @@ export default function Home() {
      // Update stock in IndexedDB if stock changed and no confirmation needed
      if (type === 'stock') {
          try {
-             const currentProduct = countingList.find(p => p.barcode === barcodeToUpdate && p.warehouseId === warehouseId);
+             // Find the product in the *updated* list to get the potentially new stock value
+             const updatedProduct = countingList.find(p => p.barcode === barcodeToUpdate && p.warehouseId === warehouseId);
+             const newStockValue = updatedProduct?.stock ?? 0; // Use the state value after optimistic update
+
              const itemToUpdate: InventoryItem = {
                 barcode: barcodeToUpdate,
                 warehouseId: warehouseId,
-                stock: finalValue, // Use the calculated finalValue
-                count: currentProduct?.count ?? 0, // Keep current count
+                stock: newStockValue, // Use the calculated finalValue
+                count: updatedProduct?.count ?? 0, // Keep current count
                 lastUpdated: new Date().toISOString()
             };
              await addOrUpdateInventoryItem(itemToUpdate);
-             toast({ title: "Stock Actualizado", description: `Stock de ${updatedProductDescription} (${getWarehouseName(warehouseId)}) actualizado a ${finalValue} en la base de datos.` });
+             toast({ title: "Stock Actualizado", description: `Stock de ${updatedProductDescription} (${getWarehouseName(warehouseId)}) actualizado a ${newStockValue} en la base de datos.` });
          } catch (error) {
              console.error("Failed to update stock in DB:", error);
              toast({ variant: "destructive", title: "Error DB", description: "No se pudo actualizar el stock en la base de datos." });
@@ -704,7 +709,8 @@ export default function Home() {
         setIsConfirmDialogOpen(true);
     } else if (type === 'count' && !needsConfirmation) {
          // Toast for non-confirmed count changes (using the updated finalValue)
-         toast({ title: "Cantidad Modificada", description: `Cantidad de ${updatedProductDescription} (${getWarehouseName(warehouseId)}) cambiada a ${finalValue}.` });
+         const currentCountValue = countingList.find(p => p.barcode === barcodeToUpdate && p.warehouseId === warehouseId)?.count ?? 0;
+         toast({ title: "Cantidad Modificada", description: `Cantidad de ${updatedProductDescription} (${getWarehouseName(warehouseId)}) cambiada a ${currentCountValue}.` });
     }
 
  }, [countingList, currentWarehouseId, toast, getWarehouseName]);
@@ -761,16 +767,18 @@ export default function Home() {
      // Update stock in IndexedDB if stock changed
      if (type === 'stock') {
          try {
-              const currentProduct = countingList.find(p => p.barcode === barcodeToUpdate && p.warehouseId === warehouseId);
+              const updatedProduct = countingList.find(p => p.barcode === barcodeToUpdate && p.warehouseId === warehouseId);
+              const newStockValue = updatedProduct?.stock ?? 0; // Use state value after optimistic update
+
               const itemToUpdate: InventoryItem = {
                  barcode: barcodeToUpdate,
                  warehouseId: warehouseId,
-                 stock: finalValue, // Use finalValue
-                 count: currentProduct?.count ?? 0, // Keep current count
+                 stock: newStockValue, // Use finalValue
+                 count: updatedProduct?.count ?? 0, // Keep current count
                  lastUpdated: new Date().toISOString()
              };
              await addOrUpdateInventoryItem(itemToUpdate);
-             toast({ title: "Stock Actualizado", description: `Stock de ${updatedProductDescription} (${getWarehouseName(warehouseId)}) actualizado a ${finalValue} en la base de datos.` });
+             toast({ title: "Stock Actualizado", description: `Stock de ${updatedProductDescription} (${getWarehouseName(warehouseId)}) actualizado a ${newStockValue} en la base de datos.` });
          } catch (error) {
              console.error("Failed to update stock in DB:", error);
              toast({ variant: "destructive", title: "Error DB", description: "No se pudo actualizar el stock en la base de datos." });
@@ -793,7 +801,8 @@ export default function Home() {
          setIsConfirmDialogOpen(true);
      } else if (type === 'count' && !needsConfirmation) {
          const actionText = sumValue ? "sumada a" : "establecida en";
-         toast({ title: "Cantidad Modificada", description: `Cantidad de ${updatedProductDescription} (${getWarehouseName(warehouseId)}) ${actionText} ${finalValue}.` });
+         const currentCountValue = countingList.find(p => p.barcode === barcodeToUpdate && p.warehouseId === warehouseId)?.count ?? 0;
+         toast({ title: "Cantidad Modificada", description: `Cantidad de ${updatedProductDescription} (${getWarehouseName(warehouseId)}) ${actionText} ${currentCountValue}.` });
      }
 
      setIsEditingValueInDialog(false);
@@ -915,9 +924,7 @@ export default function Home() {
     }
     setIsBackingUp(true); // Start loading indicator
     try {
-        // Get the current warehouse name
         const currentWHName = getWarehouseName(currentWarehouseId);
-        // Call the Server Action, passing the sheet ID
         const result = await backupToGoogleSheet(countingList, currentWHName, backupSheetId);
 
         if (result.success) {
@@ -929,22 +936,22 @@ export default function Home() {
             toast({
                 variant: "destructive",
                 title: "Error de Respaldo",
-                description: result.message,
+                description: result.message, // Display the specific error message from the server
                 duration: 9000,
             });
         }
-    } catch (error) {
+    } catch (error: any) { // Catch potential errors during the action call itself
         console.error("Error calling backupToGoogleSheet Server Action:", error);
         toast({
             variant: "destructive",
             title: "Error de Respaldo",
-            description: "Ocurrió un error inesperado al intentar respaldar en Google Sheet.",
+            description: error.message || "Ocurrió un error inesperado al intentar respaldar en Google Sheet.",
             duration: 9000,
         });
     } finally {
         setIsBackingUp(false); // Stop loading indicator
     }
- }, [countingList, currentWarehouseId, getWarehouseName, toast, backupSheetId]); // Added backupSheetId
+ }, [countingList, currentWarehouseId, getWarehouseName, toast, backupSheetId]);
 
 
  // Converts an array of DisplayProduct objects to a CSV string
@@ -1084,17 +1091,19 @@ export default function Home() {
         let reader: BrowserMultiFormatReader | null = null;
         let cancelled = false;
         let timeoutId: NodeJS.Timeout | null = null;
+        let isMounted = true; // Track if component is still mounted
 
         const initScanner = async () => {
-             if (!isScanning || cancelled) {
+             if (!isScanning || !isMounted) {
                  stopCameraStream();
                  return;
              }
 
+             // Ensure videoRef is available before proceeding
              if (!videoRef.current) {
                  console.error("Video element ref is not available.");
                  // Retry after a short delay if component is still mounted and scanning
-                 if (!cancelled) {
+                 if (!cancelled && isMounted) {
                       timeoutId = setTimeout(initScanner, 100);
                  }
                  return;
@@ -1111,7 +1120,7 @@ export default function Home() {
                 console.log("Requesting camera permission...");
                 const constraints = { video: { facingMode: "environment" } };
                 const stream = await navigator.mediaDevices.getUserMedia(constraints);
-                 if (cancelled) {
+                 if (cancelled || !isMounted) {
                      stream.getTracks().forEach(track => track.stop());
                      return;
                  }
@@ -1120,59 +1129,66 @@ export default function Home() {
                 setHasCameraPermission(true);
                 streamRef.current = stream;
 
-                currentVideoRef.srcObject = stream;
-                // Wait for metadata to load before playing
-                await new Promise<void>((resolve, reject) => {
+                if (currentVideoRef) { // Double check ref after await
+                  currentVideoRef.srcObject = stream;
+                  // Wait for metadata to load before playing
+                  await new Promise<void>((resolve, reject) => {
                     currentVideoRef.onloadedmetadata = () => resolve();
                     currentVideoRef.onerror = (e) => reject(new Error(`Video metadata error: ${e}`));
-                });
+                  });
 
 
-                if (cancelled) return; // Check again after await
+                  if (cancelled || !isMounted) return; // Check again after await
 
-                 await currentVideoRef.play(); // Play the video stream
+                  await currentVideoRef.play(); // Play the video stream
 
-                 if (cancelled) return; // Check again after await
-                 console.log("Video stream attached and playing.");
+                   if (cancelled || !isMounted) return; // Check again after await
+                   console.log("Video stream attached and playing.");
 
-                 if (reader) {
-                     console.log("Starting barcode decoding from video device...");
-                      reader.decodeFromVideoDevice(undefined, currentVideoRef, (result, err) => {
-                         if (cancelled) return;
+                   if (reader) {
+                       console.log("Starting barcode decoding from video device...");
+                        reader.decodeFromVideoDevice(undefined, currentVideoRef, (result, err) => {
+                           if (cancelled || !isMounted) return;
 
-                         if (result) {
-                             console.log('Barcode detected:', result.getText());
-                             const detectedBarcode = result.getText().trim().replace(/\r?\n|\r/g, ''); // Clean barcode
-                             setIsScanning(false); // Close modal on successful scan
-                             playBeep(900, 80);
-                             requestAnimationFrame(() => {
-                                 setBarcode(detectedBarcode);
-                                 handleAddProduct(detectedBarcode);
-                             });
-                         }
-                         if (err && !(err instanceof NotFoundException)) {
-                             console.error('Scanning error:', err);
-                             // Consider adding non-intrusive UI feedback for scanning errors
-                         }
-                      }).catch(decodeErr => {
-                           if (!cancelled) {
-                              console.error("Error starting decodeFromVideoDevice:", decodeErr);
-                              toast({ variant: "destructive", title: "Error de Escaneo", description: "No se pudo iniciar la decodificación del código de barras."});
-                              stopCameraStream();
-                              setIsScanning(false);
+                           if (result) {
+                               console.log('Barcode detected:', result.getText());
+                               const detectedBarcode = result.getText().trim().replace(/\r?\n|\r/g, ''); // Clean barcode
+                               setIsScanning(false); // Close modal on successful scan
+                               playBeep(900, 80);
+                               requestAnimationFrame(() => {
+                                   setBarcode(detectedBarcode);
+                                   handleAddProduct(detectedBarcode);
+                               });
                            }
-                      });
-                     console.log("Barcode decoding started.");
-                 } else {
-                     if (cancelled) return;
-                     console.error("Scanner reader was not initialized.");
-                     stopCameraStream();
-                     setIsScanning(false);
-                     toast({ variant: "destructive", title: "Error de escáner", description: "No se pudo inicializar el lector de códigos."});
-                 }
+                           if (err && !(err instanceof NotFoundException)) {
+                               console.error('Scanning error:', err);
+                               // Consider adding non-intrusive UI feedback for scanning errors
+                           }
+                        }).catch(decodeErr => {
+                             if (!cancelled && isMounted) {
+                                console.error("Error starting decodeFromVideoDevice:", decodeErr);
+                                toast({ variant: "destructive", title: "Error de Escaneo", description: "No se pudo iniciar la decodificación del código de barras."});
+                                stopCameraStream();
+                                setIsScanning(false);
+                             }
+                        });
+                       console.log("Barcode decoding started.");
+                   } else {
+                       if (cancelled || !isMounted) return;
+                       console.error("Scanner reader was not initialized.");
+                       stopCameraStream();
+                       setIsScanning(false);
+                       toast({ variant: "destructive", title: "Error de escáner", description: "No se pudo inicializar el lector de códigos."});
+                   }
+                } else {
+                   if (!cancelled) {
+                     console.warn("Video ref became null after permission grant.");
+                     stream.getTracks().forEach(track => track.stop());
+                   }
+                }
 
             } catch (error: any) {
-                if (cancelled) return;
+                if (cancelled || !isMounted) return;
 
                 console.error('Error accessing camera or starting scanner:', error);
                 setHasCameraPermission(false);
@@ -1197,6 +1213,7 @@ export default function Home() {
 
         return () => {
             console.log("Cleaning up camera effect...");
+            isMounted = false;
             cancelled = true;
             if (timeoutId) {
                 clearTimeout(timeoutId);
@@ -1650,3 +1667,5 @@ export default function Home() {
     </div>
   );
 }
+
+      

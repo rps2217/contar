@@ -1,3 +1,4 @@
+
 // src/app/actions/backup-actions.ts
 'use server';
 
@@ -7,15 +8,12 @@ import { JWT } from 'google-auth-library';
 import { format } from 'date-fns';
 
 // --- Configuration ---
-// Ensure these environment variables are set in your .env.local file or hosting environment
-const SPREADSHEET_ID = process.env.GOOGLE_SHEET_ID!; // The ID of your Google Sheet
-const SHEET_NAME = process.env.GOOGLE_SHEET_NAME || 'Inventario'; // The name of the sheet (tab) to append to
+// Environment variables for authentication
 const SERVICE_ACCOUNT_EMAIL = process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL!;
 const PRIVATE_KEY = process.env.GOOGLE_PRIVATE_KEY!.replace(/\\n/g, '\n'); // Replace escaped newlines
+const DEFAULT_SHEET_NAME = process.env.GOOGLE_SHEET_NAME || 'Inventario'; // Default sheet name if needed
 
-if (!SPREADSHEET_ID) {
-    console.error("Missing environment variable: GOOGLE_SHEET_ID");
-}
+// Basic check for required credentials
 if (!SERVICE_ACCOUNT_EMAIL) {
     console.error("Missing environment variable: GOOGLE_SERVICE_ACCOUNT_EMAIL");
 }
@@ -42,7 +40,8 @@ const authenticate = async () => {
 // --- Main Server Action ---
 export const backupToGoogleSheet = async (
     countingListData: DisplayProduct[],
-    warehouseName: string // Add warehouseName for context
+    warehouseName: string, // Add warehouseName for context
+    spreadsheetId: string // Add spreadsheetId as a parameter
 ): Promise<{ success: boolean; message: string }> => {
   console.log("Starting backupToGoogleSheet Server Action...");
 
@@ -50,18 +49,18 @@ export const backupToGoogleSheet = async (
     console.log("No data provided for backup.");
     return { success: false, message: 'No hay datos para respaldar.' };
   }
-   if (!SPREADSHEET_ID) {
-      return { success: false, message: 'GOOGLE_SHEET_ID no está configurado en el servidor.' };
+  if (!spreadsheetId || !spreadsheetId.trim()) {
+      console.error("Missing spreadsheetId for backup.");
+      return { success: false, message: 'Se requiere el ID de la Hoja de Google para el respaldo.' };
   }
 
   try {
     const auth = await authenticate();
     const sheets = google.sheets({ version: 'v4', auth });
+    const sheetName = DEFAULT_SHEET_NAME; // Use the default or configured sheet name
 
     // --- Prepare Data for Sheets API ---
-    // Define headers (optional, but good for clarity if sheet is empty)
     // const headers = ["BackupTimestamp", "WarehouseName", "Barcode", "Description", "Provider", "Stock", "Count", "Last Updated"];
-
     const backupTimestamp = format(new Date(), 'yyyy-MM-dd HH:mm:ss');
 
     const values = countingListData.map(product => [
@@ -76,10 +75,10 @@ export const backupToGoogleSheet = async (
     ]);
 
     // --- Append Data to the Sheet ---
-    console.log(`Appending ${values.length} rows to sheet: ${SPREADSHEET_ID} - ${SHEET_NAME}`);
+    console.log(`Appending ${values.length} rows to sheet: ${spreadsheetId} - ${sheetName}`);
     const response = await sheets.spreadsheets.values.append({
-      spreadsheetId: SPREADSHEET_ID,
-      range: `${SHEET_NAME}!A1`, // Append starting from cell A1 of the specified sheet
+      spreadsheetId: spreadsheetId, // Use the provided spreadsheetId
+      range: `${sheetName}!A1`, // Append starting from cell A1 of the specified sheet
       valueInputOption: 'USER_ENTERED', // How the input data should be interpreted
       insertDataOption: 'INSERT_ROWS', // Insert new rows for the data
       requestBody: {
@@ -91,7 +90,7 @@ export const backupToGoogleSheet = async (
 
     if (response.status === 200) {
       console.log("Backup to Google Sheet successful.");
-      return { success: true, message: `Respaldo exitoso. ${values.length} filas agregadas a ${SHEET_NAME}.` };
+      return { success: true, message: `Respaldo exitoso. ${values.length} filas agregadas a ${sheetName} en la hoja ${spreadsheetId}.` };
     } else {
       console.error("Error response from Google Sheets API:", response.status, response.statusText);
       return { success: false, message: `Error al respaldar: ${response.statusText}` };
@@ -107,10 +106,12 @@ export const backupToGoogleSheet = async (
         errorMessage = 'Error de red: No se pudo conectar a la API de Google Sheets.';
      } else if (error.response?.data?.error?.message) {
          errorMessage = `Error de API de Google Sheets: ${error.response.data.error.message}`;
-     } else if (error.message?.includes('permission') || error.message?.includes('PERMISSION_DENIED')) {
+     } else if (error.message?.includes('permission') || error.message?.includes('PERMISSION_DENIED') || error.response?.status === 403) {
           errorMessage = 'Error de Permiso: Verifica que la cuenta de servicio tenga permisos de edición en la hoja.';
      } else if (error.message?.includes('credentials')) {
          errorMessage = 'Error de Credenciales: Verifica las variables de entorno de la cuenta de servicio.';
+     } else if (error.response?.status === 404) {
+         errorMessage = 'Error: Hoja de cálculo no encontrada. Verifica el ID de la hoja.';
      }
     return { success: false, message: errorMessage };
   }

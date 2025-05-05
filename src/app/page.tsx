@@ -44,6 +44,7 @@ const LOCAL_STORAGE_WAREHOUSE_KEY = 'stockCounterPro_currentWarehouse';
 const LOCAL_STORAGE_WAREHOUSES_KEY = 'stockCounterPro_warehouses';
 const LOCAL_STORAGE_ACTIVE_SECTION_KEY = 'stockCounterPro_activeSection'; // Key for active section
 const LOCAL_STORAGE_GOOGLE_SHEET_URL_KEY = 'stockCounterPro_googleSheetUrl'; // Key for google sheet url
+const LOCAL_STORAGE_BACKUP_SHEET_ID_KEY = 'stockCounterPro_backupSheetId'; // Key for backup sheet ID
 
 // --- Helper Components ---
 
@@ -298,6 +299,8 @@ export default function Home() {
   const [editingValue, setEditingValue] = useState<string>(''); // State for the input value
   const valueInputRef = useRef<HTMLInputElement>(null); // Ref for the value input
   const [isBackingUp, setIsBackingUp] = useState(false); // State for backup loading
+  const [backupSheetId, setBackupSheetId] = useState<string>(''); // State for the backup Google Sheet ID
+
 
   // Load initial warehouses and active section from localStorage
   useEffect(() => {
@@ -311,6 +314,11 @@ export default function Home() {
 
       const initialActiveSection = localStorage.getItem(LOCAL_STORAGE_ACTIVE_SECTION_KEY) || 'Contador';
       setActiveSection(initialActiveSection);
+
+      const storedBackupSheetId = localStorage.getItem(LOCAL_STORAGE_BACKUP_SHEET_ID_KEY);
+      if (storedBackupSheetId) {
+        setBackupSheetId(storedBackupSheetId);
+      }
     } else {
       // Default values for server-side rendering or environments without localStorage
       setWarehouses([{ id: 'main', name: 'Almacén Principal' }]);
@@ -318,6 +326,14 @@ export default function Home() {
       setActiveSection('Contador');
     }
   }, []); // Run only once on mount
+
+  // Save backup sheet ID to localStorage
+  useEffect(() => {
+    if (typeof window !== 'undefined' && backupSheetId) {
+      localStorage.setItem(LOCAL_STORAGE_BACKUP_SHEET_ID_KEY, backupSheetId);
+    }
+  }, [backupSheetId]);
+
 
   const getLocalStorageKeyForWarehouse = (warehouseId: string) => {
     return `${LOCAL_STORAGE_COUNTING_LIST_KEY_PREFIX}${warehouseId}`;
@@ -889,12 +905,20 @@ export default function Home() {
         toast({ title: "Vacío", description: "No hay productos en el inventario actual para respaldar." });
         return;
     }
+     if (!backupSheetId.trim()) {
+        toast({
+            variant: "destructive",
+            title: "ID de Hoja Requerido",
+            description: "Por favor, introduce el ID de la Hoja de Google para el respaldo.",
+        });
+        return;
+    }
     setIsBackingUp(true); // Start loading indicator
     try {
         // Get the current warehouse name
         const currentWHName = getWarehouseName(currentWarehouseId);
-        // Call the Server Action
-        const result = await backupToGoogleSheet(countingList, currentWHName);
+        // Call the Server Action, passing the sheet ID
+        const result = await backupToGoogleSheet(countingList, currentWHName, backupSheetId);
 
         if (result.success) {
             toast({
@@ -920,7 +944,7 @@ export default function Home() {
     } finally {
         setIsBackingUp(false); // Stop loading indicator
     }
- }, [countingList, currentWarehouseId, getWarehouseName, toast]);
+ }, [countingList, currentWarehouseId, getWarehouseName, toast, backupSheetId]); // Added backupSheetId
 
 
  // Converts an array of DisplayProduct objects to a CSV string
@@ -1558,10 +1582,19 @@ export default function Home() {
                 />
 
               <div className="mt-4 flex flex-col sm:flex-row justify-end items-center gap-2">
+                 <Input
+                    type="text"
+                    placeholder="ID de Hoja de Google para Respaldo"
+                    value={backupSheetId}
+                    onChange={(e) => setBackupSheetId(e.target.value)}
+                    className="w-full sm:w-auto flex-grow bg-white dark:bg-gray-800 border-gray-300 dark:border-gray-600"
+                    aria-label="ID de la Hoja de Google para respaldo"
+                    disabled={isDbLoading || isBackingUp}
+                 />
                  <Button
                       onClick={handleBackupToGoogleSheet}
                       className="bg-green-600 hover:bg-green-700 text-white rounded-md shadow-sm px-5 py-2 transition-colors duration-200 w-full sm:w-auto"
-                      disabled={countingList.length === 0 || isDbLoading || isBackingUp} // Disable while backing up
+                      disabled={countingList.length === 0 || isDbLoading || isBackingUp || !backupSheetId.trim()} // Disable if no Sheet ID
                       aria-label="Respaldar inventario actual a Google Sheet"
                  >
                       {isBackingUp ? (

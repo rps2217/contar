@@ -1,5 +1,4 @@
 
-
 "use client";
 
 import type { DisplayProduct, InventoryItem, ProductDetail } from '@/types/product';
@@ -26,7 +25,7 @@ import {
 } from "@/components/ui/table";
 import { WarehouseManagement } from "@/components/warehouse-management";
 import { format } from 'date-fns';
-import { Minus, Plus, Trash, RefreshCw, Warehouse as WarehouseIcon, Camera, AlertCircle, Search, Check, AppWindow, Database, Boxes } from "lucide-react";
+import { Minus, Plus, Trash, RefreshCw, Warehouse as WarehouseIcon, Camera, AlertCircle, Search, Check, AppWindow, Database, Boxes, UploadCloud } from "lucide-react";
 import React, { useCallback, useEffect, useRef, useState } from "react";
 // Import ZXing library for barcode scanning
 import { BrowserMultiFormatReader, NotFoundException } from '@zxing/library';
@@ -34,6 +33,7 @@ import { BrowserMultiFormatReader, NotFoundException } from '@zxing/library';
 import {
     addOrUpdateInventoryItem,
     getDisplayProductForWarehouse,
+    getProductDetail,
     addOrUpdateProductDetail,
     getInventoryItemsForWarehouse,
 } from '@/lib/indexeddb-helpers';
@@ -80,19 +80,20 @@ const BarcodeEntry: React.FC<BarcodeEntryProps> = ({
     <div className="flex items-center mb-4 gap-2">
         <Input
            type="number"
-           pattern="\d*"
-           inputMode="numeric"
+           pattern="\d*" // Ensures numeric keyboard on mobile if supported
+           inputMode="numeric" // Better semantic for numeric input
            placeholder="Escanear o ingresar código de barras"
            value={barcode}
            onChange={(e) => {
+               // Ensure only digits are entered
                const numericValue = e.target.value.replace(/\D/g, '');
                setBarcode(numericValue);
            }}
            className="mr-2 flex-grow bg-yellow-100 dark:bg-yellow-900 border-teal-300 dark:border-teal-700 focus:ring-teal-500 focus:border-teal-500 rounded-md shadow-sm"
            ref={inputRef}
            onKeyDown={handleKeyDown}
-           aria-label="Código de barras"
-           disabled={isLoading}
+            aria-label="Código de barras"
+            disabled={isLoading} // Disable input when DB is loading initially
          />
          <Button
             onClick={onScanClick}
@@ -111,7 +112,7 @@ const BarcodeEntry: React.FC<BarcodeEntryProps> = ({
            onClick={onAddProduct}
            className="bg-teal-600 hover:bg-teal-700 text-white rounded-md shadow-sm px-5 py-2 transition-colors duration-200"
            aria-label="Agregar producto al almacén actual"
-           disabled={isLoading}
+           disabled={isLoading || !barcode.trim()} // Disable if loading or barcode is empty
          >
            Agregar
          </Button>
@@ -160,12 +161,12 @@ const CountingListTable: React.FC<CountingListTableProps> = ({
            <TableCaption className="py-3 text-sm text-gray-500 dark:text-gray-400">Inventario para {warehouseName}.</TableCaption>
            <TableHeader className="bg-gray-50 dark:bg-gray-700 sticky top-0 z-10 shadow-sm">
              <TableRow>
-               <TableHead className="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider w-[35%] sm:w-2/5">Descripción</TableHead>
+               <TableHead className="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider w-[35%] sm:w-2/5">Descripción (Click para Borrar)</TableHead>
                <TableHead className="hidden sm:table-cell px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider w-1/5">
                  Proveedor
                </TableHead>
-               <TableHead className="px-4 py-3 text-center text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider w-[10%] sm:w-[10%]">Stock</TableHead>
-               <TableHead className="px-4 py-3 text-center text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider w-[10%] sm:w-[10%]">Cantidad</TableHead>
+               <TableHead className="px-4 py-3 text-center text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider w-[10%] sm:w-[10%]">Stock (Click para Editar)</TableHead>
+               <TableHead className="px-4 py-3 text-center text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider w-[10%] sm:w-[10%]">Cantidad (Click para Editar)</TableHead>
                <TableHead className="hidden md:table-cell px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider w-1/5">Última Actualización</TableHead>
                <TableHead className="hidden md:table-cell px-4 py-3 text-center text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider w-[5%]">Validación</TableHead>
                <TableHead className="text-center hidden md:table-cell px-4 py-3 text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider w-[15%]">Acciones</TableHead>
@@ -879,6 +880,23 @@ export default function Home() {
     }
  }, [countingList, currentWarehouseId, toast, getWarehouseName]);
 
+ // --- Backup to Google Sheet (CSV Export) ---
+ const handleBackupToGoogleSheet = useCallback(() => {
+    if (countingList.length === 0) {
+        toast({ title: "Vacío", description: "No hay productos en el inventario actual para respaldar." });
+        return;
+    }
+     // Trigger the same export function
+     handleExport();
+     // Provide guidance to the user
+     toast({
+        title: "Respaldo Iniciado (CSV)",
+        description: "Se ha generado un archivo CSV. Por favor, cópialo y pégalo manualmente en tu Google Sheet: https://docs.google.com/spreadsheets/d/1YIDzySfVBahkvMLGPjpMsB8FyDr3sIa1TFnDOIvZjRY/edit?usp=sharing",
+        duration: 15000, // Longer duration for the message
+     });
+ }, [countingList, handleExport, toast]);
+
+
  // Converts an array of DisplayProduct objects to a CSV string
  const convertToCSV = (data: (DisplayProduct & { warehouseName?: string })[]) => {
     const headers = ["Barcode", "Description", "Provider", "WarehouseName", "Stock", "Count", "Last Updated"];
@@ -1436,7 +1454,7 @@ export default function Home() {
                  <div className="flex items-center gap-2">
                      <WarehouseIcon className="h-5 w-5 text-gray-600 dark:text-gray-400"/>
                       <Select value={currentWarehouseId} onValueChange={handleWarehouseChange}>
-                          <SelectTrigger className="w-[180px] sm:w-[200px] bg-white dark:bg-gray-800 border-gray-300 dark:border-gray-600">
+                          <SelectTrigger className="w-auto sm:w-[200px] bg-white dark:bg-gray-800 border-gray-300 dark:border-gray-600">
                               <SelectValue placeholder="Seleccionar Almacén" />
                           </SelectTrigger>
                           <SelectContent>
@@ -1450,7 +1468,7 @@ export default function Home() {
                  </div>
               )}
                <Select value={activeSection} onValueChange={handleSectionChange}>
-                    <SelectTrigger className="w-full sm:w-auto md:w-[200px] bg-white dark:bg-gray-800 border-gray-300 dark:border-gray-600">
+                    <SelectTrigger className="w-auto sm:w-[200px] bg-white dark:bg-gray-800 border-gray-300 dark:border-gray-600">
                         <SelectValue placeholder="Seleccionar Sección" />
                     </SelectTrigger>
                     <SelectContent>
@@ -1513,10 +1531,19 @@ export default function Home() {
                     tableHeightClass="h-[calc(100vh-360px)] md:h-[calc(100vh-330px)]"
                 />
 
-              <div className="mt-4 flex justify-end items-center">
+              <div className="mt-4 flex flex-col sm:flex-row justify-end items-center gap-2">
+                 <Button
+                      onClick={handleBackupToGoogleSheet}
+                      className="bg-green-600 hover:bg-green-700 text-white rounded-md shadow-sm px-5 py-2 transition-colors duration-200 w-full sm:w-auto"
+                      disabled={countingList.length === 0 || isDbLoading}
+                      aria-label="Respaldar inventario actual a Google Sheet (CSV)"
+                 >
+                     <UploadCloud className="mr-2 h-4 w-4" />
+                     Respaldar a Google Sheet (CSV)
+                 </Button>
                 <Button
                     onClick={handleExport}
-                     className="bg-blue-600 hover:bg-blue-700 text-white rounded-md shadow-sm px-5 py-2 transition-colors duration-200"
+                     className="bg-blue-600 hover:bg-blue-700 text-white rounded-md shadow-sm px-5 py-2 transition-colors duration-200 w-full sm:w-auto"
                      disabled={countingList.length === 0 || isDbLoading}
                      aria-label="Exportar inventario actual a CSV"
                  >
@@ -1560,4 +1587,3 @@ export default function Home() {
     </div>
   );
 }
-

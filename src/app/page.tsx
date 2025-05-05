@@ -1,4 +1,3 @@
-
 "use client";
 
 import type { DisplayProduct, InventoryItem, ProductDetail } from '@/types/product';
@@ -43,7 +42,6 @@ const LOCAL_STORAGE_COUNTING_LIST_KEY_PREFIX = 'stockCounterPro_countingList_';
 const LOCAL_STORAGE_WAREHOUSE_KEY = 'stockCounterPro_currentWarehouse';
 const LOCAL_STORAGE_WAREHOUSES_KEY = 'stockCounterPro_warehouses';
 const LOCAL_STORAGE_ACTIVE_SECTION_KEY = 'stockCounterPro_activeSection'; // Key for active section
-const LOCAL_STORAGE_GOOGLE_SHEET_URL_KEY = 'stockCounterPro_googleSheetUrl'; // Key for google sheet url
 const LOCAL_STORAGE_BACKUP_SHEET_ID_KEY = 'stockCounterPro_backupSheetId'; // Key for backup sheet ID
 
 // --- Helper Components ---
@@ -54,7 +52,7 @@ interface BarcodeEntryProps {
   onAddProduct: () => void;
   onScanClick: () => void;
   onRefreshStock: () => void;
-  isLoading: boolean;
+  isLoading: boolean; // Generic loading state from parent
   isScanning: boolean;
   isRefreshingStock: boolean;
   inputRef: React.RefObject<HTMLInputElement>;
@@ -66,7 +64,7 @@ const BarcodeEntry: React.FC<BarcodeEntryProps> = ({
   onAddProduct,
   onScanClick,
   onRefreshStock,
-  isLoading,
+  isLoading, // Use the generic loading prop
   isScanning,
   isRefreshingStock,
   inputRef
@@ -95,7 +93,7 @@ const BarcodeEntry: React.FC<BarcodeEntryProps> = ({
            ref={inputRef}
            onKeyDown={handleKeyDown}
             aria-label="Código de barras"
-            disabled={isLoading} // Disable input when DB is loading initially
+            disabled={isLoading || isScanning || isRefreshingStock} // Disable if any loading state is active
          />
          <Button
             onClick={onScanClick}
@@ -216,7 +214,7 @@ const CountingListTable: React.FC<CountingListTableProps> = ({
                   </TableCell>
                    <TableCell className="hidden md:table-cell px-4 py-3 text-center">
                        {product.count === product.stock && product.stock !== 0 ? (
-                           <span className="text-green-600 dark:text-green-400 font-semibold">OK</span>
+                           <Check className="h-5 w-5 text-green-600 dark:text-green-400 mx-auto" />
                        ) : product.count > product.stock ? (
                            <span className="text-yellow-600 dark:text-yellow-400 font-semibold">+{product.count - product.stock}</span>
                        ) : product.stock > 0 && product.count < product.stock ? (
@@ -1569,7 +1567,7 @@ export default function Home() {
                     onAddProduct={() => handleAddProduct()}
                     onScanClick={handleScanButtonClick}
                     onRefreshStock={handleRefreshStock}
-                    isLoading={isDbLoading}
+                    isLoading={isDbLoading || isRefreshingStock || isBackingUp} // Combine loading states
                     isScanning={isScanning}
                     isRefreshingStock={isRefreshingStock}
                     inputRef={barcodeInputRef}
@@ -1667,5 +1665,3 @@ export default function Home() {
     </div>
   );
 }
-
-      

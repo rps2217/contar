@@ -1,3 +1,4 @@
+// src/app/page.tsx
 "use client";
 
 import type { DisplayProduct, InventoryItem, ProductDetail } from '@/types/product';
@@ -29,6 +30,7 @@ import {
     addOrUpdateProductDetail,
     getInventoryItemsForWarehouse,
     getAllProductDetails, // Import function to get all product details
+    getInventoryItem, // Import to get current stock before edit
 } from '@/lib/indexeddb-helpers';
 import { backupToGoogleSheet } from './actions/backup-actions';
 import { playBeep } from '@/lib/helpers';
@@ -39,6 +41,7 @@ import { ConfirmationDialog } from '@/components/confirmation-dialog';
 import { ScannerDialog } from '@/components/scanner-dialog';
 import { useBarcodeScanner } from '@/hooks/use-barcode-scanner';
 import { useLocalStorage } from '@/hooks/use-local-storage';
+import { EditProductDialog } from '@/components/edit-product-dialog'; // Import EditProductDialog
 
 // --- Constants ---
 const LOCAL_STORAGE_COUNTING_LIST_KEY_PREFIX = 'stockCounterPro_countingList_';
@@ -86,7 +89,7 @@ export default function Home() {
       ''
   );
 
-   const getWarehouseName = useCallback((warehouseId: string) => {
+   const getWarehouseName = useCallback((warehouseId: string | null | undefined) => {
         if (!warehouseId) return 'N/A';
         const warehouse = warehouses.find(w => w.id === warehouseId);
         return warehouse ? warehouse.name : `Almacén (${warehouseId})`;
@@ -129,7 +132,7 @@ export default function Home() {
       productExists = true;
       const productToUpdate = countingList[existingProductIndex];
       descriptionForToast = productToUpdate.description; // Get description before updating state
-      const newCount = productToUpdate.count + 1;
+      const newCount = (productToUpdate.count ?? 0) + 1;
       const updatedProductData: DisplayProduct = {
         ...productToUpdate,
         count: newCount,
@@ -220,28 +223,29 @@ export default function Home() {
 
  }, [barcode, currentWarehouseId, toast, getWarehouseName, countingList, setCountingList]); // Include countingList and setCountingList
 
-
-  // --- Barcode Scanner Hook ---
+ // --- Barcode Scanner Hook Setup ---
   const handleScanSuccess = useCallback((detectedBarcode: string) => {
-    setIsScanning(false);
+    console.log("handleScanSuccess triggered with barcode:", detectedBarcode);
+    setIsScanning(false); // Close the scanner dialog
     requestAnimationFrame(() => {
-      setBarcode(detectedBarcode);
-      // Call handleAddProduct directly to ensure it uses the latest scope
+      setBarcode(detectedBarcode); // Set the barcode state
+      // Immediately attempt to add the product using the scanned barcode
+      // Ensure handleAddProduct uses the *latest* state by passing the barcode directly
       handleAddProduct(detectedBarcode);
     });
   }, [handleAddProduct, setIsScanning, setBarcode]); // Depend on handleAddProduct
 
-
   const {
     isInitializing: isScannerInitializing,
     hasPermission: hasCameraPermission,
-    startScanning,
-    stopScanning,
+    startScanning, // Keep this if you want manual start
+    stopScanning,  // Keep this for manual stop/cancel
   } = useBarcodeScanner({
     onScanSuccess: handleScanSuccess,
-    videoRef: videoRef,
-    isEnabled: isScanning,
+    videoRef: videoRef, // Pass the ref to the video element
+    isEnabled: isScanning, // Control activation based on isScanning state
   });
+
 
   // --- Warehouse and Data Loading ---
 
@@ -268,7 +272,7 @@ export default function Home() {
                          (typeof item.warehouseId === 'undefined' || item.warehouseId === warehouseId) &&
                          typeof item.description === 'string' &&
                          typeof item.count === 'number' &&
-                         typeof item.stock === 'number'
+                         (typeof item.stock === 'number' || typeof item.stock === 'undefined' || item.stock === null) // Allow missing/null stock initially
                         )) {
                          loadedList = parsedList.map(item => ({
                              ...item,
@@ -276,7 +280,9 @@ export default function Home() {
                              warehouseId: warehouseId,
                              // Ensure count and stock are numbers, default to 0 if not
                              count: typeof item.count === 'number' ? item.count : 0,
-                             stock: typeof item.stock === 'number' ? item.stock : 0,
+                             stock: typeof item.stock === 'number' ? item.stock : 0, // Default stock to 0
+                             // Add lastUpdated if missing
+                              lastUpdated: item.lastUpdated || new Date().toISOString(),
                           }));
                           console.log(`Validated and loaded ${loadedList.length} items for warehouse ${warehouseId} from localStorage.`);
                       } else {
@@ -298,17 +304,20 @@ export default function Home() {
         toast({
             variant: "destructive",
             title: "Error de Carga",
-            description: `No se pudieron cargar los datos para el almacén seleccionado (${warehouseId}).`,
+            description: `No se pudieron cargar los datos para el almacén seleccionado (${getWarehouseName(warehouseId)}).`,
             duration: 9000,
         });
         setCountingList([]);
     } finally {
         setIsDbLoading(false);
         if (!isScanning && barcodeInputRef.current) {
-            barcodeInputRef.current.focus();
+             requestAnimationFrame(() => {
+                barcodeInputRef.current?.focus();
+             });
         }
     }
-  }, [toast, isScanning, setCountingList]); // Include setCountingList
+  }, [toast, isScanning, setCountingList, getWarehouseName]); // Include dependencies
+
 
   // Load data when the component mounts or warehouse changes
   useEffect(() => {
@@ -347,6 +356,7 @@ export default function Home() {
     let updatedProductDescription = '';
     const warehouseId = currentWarehouseId;
     let finalValue = 0;
+    let currentStockValue = 0; // To store stock value for confirmation message
 
     setCountingList(prevList => {
         const index = prevList.findIndex(p => p.barcode === barcodeToUpdate && p.warehouseId === warehouseId);
@@ -355,15 +365,16 @@ export default function Home() {
         const updatedList = [...prevList];
         const product = updatedList[index];
         updatedProductDescription = product.description;
+        currentStockValue = product.stock ?? 0; // Store current stock
 
 
         if (type === 'count') {
-            originalValue = product.count;
-            finalValue = Math.max(0, product.count + change);
+            originalValue = product.count ?? 0;
+            finalValue = Math.max(0, originalValue + change);
 
             // Confirmation needed if count now matches a non-zero stock,
             // or if it previously matched stock and is now changing away from it.
-            if (product.stock !== 0) {
+             if (product.stock !== 0) {
                 const changingToMatch = finalValue === product.stock && originalValue !== product.stock;
                 const changingFromMatch = originalValue === product.stock && finalValue !== product.stock;
                 if (changingToMatch || changingFromMatch) {
@@ -372,16 +383,19 @@ export default function Home() {
                 }
             }
 
+
             if (needsConfirmation) {
+                 console.log(`Confirmation needed for ${product.barcode}. Final: ${finalValue}, Stock: ${product.stock}`);
                 return prevList; // Don't update state yet, wait for confirmation
             } else {
                  // Update directly if no confirmation needed
+                 console.log(`Updating count directly for ${product.barcode} to ${finalValue}`);
                  updatedList[index] = { ...product, count: finalValue, lastUpdated: new Date().toISOString() };
             }
 
         } else { // type === 'stock'
-            originalValue = product.stock;
-            finalValue = Math.max(0, product.stock + change);
+            originalValue = product.stock ?? 0;
+            finalValue = Math.max(0, originalValue + change);
             updatedList[index] = { ...product, stock: finalValue, lastUpdated: new Date().toISOString() };
         }
 
@@ -389,7 +403,7 @@ export default function Home() {
     });
 
      // Update stock in DB only if type is 'stock'
-     if (type === 'stock') {
+     if (type === 'stock' && !needsConfirmation) { // Only update DB if not waiting for confirmation
          try {
               // Get the potentially updated product from the state AFTER setCountingList runs (or intended value)
              const itemToUpdate: InventoryItem = {
@@ -410,7 +424,7 @@ export default function Home() {
                 const index = prevList.findIndex(p => p.barcode === barcodeToUpdate && p.warehouseId === warehouseId);
                 if (index === -1) return prevList;
                 const revertedList = [...prevList];
-                revertedList[index] = { ...revertedList[index], stock: originalValue };
+                revertedList[index] = { ...revertedList[index], stock: originalValue }; // Use originalValue captured earlier
                 return revertedList;
              });
          }
@@ -420,17 +434,21 @@ export default function Home() {
     if (needsConfirmation && productToConfirm && type === 'count') {
         setConfirmQuantityProductBarcode(productToConfirm.barcode);
         setConfirmQuantityAction(change > 0 ? 'increment' : 'decrement');
-        const potentialNewCount = Math.max(0, productToConfirm.count + change); // Calculate based on state *before* update
+        const potentialNewCount = Math.max(0, (productToConfirm.count ?? 0) + change);
         setConfirmQuantityNewValue(potentialNewCount);
         setIsConfirmQuantityDialogOpen(true);
     } else if (type === 'count' && !needsConfirmation) {
           // Show immediate toast if no confirmation was needed
-          // Get the final count value from the *updated* state
-          const currentCountValue = countingList.find(p => p.barcode === barcodeToUpdate && p.warehouseId === warehouseId)?.count ?? 0;
-          toast({ title: "Cantidad Modificada", description: `Cantidad de ${updatedProductDescription} (${getWarehouseName(warehouseId)}) cambiada a ${currentCountValue}.` });
+          // Find the product again in the *potentially* updated list to get the description
+         const updatedProduct = countingList.find(p => p.barcode === barcodeToUpdate && p.warehouseId === warehouseId);
+         if (updatedProduct) {
+            toast({ title: "Cantidad Modificada", description: `Cantidad de ${updatedProduct.description} (${getWarehouseName(warehouseId)}) cambiada a ${updatedProduct.count ?? 0}.` });
+         }
+    } else if (type === 'stock' && !needsConfirmation) {
+        // Toast for stock change already handled inside the DB update success block
     }
 
- }, [countingList, currentWarehouseId, toast, getWarehouseName, setCountingList]); // Include setCountingList
+ }, [countingList, currentWarehouseId, toast, getWarehouseName, setCountingList]);
 
 
  // Handler to set product count or stock directly, handling confirmation dialog
@@ -446,6 +464,7 @@ export default function Home() {
      let updatedProductDescription = '';
      let originalValue = -1;
      let finalValue = 0;
+     let currentStockValue = 0; // To store stock value for confirmation message
 
      setCountingList(prevList => {
          const index = prevList.findIndex(p => p.barcode === barcodeToUpdate && p.warehouseId === warehouseId);
@@ -454,10 +473,11 @@ export default function Home() {
          const updatedList = [...prevList];
          const product = updatedList[index];
          updatedProductDescription = product.description;
+         currentStockValue = product.stock ?? 0; // Store current stock
 
 
          if (type === 'count') {
-             originalValue = product.count;
+             originalValue = product.count ?? 0;
              finalValue = sumValue ? (originalValue + newValue) : newValue;
              finalValue = Math.max(0, finalValue);
 
@@ -468,21 +488,23 @@ export default function Home() {
              }
 
              if (needsConfirmation) {
+                  console.log(`Confirmation needed for 'set' ${product.barcode}. Final: ${finalValue}, Stock: ${product.stock}`);
                  return prevList; // Don't update yet
              } else {
+                 console.log(`Updating count directly for 'set' ${product.barcode} to ${finalValue}`);
                   updatedList[index] = { ...product, count: finalValue, lastUpdated: new Date().toISOString() };
              }
          } else { // type === 'stock'
-             originalValue = product.stock;
+             originalValue = product.stock ?? 0;
              finalValue = sumValue ? (originalValue + newValue) : newValue;
-             finalValue = Math.max(0, finalValue);
+              finalValue = Math.max(0, finalValue);
              updatedList[index] = { ...product, stock: finalValue, lastUpdated: new Date().toISOString() };
          }
          return updatedList;
      });
 
-      // Update stock in DB only if type is 'stock'
-      if (type === 'stock') {
+      // Update stock in DB only if type is 'stock' and not waiting for confirmation
+      if (type === 'stock' && !needsConfirmation) {
           try {
                const itemToUpdate: InventoryItem = {
                   barcode: barcodeToUpdate,
@@ -517,16 +539,24 @@ export default function Home() {
       } else if (type === 'count' && !needsConfirmation) {
            // Show immediate toast if no confirmation was needed
            const actionText = sumValue ? "sumada a" : "establecida en";
-           const currentCountValue = countingList.find(p => p.barcode === barcodeToUpdate && p.warehouseId === warehouseId)?.count ?? 0;
-           toast({ title: "Cantidad Modificada", description: `Cantidad de ${updatedProductDescription} (${getWarehouseName(warehouseId)}) ${actionText} ${currentCountValue}.` });
+            // Find the product again in the *potentially* updated list
+            const updatedProduct = countingList.find(p => p.barcode === barcodeToUpdate && p.warehouseId === warehouseId);
+             if (updatedProduct) {
+                toast({ title: "Cantidad Modificada", description: `Cantidad de ${updatedProduct.description} (${getWarehouseName(warehouseId)}) ${actionText} ${updatedProduct.count ?? 0}.` });
+            }
+      } else if (type === 'stock' && !needsConfirmation) {
+           // Toast for stock change already handled inside the DB update success block
       }
 
-      // Close the appropriate dialog and clear selection
-      if (type === 'count') setOpenQuantityDialog(false);
-      if (type === 'stock') setOpenStockDialog(false);
-      setSelectedProductForDialog(null);
+      // Close the appropriate dialog and clear selection after any operation (unless confirmation pending)
+      if (!needsConfirmation) {
+           if (type === 'count') setOpenQuantityDialog(false);
+           if (type === 'stock') setOpenStockDialog(false);
+           setSelectedProductForDialog(null);
+       }
 
- }, [countingList, currentWarehouseId, toast, getWarehouseName, setCountingList]); // Include setCountingList
+
+ }, [countingList, currentWarehouseId, toast, getWarehouseName, setCountingList]);
 
 
  // Specific handler for increment button click
@@ -572,7 +602,7 @@ export default function Home() {
      setConfirmQuantityProductBarcode(null);
      setConfirmQuantityAction(null);
      setConfirmQuantityNewValue(null);
-}, [currentWarehouseId, confirmQuantityProductBarcode, confirmQuantityAction, toast, getWarehouseName, confirmQuantityNewValue, setCountingList]); // Include setCountingList
+}, [currentWarehouseId, confirmQuantityProductBarcode, confirmQuantityAction, toast, getWarehouseName, confirmQuantityNewValue, setCountingList]);
 
 
  // --- Deletion Handlers ---
@@ -809,16 +839,86 @@ export default function Home() {
 
     // --- Camera Scanning Logic ---
     const handleScanButtonClick = () => {
-        console.log("Scan button clicked, setting isScanning to true.");
-        setIsScanning(true);
-        // startScanning() // Called internally by useBarcodeScanner when isEnabled becomes true
+        console.log("Scan button clicked, requesting scanner start.");
+        if (!isScanning) { // Only start if not already scanning
+            setIsScanning(true); // Update state to enable the scanner hook
+            startScanning(); // Call the hook's start function
+        }
     };
 
     const handleStopScanning = () => {
-        console.log("Stop scanning button clicked, setting isScanning to false.");
-        setIsScanning(false);
-        // stopScanning() // Called internally by useBarcodeScanner when isEnabled becomes false
+        console.log("Stop scanning button clicked, requesting scanner stop.");
+        if (isScanning) {
+            stopScanning(); // Call the hook's stop function
+            setIsScanning(false); // Update state to disable the hook
+        }
+         // Return focus to barcode input after closing scanner
+         requestAnimationFrame(() => {
+            barcodeInputRef.current?.focus();
+         });
     };
+
+   // Edit Product Detail from Counting List (for stock)
+   const [isEditDetailDialogOpen, setIsEditDetailDialogOpen] = useState(false);
+   const [productToEditDetail, setProductToEditDetail] = useState<ProductDetail | null>(null);
+   const [initialStockForEdit, setInitialStockForEdit] = useState<number>(0);
+
+   const handleOpenEditDetailDialog = useCallback(async (product: DisplayProduct) => {
+       if (!product || !product.barcode) return;
+       try {
+           const detail = await getProductDetail(product.barcode);
+           if (detail) {
+               const inventoryItem = await getInventoryItem(product.barcode, 'main'); // Get stock from 'main'
+               setProductToEditDetail(detail);
+               setInitialStockForEdit(inventoryItem?.stock ?? 0); // Use stock from 'main' or 0
+               setIsEditDetailDialogOpen(true);
+           } else {
+               toast({ variant: "destructive", title: "Error", description: "Detalles del producto no encontrados en la base de datos." });
+           }
+       } catch (error) {
+           console.error("Error fetching product details for edit:", error);
+           toast({ variant: "destructive", title: "Error DB", description: "No se pudieron obtener los detalles del producto." });
+       }
+   }, [toast]);
+
+
+   const handleEditDetailSubmit = useCallback(async (data: ProductDetail & { stock: number }) => {
+       // This function is called from EditProductDialog when saving changes
+       const detailData: ProductDetail = {
+           barcode: data.barcode, // Barcode shouldn't change during edit
+           description: data.description,
+           provider: data.provider,
+       };
+       const stockForMainWarehouse = data.stock; // Stock is specifically for 'main'
+
+       try {
+           // Update product details
+           await addOrUpdateProductDetail(detailData);
+
+            // Update inventory item specifically for 'main' warehouse
+           const mainInventoryItem = await getInventoryItem(data.barcode, 'main');
+           const updatedMainInventory: InventoryItem = {
+                barcode: data.barcode,
+                warehouseId: 'main',
+                stock: stockForMainWarehouse,
+                count: mainInventoryItem?.count ?? 0, // Preserve existing count for 'main'
+                lastUpdated: new Date().toISOString(),
+           };
+           await addOrUpdateInventoryItem(updatedMainInventory);
+
+           // Refresh the counting list to reflect potential changes
+           await handleRefreshStock();
+
+           toast({
+               title: "Producto Actualizado",
+               description: `${detailData.description} ha sido actualizado.`,
+           });
+           setIsEditDetailDialogOpen(false); // Close the dialog
+       } catch (error: any) {
+           console.error("Failed to update product detail/stock:", error);
+           toast({ variant: "destructive", title: "Error al Actualizar", description: `No se pudo actualizar: ${error.message}` });
+       }
+   }, [toast, handleRefreshStock]); // Depend on handleRefreshStock
 
 
  // --- Count by Provider ---
@@ -860,6 +960,10 @@ export default function Home() {
           barcodeInputRef.current?.focus();
        });
     }
+     // Stop scanning if leaving Contador section
+    if (newSection !== 'Contador' && isScanning) {
+       handleStopScanning();
+    }
   };
 
   // Get current value for the modify dialogs based on the latest state
@@ -868,7 +972,8 @@ export default function Home() {
     const currentItem = countingList.find(
       p => p.barcode === selectedProductForDialog.barcode && p.warehouseId === currentWarehouseId
     );
-    return type === 'stock' ? (currentItem?.stock ?? 0) : (currentItem?.count ?? 0);
+     // Use nullish coalescing for potentially undefined count/stock
+     return type === 'stock' ? (currentItem?.stock ?? 0) : (currentItem?.count ?? 0);
   };
 
   // --- Main Component Render ---
@@ -955,6 +1060,7 @@ export default function Home() {
                     onOpenQuantityDialog={handleOpenQuantityDialog}
                     onDecrement={handleDecrement}
                     onIncrement={handleIncrement}
+                    onEditDetailRequest={handleOpenEditDetailDialog} // Pass handler
                     tableHeightClass="h-[calc(100vh-360px)] md:h-[calc(100vh-330px)]"
                 />
 
@@ -1045,10 +1151,27 @@ export default function Home() {
                  onOpenChange={setIsConfirmQuantityDialogOpen}
                  title="Confirmar Modificación"
                  description={
-                     confirmQuantityAction === 'set'
-                         ? `La cantidad contada ahora coincide con el stock (${countingList.find(p => p.barcode === confirmQuantityProductBarcode)?.stock}). ¿Estás seguro de que deseas establecer la cantidad en ${confirmQuantityNewValue ?? 'este valor'}?`
-                         : `La cantidad contada ${confirmQuantityAction === 'increment' ? 'alcanzará' : 'dejará de coincidir con'} el stock (${countingList.find(p => p.barcode === confirmQuantityProductBarcode)?.stock}). ¿Estás seguro de que deseas ${confirmQuantityAction === 'increment' ? 'aumentar' : 'disminuir'} la cantidad a ${confirmQuantityNewValue ?? 'este valor'}?`
-                 }
+                    (() => {
+                        const product = countingList.find(p => p.barcode === confirmQuantityProductBarcode && p.warehouseId === currentWarehouseId);
+                        const stockValue = product?.stock ?? 0;
+                        let actionDescription = '';
+                        if (confirmQuantityAction === 'increment') actionDescription = 'aumentar';
+                        if (confirmQuantityAction === 'decrement') actionDescription = 'disminuir';
+                        if (confirmQuantityAction === 'set') actionDescription = 'establecer';
+
+                         if (confirmQuantityAction === 'set') {
+                             return `La cantidad contada (${confirmQuantityNewValue ?? 'N/A'}) ahora coincide con el stock (${stockValue}). ¿Estás seguro de que deseas ${actionDescription} la cantidad?`;
+                         } else {
+                             const willMatch = (confirmQuantityNewValue ?? 0) === stockValue;
+                             const previouslyMatched = (product?.count ?? 0) === stockValue;
+                             let matchChangeDescription = '';
+                             if (willMatch && !previouslyMatched) matchChangeDescription = 'ahora coincidirá con';
+                             if (!willMatch && previouslyMatched) matchChangeDescription = 'ya no coincidirá con';
+
+                             return `Al ${actionDescription} la cantidad a ${confirmQuantityNewValue ?? 'N/A'}, ${matchChangeDescription ? matchChangeDescription + ' el' : 'el'} stock (${stockValue}). ¿Estás seguro?`;
+                         }
+                    })()
+                }
                  onConfirm={handleConfirmQuantityChange}
                  onCancel={() => { setIsConfirmQuantityDialogOpen(false); setConfirmQuantityProductBarcode(null); setConfirmQuantityAction(null); setConfirmQuantityNewValue(null); }}
              />
@@ -1070,6 +1193,26 @@ export default function Home() {
                  isInitializing={isScannerInitializing}
                  hasPermission={hasCameraPermission}
              />
+
+            {/* Dialog for Editing Product Details (triggered from Counting List stock click) */}
+             <EditProductDialog
+                isOpen={isEditDetailDialogOpen}
+                setIsOpen={setIsEditDetailDialogOpen}
+                selectedDetail={productToEditDetail}
+                setSelectedDetail={setProductToEditDetail}
+                onSubmit={handleEditDetailSubmit}
+                onDelete={(barcode) => { /* Implement delete from this dialog if needed */
+                     console.warn("Delete action from counting list edit dialog not fully implemented yet.");
+                      toast({variant: "default", title: "Info", description: "Para eliminar, usa la sección Base de Datos."})
+                     // Optionally, trigger the delete confirmation from here
+                     // const detail = { barcode, description: productToEditDetail?.description || '', provider: productToEditDetail?.provider || ''};
+                     // triggerDeleteProductAlert(detail); // Need triggerDeleteProductAlert if implementing
+                }}
+                isProcessing={false} // Add processing state if needed
+                initialStock={initialStockForEdit}
+                context="countingList" // Indicate the context
+             />
+
 
     </div>
   );

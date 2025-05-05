@@ -1,10 +1,10 @@
-
+// src/components/product-database.tsx
 "use client";
 
 import type { ProductDetail, InventoryItem, DisplayProduct } from '@/types/product';
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useToast } from "@/hooks/use-toast";
-import { cn } from "@/lib/utils";
+import { cn, getLocalStorageItem, setLocalStorageItem } from "@/lib/utils";
 import {
     addOrUpdateProductDetail,
     getAllProductDetails,
@@ -18,26 +18,17 @@ import {
     getInventoryItemsForWarehouse,
 } from '@/lib/indexeddb-helpers';
 import {
-    Edit, FileDown, Filter, Save, Trash, Upload, AlertCircle, Warehouse as WarehouseIcon, Play, Loader2
+    Edit, Filter, Play, Loader2, Save, Trash, Upload, AlertCircle, Warehouse as WarehouseIcon
 } from "lucide-react";
-import Papa from 'papaparse';
-import * as React from "react";
+import Papa from 'papaparse'; // Using PapaParse for robust CSV parsing
+import * as React from "react"; // Import React
 import { useCallback, useEffect, useState } from "react";
 import { useForm } from "react-hook-form";
 import * as z from "zod";
-import {
-    AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
-    AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle
-} from "@/components/ui/alert-dialog";
+import { ConfirmationDialog } from "@/components/confirmation-dialog"; // Import ConfirmationDialog
+import { EditProductDialog } from "@/components/edit-product-dialog"; // Import EditProductDialog
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
-import {
-    Dialog, DialogContent, DialogDescription, DialogFooter,
-    DialogHeader, DialogTitle
-} from "@/components/ui/dialog";
-import {
-    Form, FormControl, FormDescription as FormDescUi, FormField, FormItem, FormLabel, FormMessage
-} from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Progress } from "@/components/ui/progress";
@@ -50,7 +41,9 @@ import {
 } from "@/components/ui/table";
 import { useLocalStorage } from '@/hooks/use-local-storage'; // Import useLocalStorage
 
+
 // --- Zod Schema ---
+// Schema remains the same as it defines the data structure *within* the app
 const productDetailSchema = z.object({
   barcode: z.string().min(1, { message: "El código de barras es requerido." }),
   description: z.string().min(1, { message: "La descripción es requerida." }),
@@ -132,7 +125,7 @@ async function fetchAndParseGoogleSheetData(sheetUrlOrId: string): Promise<{ det
     console.log(`Successfully fetched CSV data (length: ${csvText.length}). Parsing...`);
 
     const result = Papa.parse<string[]>(csvText, {
-      header: false,
+      header: false, // Parse by position, not header names
       skipEmptyLines: true,
     });
 
@@ -142,7 +135,7 @@ async function fetchAndParseGoogleSheetData(sheetUrlOrId: string): Promise<{ det
 
     const productDetails: ProductDetail[] = [];
     const inventoryItems: InventoryItem[] = [];
-    const defaultWarehouseId = 'main';
+    const defaultWarehouseId = 'main'; // Stock from sheet goes to the 'main' warehouse
 
     if (result.data.length === 0) {
         console.warn("CSV data is empty or contains only empty lines.");
@@ -151,35 +144,42 @@ async function fetchAndParseGoogleSheetData(sheetUrlOrId: string): Promise<{ det
 
     console.log(`Processing ${result.data.length} data rows (including potential header).`);
 
-    const startDataRow = 1; // Skip header row assumed to be the first
+    // Assume the first row is headers and skip it
+    const startDataRow = 1;
 
     for (let i = startDataRow; i < result.data.length; i++) {
         const values = result.data[i];
 
-        if (!values || values.length < 4) {
-            console.warn(`Skipping row ${i + 1}: Insufficient columns. Expected at least 4. Row:`, values);
+        // Expecting at least 10 columns now to access provider safely
+        if (!values || values.length < 10) {
+            console.warn(`Skipping row ${i + 1}: Insufficient columns. Expected at least 10. Row:`, values);
             continue;
         }
 
-        // --- Column Position Mapping (0-based index) ---
+        // --- NEW Column Position Mapping (0-based index) ---
+        // Column 1: Barcode
         const barcode = values[0]?.trim();
         if (!barcode) {
             console.warn(`Skipping row ${i + 1}: Missing or empty barcode (Column 1). Row:`, values);
             continue;
         }
-        if (barcode.length > 100) {
-           console.warn(`Skipping row ${i + 1}: Barcode too long (${barcode.length} chars). Row:`, values);
-           continue;
-        }
+         if (barcode.length > 100) {
+             console.warn(`Skipping row ${i + 1}: Barcode too long (${barcode.length} chars). Row:`, values);
+             continue;
+         }
 
+        // Column 2: Description
         const description = values[1]?.trim() || `Producto ${barcode}`;
-        const provider = values[2]?.trim() || "Desconocido";
-        const stockStr = values[3]?.trim() || '0';
+        // Column 6: Stock (for 'main' warehouse)
+        const stockStr = values[5]?.trim() || '0'; // Index 5 for Column 6
         let stockMain = parseInt(stockStr, 10);
         if (isNaN(stockMain) || stockMain < 0) {
-           console.warn(`Invalid stock value "${stockStr}" for barcode ${barcode} in row ${i + 1}. Defaulting to 0.`);
+           console.warn(`Invalid stock value "${stockStr}" for barcode ${barcode} in row ${i + 1} (Column 6). Defaulting to 0.`);
            stockMain = 0;
         }
+        // Column 10: Provider
+        const provider = values[9]?.trim() || "Desconocido"; // Index 9 for Column 10
+
 
         productDetails.push({
             barcode: barcode,
@@ -189,14 +189,14 @@ async function fetchAndParseGoogleSheetData(sheetUrlOrId: string): Promise<{ det
 
         inventoryItems.push({
             barcode: barcode,
-            warehouseId: defaultWarehouseId,
+            warehouseId: defaultWarehouseId, // Stock from sheet assigned to 'main'
             stock: stockMain,
-            count: 0,
+            count: 0, // Default count to 0 on import
             lastUpdated: new Date().toISOString(),
         });
     }
 
-    console.log(`Parsed ${productDetails.length} product details and ${inventoryItems.length} inventory items from CSV.`);
+    console.log(`Parsed ${productDetails.length} product details and ${inventoryItems.length} inventory items from CSV based on column position.`);
     return { details: productDetails, inventory: inventoryItems };
 }
 
@@ -279,23 +279,21 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = ({ currentWarehou
     setIsProcessing(true);
     setProcessingStatus(isUpdating ? "Actualizando producto..." : "Agregando producto...");
     try {
+        // Update product details (description, provider)
         await addOrUpdateProductDetail(detailData);
 
-        let currentCount = 0;
-        if (isUpdating) {
-            const existingItem = await getInventoryItem(detailData.barcode, 'main');
-            currentCount = existingItem?.count ?? 0;
-        }
-
-        const inventoryItemData: InventoryItem = {
+        // Update inventory item specifically for the 'main' warehouse
+        const mainInventoryItem = await getInventoryItem(detailData.barcode, 'main');
+        const updatedMainInventory: InventoryItem = {
             barcode: detailData.barcode,
             warehouseId: 'main',
-            stock: data.stock ?? 0,
-            count: currentCount,
+            stock: data.stock ?? 0, // Use the stock from the form data
+            count: mainInventoryItem?.count ?? 0, // Preserve existing count for 'main' warehouse
             lastUpdated: new Date().toISOString(),
         };
-        await addOrUpdateInventoryItem(inventoryItemData);
+        await addOrUpdateInventoryItem(updatedMainInventory);
 
+        // Refresh local state to reflect changes immediately
         await loadInitialData();
 
         toast({
@@ -331,13 +329,13 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = ({ currentWarehou
     setProcessingStatus("Eliminando producto...");
     try {
       await deleteProductCompletely(barcode);
-      await loadInitialData();
+      await loadInitialData(); // Refresh data after deletion
       toast({
         title: "Producto Eliminado",
         description: `El producto ${detailToDelete?.description || barcode} y todo su inventario asociado han sido eliminados.`,
       });
-      setIsEditModalOpen(false);
-      setIsAlertOpen(false);
+      setIsEditModalOpen(false); // Close edit dialog if open
+      setIsAlertOpen(false); // Close confirmation dialog
       setProductToDelete(null);
       setAlertAction(null);
     } catch (error: any) {
@@ -347,7 +345,7 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = ({ currentWarehou
           setIsProcessing(false);
           setProcessingStatus("");
     }
-  }, [toast, loadInitialData, productDetails]);
+  }, [toast, loadInitialData, productDetails]); // Added loadInitialData
 
 
   const handleClearDatabase = useCallback(async () => {
@@ -355,8 +353,8 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = ({ currentWarehou
     setProcessingStatus("Borrando base de datos...");
     try {
       await clearDatabaseCompletely();
-      setProductDetails([]);
-      setInventoryItems([]);
+      setProductDetails([]); // Clear local state
+      setInventoryItems([]); // Clear local state
       toast({ title: "Base de Datos Borrada", description: "Todos los productos y el inventario han sido eliminados." });
     } catch (error: any) {
       console.error("Failed to clear database", error);
@@ -378,8 +376,9 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = ({ currentWarehou
          setInitialStockForEdit(mainInventory?.stock ?? 0);
          setSelectedDetail(detail);
     } else {
+        // Adding a new product, stock starts at 0
         setInitialStockForEdit(0);
-        setSelectedDetail(null);
+        setSelectedDetail(null); // Ensure selectedDetail is null for adding
     }
     setIsEditModalOpen(true);
   }, []);
@@ -403,7 +402,7 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = ({ currentWarehou
       setIsAlertOpen(true);
   }, [productDetails, inventoryItems, toast]);
 
-   const handleDeleteConfirmation = useCallback(() => {
+  const handleDeleteConfirmation = useCallback(() => {
         if (alertAction === 'deleteProduct' && productToDelete) {
             handleDeleteProduct(productToDelete.barcode);
         } else if (alertAction === 'clearDatabase') {
@@ -411,8 +410,8 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = ({ currentWarehou
         } else {
             console.warn("Delete confirmation called with invalid state:", { alertAction, productToDelete });
         }
-        setIsAlertOpen(false);
-        setProductToDelete(null);
+        setIsAlertOpen(false); // Close dialog after action
+        setProductToDelete(null); // Reset state
         setAlertAction(null);
     }, [alertAction, productToDelete, handleDeleteProduct, handleClearDatabase]);
 
@@ -444,7 +443,7 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = ({ currentWarehou
                      await addProductDetailsInBulk(batch);
                      itemsLoaded += batch.length;
                      setUploadProgress(Math.round((itemsLoaded / totalItemsToLoad) * 100));
-                     await new Promise(resolve => setTimeout(resolve, 5));
+                     await new Promise(resolve => setTimeout(resolve, 5)); // Small delay to allow UI update
                  }
 
                  setProcessingStatus(`Actualizando inventario (${inventory.length})...`);
@@ -453,11 +452,11 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = ({ currentWarehou
                      await addInventoryItemsInBulk(batch);
                      itemsLoaded += batch.length;
                      setUploadProgress(Math.round((itemsLoaded / totalItemsToLoad) * 100));
-                     await new Promise(resolve => setTimeout(resolve, 5));
+                     await new Promise(resolve => setTimeout(resolve, 5)); // Small delay
                  }
 
                  console.log("Bulk add/update to IndexedDB completed.");
-                 await loadInitialData();
+                 await loadInitialData(); // Refresh the data displayed in the table
                  toast({ title: "Carga Completa", description: `Se procesaron ${details.length} detalles y ${inventory.length} registros de inventario.` });
              }
 
@@ -559,12 +558,12 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = ({ currentWarehou
           ...detail,
           warehouseId: currentWarehouseId,
           stock: inventory?.stock ?? 0,
-          count: 0,
+          count: 0, // Reset count for the new session
           lastUpdated: inventory?.lastUpdated || new Date().toISOString(),
         };
       });
 
-      onStartCountByProvider(productsToCount);
+      onStartCountByProvider(productsToCount); // Pass the prepared list to the parent
 
     } catch (error) {
       console.error("Error starting count by provider:", error);
@@ -576,6 +575,21 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = ({ currentWarehou
   }, [selectedProviderFilter, productDetails, currentWarehouseId, onStartCountByProvider, toast]);
 
 
+  // --- Filter Products for Display ---
+  const filteredProducts = React.useMemo(() => {
+    const lowerSearchTerm = searchTerm.toLowerCase();
+    return productDetails.filter(product => {
+      const matchesSearch = !lowerSearchTerm ||
+                            product.description.toLowerCase().includes(lowerSearchTerm) ||
+                            product.barcode.includes(lowerSearchTerm) ||
+                            (product.provider || '').toLowerCase().includes(lowerSearchTerm);
+
+      const matchesProvider = selectedProviderFilter === 'all' || (product.provider || "Desconocido") === selectedProviderFilter;
+
+      return matchesSearch && matchesProvider;
+    });
+  }, [productDetails, searchTerm, selectedProviderFilter]);
+
   // --- Render ---
 
   return (
@@ -583,10 +597,11 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = ({ currentWarehou
        {/* --- Toolbar --- */}
        <div className="flex flex-col md:flex-row md:justify-between md:items-start gap-4">
          <div className="flex flex-wrap gap-2">
+            {/* Actions Dropdown */}
             <Select onValueChange={(value) => {
                 switch (value) {
                   case "add":
-                    handleOpenEditDialog(null);
+                    handleOpenEditDialog(null); // Open dialog for adding new product
                     break;
                   case "export":
                     handleExportDatabase();
@@ -625,6 +640,7 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = ({ currentWarehou
                  className="h-10 flex-grow min-w-[150px]"
                  disabled={isProcessing || isLoading}
              />
+             {/* Provider Filter Dropdown */}
              <Select
                  value={selectedProviderFilter}
                  onValueChange={setSelectedProviderFilter}
@@ -642,12 +658,13 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = ({ currentWarehou
                      ))}
                  </SelectContent>
              </Select>
+            {/* Start Count by Provider Button */}
             <Button
                 onClick={handleStartCountByProviderClick}
                 disabled={selectedProviderFilter === 'all' || isProcessing || isLoading}
                 variant="outline"
                 className="h-10 text-green-600 border-green-500 hover:bg-green-50 hover:text-green-700 dark:text-green-400 dark:border-green-600 dark:hover:bg-green-900/50 dark:hover:text-green-300"
-                title={`Iniciar conteo para ${selectedProviderFilter === 'all' ? 'un proveedor' : selectedProviderFilter}`}
+                title={`Iniciar conteo para ${selectedProviderFilter === 'all' ? 'un proveedor' : selectedProviderFilter} en ${currentWarehouseId}`}
             >
                 <Play className="mr-2 h-4 w-4" /> Contar Proveedor
             </Button>
@@ -679,7 +696,7 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = ({ currentWarehou
              </Button>
          </div>
          <p id="google-sheet-info" className="text-xs text-muted-foreground dark:text-gray-400 mt-1">
-               Introduzca la URL completa de la Hoja de Google (compartida públicamente) o simplemente el ID de la hoja de cálculo. Se leerán las primeras 4 columnas por posición, ignorando la primera fila: 1:Código Barras, 2:Descripción, 3:Proveedor, 4:Stock (para almacén 'main').
+              Introduzca la URL completa de la Hoja de Google (compartida públicamente) o simplemente el ID de la hoja de cálculo. Se leerán las columnas 1, 2, 6 y 10 por posición (ignorando la primera fila): 1:Código Barras, 2:Descripción, 6:Stock (para almacén 'main'), 10:Proveedor. Columnas adicionales serán ignoradas.
          </p>
          {isProcessing && (
              <div className="mt-4 space-y-1">
@@ -703,41 +720,31 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = ({ currentWarehou
           )}
        </div>
 
-       {/* Confirmation Dialog */}
-       <AlertDialog open={isAlertOpen} onOpenChange={setIsAlertOpen}>
-           <AlertDialogContent>
-               <AlertDialogHeader>
-                   <AlertDialogTitle>¿Estás realmente seguro?</AlertDialogTitle>
-                   <AlertDialogDescription>
-                       {alertAction === 'deleteProduct' && productToDelete ?
-                           `Estás a punto de eliminar permanentemente el producto "${productToDelete.description}" (Código: ${productToDelete.barcode}) y todo su inventario asociado. Esta acción no se puede deshacer.`
-                           : alertAction === 'clearDatabase' ?
-                               "Estás a punto de eliminar TODOS los productos y el inventario de la base de datos local permanentemente. Esta acción no se puede deshacer."
-                               : "Esta acción no se puede deshacer."
-                       }
-                   </AlertDialogDescription>
-               </AlertDialogHeader>
-               <AlertDialogFooter>
-                   <AlertDialogCancel onClick={() => setIsAlertOpen(false)}>Cancelar</AlertDialogCancel>
-                   <AlertDialogAction
-                       onClick={handleDeleteConfirmation}
-                       className={cn(alertAction === 'clearDatabase' && "bg-red-600 hover:bg-red-700 text-white")}
-                       disabled={isProcessing}
-                   >
-                       {isProcessing ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> :
-                       alertAction === 'deleteProduct' ? "Sí, Eliminar Producto" : alertAction === 'clearDatabase' ? "Sí, Borrar Todo" : "Confirmar"}
-                   </AlertDialogAction>
-               </AlertDialogFooter>
-           </AlertDialogContent>
-       </AlertDialog>
+       {/* Confirmation Dialog for Delete/Clear */}
+        <ConfirmationDialog
+            isOpen={isAlertOpen}
+            onOpenChange={setIsAlertOpen}
+            title={alertAction === 'deleteProduct' ? 'Confirmar Eliminación' : 'Confirmar Borrado Completo'}
+            description={
+                alertAction === 'deleteProduct' && productToDelete ?
+                `¿Estás seguro de que deseas eliminar permanentemente el producto "${productToDelete.description}" (${productToDelete.barcode}) y todo su inventario asociado? Esta acción no se puede deshacer.`
+                : alertAction === 'clearDatabase' ?
+                "Estás a punto de eliminar TODOS los productos y el inventario de la base de datos local permanentemente. Esta acción no se puede deshacer."
+                : "Esta acción no se puede deshacer."
+            }
+            confirmText={alertAction === 'deleteProduct' ? "Sí, Eliminar Producto" : "Sí, Borrar Todo"}
+            onConfirm={handleDeleteConfirmation}
+            onCancel={() => { setIsAlertOpen(false); setProductToDelete(null); setAlertAction(null); }} // Ensure state reset on cancel
+            isDestructive={true} // Make confirm button red
+            isProcessing={isProcessing} // Disable buttons while processing
+        />
+
 
       {/* Products Table */}
        <ProductTable
-           productDetails={productDetails}
-           inventoryItems={inventoryItems}
+           productDetails={filteredProducts} // Use filtered products
+           inventoryItems={inventoryItems} // Pass inventoryItems to find stock for 'main'
            isLoading={isLoading}
-           searchTerm={searchTerm}
-           selectedProviderFilter={selectedProviderFilter}
            onEdit={handleOpenEditDialog}
            onDelete={(barcode) => {
                 const detail = productDetails.find(d => d.barcode === barcode);
@@ -754,19 +761,114 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = ({ currentWarehou
           isOpen={isEditModalOpen}
           setIsOpen={setIsEditModalOpen}
           selectedDetail={selectedDetail}
-          setSelectedDetail={setSelectedDetail}
+          setSelectedDetail={setSelectedDetail} // Pass handler to clear selection on close
           onSubmit={handleAddOrUpdateDetailSubmit}
-          onDelete={(barcode) => {
-                const detail = productDetails.find(d => d.barcode === barcode);
-                if (detail) {
-                     triggerDeleteProductAlert(detail);
-                } else {
-                    toast({variant: "destructive", title: "Error", description: "No se encontró el producto para eliminar."})
-                }
-            }}
+          onDelete={(barcode) => triggerDeleteProductAlert(productDetails.find(d => d.barcode === barcode) || null)} // Trigger confirmation for delete
           isProcessing={isProcessing}
           initialStock={initialStockForEdit}
+          context="database" // Indicate context is database management
        />
     </div>
+  );
+};
+
+
+// --- Child Component: ProductTable ---
+interface ProductTableProps {
+  productDetails: ProductDetail[];
+  inventoryItems: InventoryItem[]; // Needed to display 'main' stock
+  isLoading: boolean;
+  onEdit: (detail: ProductDetail) => void;
+  onDelete: (barcode: string) => void;
+}
+
+const ProductTable: React.FC<ProductTableProps> = ({
+  productDetails,
+  inventoryItems,
+  isLoading,
+  onEdit,
+  onDelete,
+}) => {
+
+  // Create a map for quick stock lookup in the 'main' warehouse
+  const mainStockMap = React.useMemo(() => {
+    const map = new Map<string, number>();
+    inventoryItems
+      .filter(item => item.warehouseId === 'main')
+      .forEach(item => map.set(item.barcode, item.stock ?? 0));
+    return map;
+  }, [inventoryItems]);
+
+  return (
+    <ScrollArea className="h-[calc(100vh-400px)] md:h-[calc(100vh-350px)] border rounded-lg shadow-sm bg-white dark:bg-gray-800">
+      <Table>
+        <TableCaption className="dark:text-gray-400">Productos en la base de datos.</TableCaption>
+        <TableHeader className="sticky top-0 bg-gray-50 dark:bg-gray-700 z-10 shadow-sm">
+          <TableRow>
+            <TableHead className="w-[15%] md:w-[15%] px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">Código Barras</TableHead>
+            <TableHead className="w-[40%] md:w-[45%] px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">Descripción (Click para Editar)</TableHead>
+            <TableHead className="hidden md:table-cell w-[20%] px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">Proveedor</TableHead>
+            <TableHead className="w-[15%] md:w-[15%] px-4 py-3 text-center text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">Stock (Principal)</TableHead>
+            <TableHead className="w-[15%] md:w-[10%] text-right px-4 py-3 text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">Acciones</TableHead>
+          </TableRow>
+        </TableHeader>
+        <TableBody>
+          {isLoading ? (
+            <TableRow>
+              <TableCell colSpan={5} className="text-center py-10 text-gray-500 dark:text-gray-400">
+                Cargando productos...
+              </TableCell>
+            </TableRow>
+          ) : productDetails.length === 0 ? (
+            <TableRow>
+              <TableCell colSpan={5} className="text-center py-10 text-gray-500 dark:text-gray-400">
+                No hay productos en la base de datos.
+              </TableCell>
+            </TableRow>
+          ) : (
+            productDetails.map((detail) => (
+              <TableRow key={detail.barcode} className="hover:bg-muted/50 dark:hover:bg-gray-700 text-sm transition-colors duration-150">
+                <TableCell className="px-4 py-3 font-medium text-gray-700 dark:text-gray-200">{detail.barcode}</TableCell>
+                <TableCell
+                    className="px-4 py-3 text-gray-800 dark:text-gray-100 cursor-pointer hover:text-blue-600 dark:hover:text-blue-400 hover:underline"
+                    onClick={() => onEdit(detail)}
+                    title={`Editar ${detail.description}`}
+                 >
+                    {detail.description}
+                </TableCell>
+                 <TableCell className="hidden md:table-cell px-4 py-3 text-gray-600 dark:text-gray-300">{detail.provider || 'N/A'}</TableCell>
+                <TableCell className="px-4 py-3 text-center text-gray-600 dark:text-gray-300 tabular-nums">
+                  {mainStockMap.get(detail.barcode) ?? 0}
+                </TableCell>
+                <TableCell className="text-right px-4 py-3">
+                    <Button
+                        variant="ghost"
+                        size="sm"
+                        className="text-blue-600 dark:text-blue-400 hover:text-blue-700 dark:hover:text-blue-300"
+                        onClick={() => onEdit(detail)}
+                        aria-label={`Editar ${detail.description}`}
+                        title={`Editar ${detail.description}`}
+                    >
+                     <Edit className="mr-1 h-4 w-4" />
+                        <span className="hidden sm:inline">Editar</span>
+                    </Button>
+                    <Button
+                        variant="ghost"
+                        size="sm"
+                        className="text-red-600 dark:text-red-400 hover:text-red-700 dark:hover:text-red-300 ml-1"
+                        onClick={() => onDelete(detail.barcode)}
+                        aria-label={`Borrar ${detail.description}`}
+                        title={`Borrar ${detail.description}`}
+                    >
+                     <Trash className="mr-1 h-4 w-4" />
+                      <span className="hidden sm:inline">Borrar</span>
+                    </Button>
+                </TableCell>
+              </TableRow>
+            ))
+          )}
+        </TableBody>
+      </Table>
+    </ScrollArea>
   );
 };

@@ -1,4 +1,5 @@
 
+
 "use client";
 
 import type { DisplayProduct, InventoryItem, ProductDetail } from '@/types/product';
@@ -1023,9 +1024,10 @@ export default function Home() {
              }
 
              if (!videoRef.current) {
-                 console.warn("Video element ref is not available yet. Retrying...");
+                 console.error("Video element ref is not available.");
+                 // Retry after a short delay if component is still mounted and scanning
                  if (!cancelled) {
-                     timeoutId = setTimeout(initScanner, 100);
+                      timeoutId = setTimeout(initScanner, 100);
                  }
                  return;
              }
@@ -1494,7 +1496,7 @@ export default function Home() {
                         placeholder="Buscar en inventario actual..."
                         value={searchTerm}
                         onChange={(e) => setSearchTerm(e.target.value)}
-                        className="pl-8 w-full bg-white dark:bg-gray-800 border-gray-300 dark:border-gray-600"
+                        className="pl-8 w-full bg-blue-50 dark:bg-blue-900/30 border-blue-300 dark:border-blue-600" // Changed background color here
                         aria-label="Buscar en lista de conteo"
                         disabled={isDbLoading || isRefreshingStock}
                     />
@@ -1558,3 +1560,4 @@ export default function Home() {
     </div>
   );
 }
+

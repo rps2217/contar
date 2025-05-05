@@ -20,7 +20,7 @@ import {
     Table, TableBody, TableCaption, TableCell, TableHead, TableHeader, TableRow
 } from "@/components/ui/table";
 import { WarehouseManagement } from "@/components/warehouse-management";
-import { format } from 'date-fns';
+import { format, isValid } from 'date-fns';
 import { Minus, Plus, Trash, RefreshCw, Warehouse as WarehouseIcon, Camera, AlertCircle, Search, Check, AppWindow, Database, Boxes, UploadCloud, Loader2 } from "lucide-react";
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
@@ -88,6 +88,7 @@ export default function Home() {
       LOCAL_STORAGE_BACKUP_SCRIPT_URL_KEY,
       ''
   );
+  const [lastScannedBarcode, setLastScannedBarcode] = useState<string | null>(null); // Track last scanned barcode
 
    const getWarehouseName = useCallback((warehouseId: string | null | undefined) => {
         if (!warehouseId) return 'N/A';
@@ -98,7 +99,9 @@ export default function Home() {
  // Handles adding or incrementing a product in the counting list for the current warehouse
  const handleAddProduct = useCallback(async (barcodeToAdd?: string) => {
     const rawBarcode = barcodeToAdd ?? barcode;
-    const trimmedBarcode = rawBarcode.trim().replace(/\r?\n|\r/g, '');
+    // Trim whitespace and potential trailing newline characters from barcode scanners
+    const trimmedBarcode = rawBarcode.trim().replace(/\r?\n|\r$/g, '');
+
 
     if (!trimmedBarcode) {
       toast({
@@ -106,7 +109,7 @@ export default function Home() {
         title: "Error",
         description: "Por favor, introduce un código de barras válido.",
       });
-      setBarcode("");
+      setBarcode(""); // Clear input if invalid
       requestAnimationFrame(() => {
           barcodeInputRef.current?.focus();
       });
@@ -121,6 +124,18 @@ export default function Home() {
         });
         return;
     }
+
+    // Prevent adding the same barcode twice rapidly (can happen with some scanners)
+    if (trimmedBarcode === lastScannedBarcode) {
+        console.log("Duplicate scan detected, ignoring:", trimmedBarcode);
+        setBarcode(""); // Clear input
+        requestAnimationFrame(() => barcodeInputRef.current?.focus());
+        return;
+    }
+    setLastScannedBarcode(trimmedBarcode);
+    // Reset last scanned after a short delay to allow genuine repeated scans
+    setTimeout(() => setLastScannedBarcode(null), 500);
+
 
     let productExists = false;
     let descriptionForToast = ''; // Variable to store description for toast
@@ -221,19 +236,26 @@ export default function Home() {
         barcodeInputRef.current?.focus();
     });
 
- }, [barcode, currentWarehouseId, toast, getWarehouseName, countingList, setCountingList]); // Include countingList and setCountingList
+ }, [barcode, currentWarehouseId, toast, getWarehouseName, countingList, setCountingList, lastScannedBarcode]); // Include dependencies
+
 
  // --- Barcode Scanner Hook Setup ---
-  const handleScanSuccess = useCallback((detectedBarcode: string) => {
+  // Memoize the callback function to pass to the hook
+  const handleScanSuccessCallback = useCallback((detectedBarcode: string) => {
     console.log("handleScanSuccess triggered with barcode:", detectedBarcode);
-    setIsScanning(false); // Close the scanner dialog
+    // Ensure scanning state is updated and focus is handled *before* adding product
+    // Use requestAnimationFrame to schedule state updates and DOM focus
     requestAnimationFrame(() => {
-      setBarcode(detectedBarcode); // Set the barcode state
-      // Immediately attempt to add the product using the scanned barcode
-      // Ensure handleAddProduct uses the *latest* state by passing the barcode directly
-      handleAddProduct(detectedBarcode);
+        setIsScanning(false); // Close the scanner dialog visually
+        setBarcode(detectedBarcode); // Set the barcode state (might be brief)
+         // Immediately attempt to add the product using the scanned barcode
+         // Ensure handleAddProduct uses the *latest* state by passing the barcode directly
+        handleAddProduct(detectedBarcode);
+        // Focus input after processing
+        // barcodeInputRef.current?.focus(); // handleAddProduct now handles focus
     });
   }, [handleAddProduct, setIsScanning, setBarcode]); // Depend on handleAddProduct
+
 
   const {
     isInitializing: isScannerInitializing,
@@ -241,7 +263,7 @@ export default function Home() {
     startScanning, // Keep this if you want manual start
     stopScanning,  // Keep this for manual stop/cancel
   } = useBarcodeScanner({
-    onScanSuccess: handleScanSuccess,
+    onScanSuccess: handleScanSuccessCallback, // Use the memoized callback
     videoRef: videoRef, // Pass the ref to the video element
     isEnabled: isScanning, // Control activation based on isScanning state
   });
@@ -545,7 +567,7 @@ export default function Home() {
                 toast({ title: "Cantidad Modificada", description: `Cantidad de ${updatedProduct.description} (${getWarehouseName(warehouseId)}) ${actionText} ${updatedProduct.count ?? 0}.` });
             }
       } else if (type === 'stock' && !needsConfirmation) {
-           // Toast for stock change already handled inside the DB update success block
+         // Toast for stock change already handled inside the DB update success block
       }
 
       // Close the appropriate dialog and clear selection after any operation (unless confirmation pending)
@@ -842,15 +864,15 @@ export default function Home() {
         console.log("Scan button clicked, requesting scanner start.");
         if (!isScanning) { // Only start if not already scanning
             setIsScanning(true); // Update state to enable the scanner hook
-            startScanning(); // Call the hook's start function
+            // startScanning(); // startScanning is called implicitly by useEffect when isScanning becomes true
         }
     };
 
     const handleStopScanning = () => {
         console.log("Stop scanning button clicked, requesting scanner stop.");
         if (isScanning) {
-            stopScanning(); // Call the hook's stop function
-            setIsScanning(false); // Update state to disable the hook
+            setIsScanning(false); // Update state to disable the hook and trigger cleanup
+            // stopScanning(); // stopScanning is called implicitly by useEffect when isScanning becomes false
         }
          // Return focus to barcode input after closing scanner
          requestAnimationFrame(() => {
@@ -868,9 +890,9 @@ export default function Home() {
        try {
            const detail = await getProductDetail(product.barcode);
            if (detail) {
-               const inventoryItem = await getInventoryItem(product.barcode, 'main'); // Get stock from 'main'
+               const inventoryItem = await getInventoryItem(product.barcode, currentWarehouseId); // Get stock from CURRENT warehouse
                setProductToEditDetail(detail);
-               setInitialStockForEdit(inventoryItem?.stock ?? 0); // Use stock from 'main' or 0
+               setInitialStockForEdit(inventoryItem?.stock ?? 0); // Use stock from CURRENT warehouse or 0
                setIsEditDetailDialogOpen(true);
            } else {
                toast({ variant: "destructive", title: "Error", description: "Detalles del producto no encontrados en la base de datos." });
@@ -879,7 +901,7 @@ export default function Home() {
            console.error("Error fetching product details for edit:", error);
            toast({ variant: "destructive", title: "Error DB", description: "No se pudieron obtener los detalles del producto." });
        }
-   }, [toast]);
+   }, [toast, currentWarehouseId]); // Depend on currentWarehouseId
 
 
    const handleEditDetailSubmit = useCallback(async (data: ProductDetail & { stock: number }) => {
@@ -889,36 +911,36 @@ export default function Home() {
            description: data.description,
            provider: data.provider,
        };
-       const stockForMainWarehouse = data.stock; // Stock is specifically for 'main'
+        const stockForCurrentWarehouse = data.stock; // Stock is specifically for the CURRENT warehouse
 
        try {
            // Update product details
            await addOrUpdateProductDetail(detailData);
 
-            // Update inventory item specifically for 'main' warehouse
-           const mainInventoryItem = await getInventoryItem(data.barcode, 'main');
-           const updatedMainInventory: InventoryItem = {
+            // Update inventory item specifically for the CURRENT warehouse
+           const currentInventoryItem = await getInventoryItem(data.barcode, currentWarehouseId);
+           const updatedCurrentInventory: InventoryItem = {
                 barcode: data.barcode,
-                warehouseId: 'main',
-                stock: stockForMainWarehouse,
-                count: mainInventoryItem?.count ?? 0, // Preserve existing count for 'main'
+                warehouseId: currentWarehouseId,
+                stock: stockForCurrentWarehouse,
+                count: currentInventoryItem?.count ?? 0, // Preserve existing count for CURRENT warehouse
                 lastUpdated: new Date().toISOString(),
            };
-           await addOrUpdateInventoryItem(updatedMainInventory);
+           await addOrUpdateInventoryItem(updatedCurrentInventory);
 
            // Refresh the counting list to reflect potential changes
            await handleRefreshStock();
 
            toast({
                title: "Producto Actualizado",
-               description: `${detailData.description} ha sido actualizado.`,
+               description: `${detailData.description} ha sido actualizado en ${getWarehouseName(currentWarehouseId)}.`,
            });
            setIsEditDetailDialogOpen(false); // Close the dialog
        } catch (error: any) {
            console.error("Failed to update product detail/stock:", error);
            toast({ variant: "destructive", title: "Error al Actualizar", description: `No se pudo actualizar: ${error.message}` });
        }
-   }, [toast, handleRefreshStock]); // Depend on handleRefreshStock
+   }, [toast, handleRefreshStock, currentWarehouseId, getWarehouseName]); // Depend on handleRefreshStock, currentWarehouseId, getWarehouseName
 
 
  // --- Count by Provider ---

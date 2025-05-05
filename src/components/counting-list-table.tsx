@@ -4,7 +4,7 @@ import { DisplayProduct } from '@/types/product';
 import { Table, TableBody, TableCaption, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Button } from "@/components/ui/button";
-import { Check, Minus, Plus, Edit } from "lucide-react"; // Import Edit icon
+import { Check, Minus, Plus, Edit, Trash } from "lucide-react"; // Import Edit and Trash icons
 import { cn } from "@/lib/utils";
 import { format, isValid } from 'date-fns'; // Import isValid
 
@@ -40,11 +40,11 @@ export const CountingListTable: React.FC<CountingListTableProps> = ({
         <TableHeader className="bg-gray-50 dark:bg-gray-700 sticky top-0 z-10 shadow-sm">
           <TableRow>
             <TableHead className="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider w-[35%] sm:w-2/5">Descripción (Click para Borrar)</TableHead>
-            <TableHead className="hidden sm:table-cell px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider w-1/5">
+            {/* <TableHead className="hidden sm:table-cell px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider w-1/5">
               Proveedor
-            </TableHead>
-             <TableHead className="px-4 py-3 text-center text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider w-[10%] sm:w-[10%]">Stock (Click para Editar)</TableHead>
-            <TableHead className="px-4 py-3 text-center text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider w-[10%] sm:w-[10%]">Cantidad (Click para Editar)</TableHead>
+            </TableHead> */}
+             <TableHead className="px-4 py-3 text-center text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider w-[15%] sm:w-[15%]">Stock (Click para Editar)</TableHead>
+            <TableHead className="px-4 py-3 text-center text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider w-[15%] sm:w-[15%]">Cantidad (Click para Editar)</TableHead>
             <TableHead className="hidden md:table-cell px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider w-1/5">Última Actualización</TableHead>
             <TableHead className="hidden md:table-cell px-4 py-3 text-center text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider w-[5%]">Validación</TableHead>
             <TableHead className="text-center hidden md:table-cell px-4 py-3 text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider w-[15%]">Acciones</TableHead>
@@ -55,9 +55,11 @@ export const CountingListTable: React.FC<CountingListTableProps> = ({
              // Attempt to parse the date and check validity
              const lastUpdatedDate = product.lastUpdated ? new Date(product.lastUpdated) : null;
              const isValidDate = lastUpdatedDate && isValid(lastUpdatedDate);
+             // Ensure a unique key, combining barcode and warehouseId
+             const uniqueKey = `${product.barcode}-${product.warehouseId || 'unknown'}`;
             return (
                 <TableRow
-                key={`${product.barcode}-${product.warehouseId}`} // Unique key per warehouse
+                key={uniqueKey} // Use the generated unique key
                 className={cn(
                     "hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors duration-150",
                     product.count === product.stock && product.stock !== 0 ? "bg-green-50 dark:bg-green-900/30" : ""
@@ -71,15 +73,16 @@ export const CountingListTable: React.FC<CountingListTableProps> = ({
                     aria-label={`Eliminar ${product.description}`}
                 >
                     {product.description}
+                     <Trash className="inline-block h-4 w-4 ml-2 text-red-500 md:hidden" /> {/* Inline delete icon for mobile */}
                 </TableCell>
-                <TableCell className="hidden sm:table-cell px-4 py-3 text-gray-600 dark:text-gray-300">
+                {/* <TableCell className="hidden sm:table-cell px-4 py-3 text-gray-600 dark:text-gray-300">
                     {product.provider || 'N/A'}
-                </TableCell>
+                </TableCell> */}
                 <TableCell
                     className="px-4 py-3 text-center text-gray-600 dark:text-gray-300 cursor-pointer hover:text-teal-700 dark:hover:text-teal-400 hover:font-semibold tabular-nums"
-                    onClick={() => onEditDetailRequest(product)} // Use new handler for stock cell click
-                    title={`Editar detalles (incluyendo stock) para ${product.description}`}
-                    aria-label={`Editar detalles para ${product.description}`}
+                    onClick={() => onOpenStockDialog(product)} // Use dialog for stock edit
+                    title={`Editar stock para ${product.description} en ${warehouseName}`}
+                    aria-label={`Editar stock para ${product.description}`}
                 >
                     {product.stock ?? 0}
                 </TableCell>
@@ -123,19 +126,17 @@ export const CountingListTable: React.FC<CountingListTableProps> = ({
                     >
                         <Plus className="h-4 w-4" />
                     </Button>
-                     {/* Optional: Add an edit button here too if needed */}
-                     {/*
-                     <Button
+                     {/* Button to open the product detail edit dialog (for stock etc) */}
+                      <Button
                          onClick={() => onEditDetailRequest(product)}
                          size="icon"
                          variant="ghost"
                          className="text-gray-500 dark:text-gray-400 hover:text-blue-600 dark:hover:text-blue-400 hover:bg-blue-100 dark:hover:bg-blue-900/50 rounded-full w-8 h-8"
                          aria-label={`Editar detalles para ${product.description}`}
-                         title="Editar Detalles"
+                         title="Editar Detalles (Stock, Proveedor)"
                      >
                          <Edit className="h-4 w-4" />
                      </Button>
-                     */}
                     </div>
                 </TableCell>
                 </TableRow>

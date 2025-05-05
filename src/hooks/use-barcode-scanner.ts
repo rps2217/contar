@@ -3,6 +3,7 @@ import { useState, useRef, useEffect, useCallback } from 'react';
 import { BrowserMultiFormatReader, NotFoundException } from '@zxing/library';
 import { useToast } from "@/hooks/use-toast";
 import { playBeep } from '@/lib/helpers';
+import { debounce } from '@/lib/utils'; // Import debounce utility
 
 interface UseBarcodeScannerOptions {
   onScanSuccess: (barcode: string) => void;
@@ -18,6 +19,7 @@ interface UseBarcodeScannerResult {
 }
 
 const PERMISSION_REQUEST_TIMEOUT = 15000; // 15 seconds timeout for permission request
+const SCAN_SUCCESS_DEBOUNCE_MS = 500; // Debounce time after a successful scan
 
 export function useBarcodeScanner({
   onScanSuccess,
@@ -33,6 +35,18 @@ export function useBarcodeScanner({
   const isMountedRef = useRef(true);
   const initTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const permissionTimeoutRef = useRef<NodeJS.Timeout | null>(null); // Timeout for permission
+
+   // Debounce the onScanSuccess callback
+   const debouncedOnScanSuccess = useCallback(
+     debounce((barcode: string) => {
+       if (isMountedRef.current) {
+           onScanSuccess(barcode);
+           // Optional: automatically stop scanning after a successful scan
+           // stopScanning(); // Consider if this is the desired behavior
+       }
+     }, SCAN_SUCCESS_DEBOUNCE_MS),
+     [onScanSuccess] // Recreate debounce function if onScanSuccess changes
+   );
 
   // Function to stop camera stream and release resources
   const stopStream = useCallback(() => {
@@ -52,14 +66,14 @@ export function useBarcodeScanner({
     }
     if (videoRef.current) {
       videoRef.current.srcObject = null;
-      videoRef.current.load();
+      // videoRef.current.load(); // load() might not be necessary if srcObject is set to null
       console.log("Video source cleared.");
     }
     if (readerRef.current) {
       readerRef.current.reset();
       console.log("ZXing reader reset.");
     }
-    setIsScanningActive(false);
+    setIsScanningActive(false); // Ensure scanning state is updated
     setIsInitializing(false);
     // Don't reset hasPermission here, keep the last known state unless explicitly denied
     console.log("stopStream completed.");
@@ -70,15 +84,16 @@ export function useBarcodeScanner({
     console.log("useBarcodeScanner: startScanning called.");
     // Reset permission status only if it was previously denied or unknown
     setHasPermission(prev => (prev === false ? false : null));
-    setIsScanningActive(true);
+    setIsScanningActive(true); // Trigger the useEffect to initialize
   }, []);
 
   // Public function to signal stopping the scanning process
   const stopScanning = useCallback(() => {
     console.log("useBarcodeScanner: stopScanning called.");
-    setIsScanningActive(false);
-    stopStream();
-  }, [stopStream]);
+    setIsScanningActive(false); // This will trigger the useEffect cleanup
+    // stopStream(); // stopStream is now called within useEffect cleanup
+  }, []);
+
 
   // Effect to manage the camera and scanner initialization/teardown
   useEffect(() => {
@@ -89,8 +104,8 @@ export function useBarcodeScanner({
       console.log("Initializing scanner... isEnabled:", isEnabled, "isScanningActive:", isScanningActive, "isMounted:", isMountedRef.current);
 
       if (!isEnabled || !isScanningActive || !isMountedRef.current) {
-        console.log("Initialization preconditions not met.");
-        stopStream();
+        console.log("Initialization preconditions not met or scanning disabled.");
+        stopStream(); // Clean up if preconditions fail
         return;
       }
 
@@ -117,10 +132,9 @@ export function useBarcodeScanner({
        if (permissionTimeoutRef.current) clearTimeout(permissionTimeoutRef.current);
        if (initTimeoutRef.current) clearTimeout(initTimeoutRef.current);
 
-      await new Promise(resolve => setTimeout(resolve, 50)); // Short delay for ref
 
       if (!videoRef.current) {
-        console.error("Video element ref not available after delay.");
+        console.error("Video element ref not available during initialization attempt.");
          if (!cancelled && isMountedRef.current && isEnabled && isScanningActive) {
             initTimeoutRef.current = setTimeout(initializeScanner, 150); // Retry initialization
          } else {
@@ -159,7 +173,7 @@ export function useBarcodeScanner({
         // If we got the stream, clear the permission timeout
         if (permissionTimeoutRef.current) clearTimeout(permissionTimeoutRef.current);
 
-        if (cancelled || !isMountedRef.current) {
+        if (cancelled || !isMountedRef.current || !isScanningActive) {
           console.log("Initialization cancelled or unmounted during permission grant.");
           stream.getTracks().forEach(track => track.stop());
           setIsInitializing(false);
@@ -199,17 +213,16 @@ export function useBarcodeScanner({
                      const detectedBarcode = result.getText().trim().replace(/\r?\n|\r/g, '');
                      console.log('Barcode detected:', detectedBarcode);
                      playBeep(900, 80);
-                     onScanSuccess(detectedBarcode);
+                     debouncedOnScanSuccess(detectedBarcode); // Use debounced callback
                    }
                    if (err && !(err instanceof NotFoundException)) {
                      console.warn('Scanning error (non-critical):', err.name, err.message);
                    }
                  }).catch(decodeErr => {
-                   if (!cancelled && isMountedRef.current) {
+                   if (!cancelled && isMountedRef.current && isScanningActive) { // Check isScanningActive again
                      console.error("Error starting decodeFromVideoDevice:", decodeErr);
                      toast({ variant: "destructive", title: "Error de Escaneo", description: `No se pudo iniciar la decodificación: ${decodeErr.name}`});
-                     stopScanning();
-                     setIsInitializing(false);
+                     stopStream(); // Use stopStream to clean up fully
                      setHasPermission(null);
                    }
                  });
@@ -224,14 +237,15 @@ export function useBarcodeScanner({
                    description: `No se pudo iniciar la reproducción de video: ${playError.name}`,
                    duration: 9000
                  });
-                stopScanning(); // Stop if video can't play
+                stopStream(); // Use stopStream to clean up fully
+                // stopScanning(); // Redundant if stopStream is called
            }
         } else {
              if (!cancelled) {
                  console.warn("Video ref became null after permission grant.");
                  stream.getTracks().forEach(track => track.stop());
+                 setIsInitializing(false); // Update state if ref is lost
              }
-             setIsInitializing(false);
          }
 
       } catch (error: any) {
@@ -239,6 +253,7 @@ export function useBarcodeScanner({
 
         if (cancelled || !isMountedRef.current) {
             console.log("Initialization cancelled or unmounted during error handling.");
+            setIsInitializing(false);
             return;
         };
 
@@ -265,18 +280,17 @@ export function useBarcodeScanner({
           description: description,
           duration: 10000 // Longer duration for permission errors
         });
-        stopScanning();
+        stopStream(); // Use stopStream for cleanup
+        // stopScanning(); // Redundant if stopStream is called
       }
     };
 
     if (isEnabled && isScanningActive) {
        if (initTimeoutRef.current) clearTimeout(initTimeoutRef.current);
-       initTimeoutRef.current = setTimeout(() => {
-          if (isEnabled && isScanningActive && isMountedRef.current) {
-              initializeScanner();
-          }
-      }, 100);
+       // Start initialization immediately if conditions are met
+       initializeScanner();
     } else {
+      // If scanning is disabled or stopped, ensure cleanup
       stopStream();
     }
 
@@ -286,10 +300,11 @@ export function useBarcodeScanner({
       cancelled = true;
       if (initTimeoutRef.current) clearTimeout(initTimeoutRef.current);
       if (permissionTimeoutRef.current) clearTimeout(permissionTimeoutRef.current);
-      stopStream();
+      stopStream(); // Ensure cleanup on unmount or dependency change
       setIsInitializing(false);
     };
-  }, [isEnabled, isScanningActive, videoRef, onScanSuccess, stopStream, toast, stopScanning]); // Removed startScanning dependency as it triggers state change
+  }, [isEnabled, isScanningActive, videoRef, debouncedOnScanSuccess, stopStream, toast]); // Replaced onScanSuccess with debounced version
+
 
   return { isInitializing, hasPermission, startScanning, stopScanning };
 }

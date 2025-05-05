@@ -32,6 +32,7 @@ import { BrowserMultiFormatReader, NotFoundException } from '@zxing/library';
 import {
     addOrUpdateInventoryItem,
     getDisplayProductForWarehouse,
+    getProductDetail, // Make sure getProductDetail is imported
     addOrUpdateProductDetail,
     getInventoryItemsForWarehouse,
     getInventoryItem, // Import getInventoryItem to fetch stock for edit dialog
@@ -1015,24 +1016,25 @@ export default function Home() {
     useEffect(() => {
         let reader: BrowserMultiFormatReader | null = null;
         let cancelled = false; // Flag to prevent updates after component unmounts or effect cleans up
+        let timeoutId: NodeJS.Timeout | null = null; // For retry logic
 
         const initScanner = async () => {
-             if (!isScanning) {
-                stopCameraStream(); // Ensure cleanup when scanning stops
-                return;
-            }
-
-             // Ensure videoRef is available before proceeding
-             if (!videoRef.current) {
-                 console.error("Video element ref is not available.");
-                 // Retry after a short delay if component is still mounted and scanning
-                 setTimeout(() => {
-                     if (isScanning && !cancelled) {
-                         initScanner();
-                     }
-                 }, 100);
+             if (!isScanning || cancelled) {
+                 stopCameraStream(); // Ensure cleanup when scanning stops or effect cleans up
                  return;
              }
+
+             // --- Check for videoRef just before use ---
+             if (!videoRef.current) {
+                 console.warn("Video element ref is not available yet. Retrying...");
+                 // Simple retry logic: check again after a delay
+                 if (!cancelled) {
+                     timeoutId = setTimeout(initScanner, 100); // Retry after 100ms
+                 }
+                 return;
+             }
+             const currentVideoRef = videoRef.current; // Capture current ref
+             // --- End Check ---
 
              // Initialize the scanner reader only once
              if (!scannerReaderRef.current) {
@@ -1055,61 +1057,60 @@ export default function Home() {
                 setHasCameraPermission(true);
                 streamRef.current = stream;
 
-                 // Attach stream to video element if it's still mounted
-                 if (videoRef.current) {
-                     videoRef.current.srcObject = stream;
-                      // Make sure play() is called only after srcObject is set and element is ready
-                     videoRef.current.onloadedmetadata = () => {
-                         if (videoRef.current && !cancelled) {
-                             videoRef.current.play().then(() => {
-                                console.log("Video stream attached and playing.");
-                                 // Start continuous scanning only after video is playing
-                                 if (reader) { // Check if reader is initialized
-                                      console.log("Starting barcode decoding from video device...");
-                                      reader.decodeFromVideoDevice(undefined, videoRef.current!, (result, err) => {
-                                         if (cancelled) return;
+                 // Attach stream to video element
+                currentVideoRef.srcObject = stream;
+                // Make sure play() is called only after srcObject is set and element is ready
+                currentVideoRef.onloadedmetadata = () => {
+                     if (cancelled || !currentVideoRef) return; // Check if unmounted or ref cleared
 
-                                         if (result) {
-                                             console.log('Barcode detected:', result.getText());
-                                             const detectedBarcode = result.getText().trim().replace(/\r?\n|\r/g, ''); // Clean barcode
-                                             setIsScanning(false); // Close modal on successful scan
-                                             playBeep(900, 80);
-                                             requestAnimationFrame(() => {
-                                                 setBarcode(detectedBarcode); // Update state first
-                                                 handleAddProduct(detectedBarcode); // Then call add product
-                                             });
-                                         }
-                                         if (err && !(err instanceof NotFoundException)) {
-                                             console.error('Scanning error:', err);
-                                             // Maybe add a non-intrusive indicator of scanning issues?
-                                         }
+                     currentVideoRef.play().then(() => {
+                        if(cancelled) return; // Check again after async operation
+                        console.log("Video stream attached and playing.");
+                         // Start continuous scanning only after video is playing
+                         if (reader) { // Check if reader is initialized
+                              console.log("Starting barcode decoding from video device...");
+                              reader.decodeFromVideoDevice(undefined, currentVideoRef!, (result, err) => {
+                                 if (cancelled) return;
+
+                                 if (result) {
+                                     console.log('Barcode detected:', result.getText());
+                                     const detectedBarcode = result.getText().trim().replace(/\r?\n|\r/g, ''); // Clean barcode
+                                     setIsScanning(false); // Close modal on successful scan
+                                     playBeep(900, 80);
+                                     requestAnimationFrame(() => {
+                                         setBarcode(detectedBarcode); // Update state first
+                                         handleAddProduct(detectedBarcode); // Then call add product
                                      });
-                                     console.log("Barcode decoding started.");
-                                 } else {
-                                    console.error("Scanner reader was not initialized.");
-                                    stopCameraStream(); // Stop if reader failed to initialize
-                                    setIsScanning(false);
-                                    toast({ variant: "destructive", title: "Error de escáner", description: "No se pudo inicializar el lector de códigos."});
                                  }
-                             }).catch(playError => {
-                                 console.error("Error playing video stream:", playError);
-                                 toast({ variant: 'destructive', title: 'Error de Video', description: 'No se pudo iniciar la reproducción de la cámara.'});
-                                 stopCameraStream();
-                                 setIsScanning(false);
+                                 if (err && !(err instanceof NotFoundException)) {
+                                     console.error('Scanning error:', err);
+                                     // Maybe add a non-intrusive indicator of scanning issues?
+                                 }
                              });
+                             console.log("Barcode decoding started.");
+                         } else {
+                            if(cancelled) return;
+                            console.error("Scanner reader was not initialized.");
+                            stopCameraStream(); // Stop if reader failed to initialize
+                            setIsScanning(false);
+                            toast({ variant: "destructive", title: "Error de escáner", description: "No se pudo inicializar el lector de códigos."});
                          }
-                     };
-                      videoRef.current.onerror = (e) => {
-                        console.error("Video element error:", e);
-                        toast({ variant: 'destructive', title: 'Error de Cámara', description: 'Hubo un problema con el elemento de video.'});
-                        stopCameraStream();
-                        setIsScanning(false);
-                    };
-                 } else {
-                     console.warn("Video ref became null before attaching stream.");
-                     stream.getTracks().forEach(track => track.stop());
-                     return;
-                 }
+                     }).catch(playError => {
+                        if(cancelled) return;
+                         console.error("Error playing video stream:", playError);
+                         toast({ variant: 'destructive', title: 'Error de Video', description: 'No se pudo iniciar la reproducción de la cámara.'});
+                         stopCameraStream();
+                         setIsScanning(false);
+                     });
+                 };
+                  currentVideoRef.onerror = (e) => {
+                    if(cancelled) return;
+                    console.error("Video element error:", e);
+                    toast({ variant: 'destructive', title: 'Error de Cámara', description: 'Hubo un problema con el elemento de video.'});
+                    stopCameraStream();
+                    setIsScanning(false);
+                };
+
 
             } catch (error: any) {
                 if (cancelled) return;
@@ -1139,6 +1140,9 @@ export default function Home() {
         return () => {
             console.log("Cleaning up camera effect...");
             cancelled = true;
+            if (timeoutId) {
+                clearTimeout(timeoutId); // Clear any pending retry timeouts
+            }
             stopCameraStream();
             // Explicitly release the reader instance? According to docs, reset should be enough.
             // scannerReaderRef.current = null; // Consider if this is necessary
@@ -1582,5 +1586,4 @@ export default function Home() {
   );
 }
 
-
-  
+    

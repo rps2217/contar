@@ -25,7 +25,7 @@ import {
 } from "@/components/ui/table";
 import { WarehouseManagement } from "@/components/warehouse-management";
 import { format } from 'date-fns';
-import { Minus, Plus, Trash, RefreshCw, Warehouse as WarehouseIcon, Camera, AlertCircle, Search, Check, AppWindow, Database, Boxes, UploadCloud } from "lucide-react";
+import { Minus, Plus, Trash, RefreshCw, Warehouse as WarehouseIcon, Camera, AlertCircle, Search, Check, AppWindow, Database, Boxes, UploadCloud, Loader2 } from "lucide-react"; // Added Loader2
 import React, { useCallback, useEffect, useRef, useState } from "react";
 // Import ZXing library for barcode scanning
 import { BrowserMultiFormatReader, NotFoundException } from '@zxing/library';
@@ -37,6 +37,7 @@ import {
     addOrUpdateProductDetail,
     getInventoryItemsForWarehouse,
 } from '@/lib/indexeddb-helpers';
+import { backupToGoogleSheet } from './actions/backup-actions'; // Import the new Server Action
 
 const LOCAL_STORAGE_COUNTING_LIST_KEY_PREFIX = 'stockCounterPro_countingList_';
 const LOCAL_STORAGE_WAREHOUSE_KEY = 'stockCounterPro_currentWarehouse';
@@ -296,6 +297,7 @@ export default function Home() {
   const [isEditingValueInDialog, setIsEditingValueInDialog] = useState(false); // State for inline editing in dialog
   const [editingValue, setEditingValue] = useState<string>(''); // State for the input value
   const valueInputRef = useRef<HTMLInputElement>(null); // Ref for the value input
+  const [isBackingUp, setIsBackingUp] = useState(false); // State for backup loading
 
   // Load initial warehouses and active section from localStorage
   useEffect(() => {
@@ -880,21 +882,45 @@ export default function Home() {
     }
  }, [countingList, currentWarehouseId, toast, getWarehouseName]);
 
- // --- Backup to Google Sheet (CSV Export) ---
- const handleBackupToGoogleSheet = useCallback(() => {
+
+ // --- Backup to Google Sheet (Server Action) ---
+ const handleBackupToGoogleSheet = useCallback(async () => {
     if (countingList.length === 0) {
         toast({ title: "Vacío", description: "No hay productos en el inventario actual para respaldar." });
         return;
     }
-     // Trigger the same export function
-     handleExport();
-     // Provide guidance to the user
-     toast({
-        title: "Respaldo Iniciado (CSV)",
-        description: "Se ha generado un archivo CSV. Por favor, cópialo y pégalo manualmente en tu Google Sheet: https://docs.google.com/spreadsheets/d/1YIDzySfVBahkvMLGPjpMsB8FyDr3sIa1TFnDOIvZjRY/edit?usp=sharing",
-        duration: 15000, // Longer duration for the message
-     });
- }, [countingList, handleExport, toast]);
+    setIsBackingUp(true); // Start loading indicator
+    try {
+        // Get the current warehouse name
+        const currentWHName = getWarehouseName(currentWarehouseId);
+        // Call the Server Action
+        const result = await backupToGoogleSheet(countingList, currentWHName);
+
+        if (result.success) {
+            toast({
+                title: "Respaldo Exitoso",
+                description: result.message,
+            });
+        } else {
+            toast({
+                variant: "destructive",
+                title: "Error de Respaldo",
+                description: result.message,
+                duration: 9000,
+            });
+        }
+    } catch (error) {
+        console.error("Error calling backupToGoogleSheet Server Action:", error);
+        toast({
+            variant: "destructive",
+            title: "Error de Respaldo",
+            description: "Ocurrió un error inesperado al intentar respaldar en Google Sheet.",
+            duration: 9000,
+        });
+    } finally {
+        setIsBackingUp(false); // Stop loading indicator
+    }
+ }, [countingList, currentWarehouseId, getWarehouseName, toast]);
 
 
  // Converts an array of DisplayProduct objects to a CSV string
@@ -1535,11 +1561,15 @@ export default function Home() {
                  <Button
                       onClick={handleBackupToGoogleSheet}
                       className="bg-green-600 hover:bg-green-700 text-white rounded-md shadow-sm px-5 py-2 transition-colors duration-200 w-full sm:w-auto"
-                      disabled={countingList.length === 0 || isDbLoading}
-                      aria-label="Respaldar inventario actual a Google Sheet (CSV)"
+                      disabled={countingList.length === 0 || isDbLoading || isBackingUp} // Disable while backing up
+                      aria-label="Respaldar inventario actual a Google Sheet"
                  >
-                     <UploadCloud className="mr-2 h-4 w-4" />
-                     Respaldar a Google Sheet (CSV)
+                      {isBackingUp ? (
+                           <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                      ) : (
+                           <UploadCloud className="mr-2 h-4 w-4" />
+                      )}
+                      {isBackingUp ? "Respaldando..." : "Respaldar a Google Sheet"}
                  </Button>
                 <Button
                     onClick={handleExport}

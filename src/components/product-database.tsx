@@ -48,6 +48,7 @@ import {
 import {
     Table, TableBody, TableCaption, TableCell, TableHead, TableHeader, TableRow
 } from "@/components/ui/table";
+import { useLocalStorage } from '@/hooks/use-local-storage'; // Import useLocalStorage
 
 // --- Zod Schema ---
 const productDetailSchema = z.object({
@@ -61,267 +62,39 @@ const productDetailSchema = z.object({
 });
 type ProductDetailValues = z.infer<typeof productDetailSchema>;
 
-const GOOGLE_SHEET_URL_LOCALSTORAGE_KEY = 'stockCounterPro_googleSheetUrl';
+const GOOGLE_SHEET_URL_LOCALSTORAGE_KEY = 'stockCounterPro_googleSheetUrl'; // Key for storing the full URL or ID
+const GOOGLE_SHEET_ID_PATTERN = /\/spreadsheets\/d\/([a-zA-Z0-9-_]+)/;
 
-// --- Helper Components ---
-
-interface ProductTableProps {
-  productDetails: ProductDetail[];
-  inventoryItems: InventoryItem[];
-  isLoading: boolean;
-  searchTerm: string;
-  selectedProviderFilter: string;
-  onEdit: (detail: ProductDetail) => void;
-  onDelete: (barcode: string) => void;
-}
-
-const ProductTable: React.FC<ProductTableProps> = ({
-  productDetails,
-  inventoryItems,
-  isLoading,
-  searchTerm,
-  selectedProviderFilter,
-  onEdit,
-  onDelete, // Use onDelete which triggers the alert
-}) => {
-    const filteredDetails = React.useMemo(() => {
-        return productDetails.filter(detail => {
-            const searchTermLower = searchTerm.toLowerCase();
-            const matchesSearch = searchTerm === "" ||
-                                (detail.barcode || '').toLowerCase().includes(searchTermLower) ||
-                                (detail.description || '').toLowerCase().includes(searchTermLower) ||
-                                (detail.provider || '').toLowerCase().includes(searchTermLower);
-            const matchesProvider = selectedProviderFilter === 'all' || (detail.provider || "Desconocido") === selectedProviderFilter;
-            return matchesSearch && matchesProvider;
-        });
-    }, [productDetails, searchTerm, selectedProviderFilter]);
-
-  return (
-     <ScrollArea className="border rounded-lg shadow-sm h-[calc(100vh-480px)] md:h-[calc(100vh-420px)] bg-white dark:bg-gray-800">
-         <Table>
-            <TableCaption className="dark:text-gray-400">
-               {isLoading ? "Cargando..." :
-               filteredDetails.length === 0
-                 ? (productDetails.length > 0 ? 'No hay productos que coincidan con la búsqueda/filtro.' : 'La base de datos está vacía.')
-                 : `Mostrando ${filteredDetails.length} de ${productDetails.length} productos.`
-               }
-           </TableCaption>
-            <TableHeader className="sticky top-0 bg-background dark:bg-gray-700 z-10 shadow-sm">
-             <TableRow>
-               <TableHead className="w-[25%] px-3 py-3 dark:text-gray-300">Código Barras</TableHead>
-               <TableHead className="w-[40%] px-3 py-3 dark:text-gray-300">Descripción (Click para editar)</TableHead>
-               <TableHead className="w-[20%] px-3 py-3 hidden md:table-cell dark:text-gray-300">Proveedor</TableHead>
-               <TableHead className="w-[15%] px-3 py-3 text-right dark:text-gray-300">Stock Total</TableHead>
-             </TableRow>
-           </TableHeader>
-           <TableBody>
-             {isLoading ? (
-                 <TableRow>
-                     <TableCell colSpan={4} className="text-center py-10 text-muted-foreground dark:text-gray-400">
-                         Cargando datos...
-                     </TableCell>
-                 </TableRow>
-             ) : filteredDetails.length === 0 ? (
-                   <TableRow>
-                       <TableCell colSpan={4} className="text-center py-10 text-muted-foreground dark:text-gray-400">
-                           {productDetails.length > 0 ? "No hay productos que coincidan." : "La base de datos está vacía."}
-                       </TableCell>
-                   </TableRow>
-               ) : (
-                   filteredDetails.map((detail) => {
-                       const totalStock = inventoryItems
-                           .filter(item => item.barcode === detail.barcode)
-                           .reduce((sum, item) => sum + (item.stock || 0), 0);
-
-                       return (
-                           <TableRow key={detail.barcode} className="hover:bg-muted/50 dark:hover:bg-gray-700 text-sm transition-colors duration-150">
-                               <TableCell className="px-3 py-2 font-medium dark:text-gray-100" aria-label={`Código ${detail.barcode}`}>
-                                   {detail.barcode}
-                               </TableCell>
-                               <TableCell
-                                   className="px-3 py-2 cursor-pointer hover:text-primary dark:hover:text-teal-400 hover:underline dark:text-gray-100"
-                                   onClick={() => onEdit(detail)}
-                                   aria-label={`Editar producto ${detail.description}`}
-                                   title={`Editar ${detail.description}`}
-                               >
-                                   {detail.description}
-                               </TableCell>
-                               <TableCell className="px-3 py-2 hidden md:table-cell text-muted-foreground dark:text-gray-300" aria-label={`Proveedor ${detail.provider}`}>
-                                   {detail.provider || 'N/A'}
-                               </TableCell>
-                                <TableCell className="px-3 py-2 text-right font-medium tabular-nums text-muted-foreground dark:text-gray-300" aria-label={`Stock total ${totalStock}`}>
-                                  {totalStock}
-                                </TableCell>
-                           </TableRow>
-                       );
-                   })
-               )}
-           </TableBody>
-         </Table>
-       </ScrollArea>
-  );
+// --- Helper Function to Extract Spreadsheet ID ---
+const extractSpreadsheetId = (input: string): string | null => {
+  if (!input) return null;
+  const match = input.match(GOOGLE_SHEET_ID_PATTERN);
+  if (match && match[1]) {
+    return match[1]; // Return the ID if found in a URL
+  }
+  // Assume the input is the ID itself if it doesn't look like a URL
+  if (!input.startsWith('http') && input.length > 20) { // Basic check for ID-like string
+      return input;
+  }
+  return null; // Return null if no ID could be extracted
 };
 
-interface EditProductDialogProps {
-  isOpen: boolean;
-  setIsOpen: (open: boolean) => void;
-  selectedDetail: ProductDetail | null;
-  setSelectedDetail: (detail: ProductDetail | null) => void;
-  onSubmit: (data: ProductDetailValues) => void;
-  onDelete: (barcode: string | null) => void;
-  isProcessing: boolean;
-  initialStock: number;
-}
-
-const EditProductDialog: React.FC<EditProductDialogProps> = ({
-  isOpen,
-  setIsOpen,
-  selectedDetail,
-  setSelectedDetail,
-  onSubmit,
-  onDelete,
-  isProcessing,
-  initialStock
-}) => {
-  const productDetailForm = useForm<ProductDetailValues>({
-    resolver: zodResolver(productDetailSchema),
-    defaultValues: { barcode: "", description: "", provider: "Desconocido", stock: 0 },
-  });
-  const { handleSubmit: handleDetailSubmit, reset: resetDetailForm, control: detailControl } = productDetailForm;
-
-   // Effect to update form values when selectedDetail changes or dialog opens
-   useEffect(() => {
-    if (isOpen && selectedDetail) {
-        resetDetailForm({
-            barcode: selectedDetail.barcode || "",
-            description: selectedDetail.description || "",
-            provider: selectedDetail.provider || "Desconocido",
-            stock: initialStock, // Use initialStock passed as prop
-        });
-    } else if (!isOpen) {
-         resetDetailForm({ barcode: "", description: "", provider: "Desconocido", stock: 0 });
-         setSelectedDetail(null);
-    }
-   }, [isOpen, selectedDetail, resetDetailForm, initialStock, setSelectedDetail]);
-
-  const handleClose = () => {
-    setIsOpen(false);
-  };
-
-  return (
-    <Dialog open={isOpen} onOpenChange={(openState) => { if (!openState) handleClose(); else setIsOpen(true); }}>
-        <DialogContent className="sm:max-w-lg dark:bg-gray-800 dark:text-white">
-          <DialogHeader>
-            <DialogTitle className="dark:text-gray-100">{selectedDetail ? "Editar Producto" : "Agregar Nuevo Producto"}</DialogTitle>
-            <DialogDescription className="dark:text-gray-400">
-              {selectedDetail ? "Modifica los detalles del producto y su stock en el almacén principal." : "Añade un nuevo producto (detalle general) y su stock inicial para el almacén principal."}
-            </DialogDescription>
-          </DialogHeader>
-          <Form {...productDetailForm}>
-            <form onSubmit={handleDetailSubmit(onSubmit)} className="space-y-4 p-2">
-              <FormField
-                control={detailControl}
-                name="barcode"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel className="dark:text-gray-200">Código de Barras *</FormLabel>
-                    <FormControl>
-                       <Input type="text" {...field} readOnly={!!selectedDetail} aria-required="true" disabled={isProcessing} className="dark:bg-gray-700 dark:border-gray-600"/>
-                    </FormControl>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
-              <FormField
-                control={detailControl}
-                name="description"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel className="dark:text-gray-200">Descripción *</FormLabel>
-                    <FormControl>
-                       <Input type="text" {...field} aria-required="true" disabled={isProcessing} className="dark:bg-gray-700 dark:border-gray-600"/>
-                    </FormControl>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
-              <FormField
-                control={detailControl}
-                name="provider"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel className="dark:text-gray-200">Proveedor</FormLabel>
-                    <FormControl>
-                      <Input type="text" {...field} placeholder="Opcional" disabled={isProcessing} className="dark:bg-gray-700 dark:border-gray-600"/>
-                    </FormControl>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
-              <FormField
-                  control={detailControl}
-                  name="stock"
-                  render={({ field }) => (
-                  <FormItem>
-                      <FormLabel className="dark:text-gray-200">Stock (Almacén Principal) *</FormLabel>
-                      <FormControl>
-                      <Input type="number" {...field} aria-required="true" disabled={isProcessing} className="dark:bg-gray-700 dark:border-gray-600"/>
-                      </FormControl>
-                       <FormDescUi className="text-xs dark:text-gray-400">Este stock se aplica al almacén 'main'.</FormDescUi>
-                      <FormMessage />
-                  </FormItem>
-                  )}
-              />
-               <DialogFooter className="flex flex-col-reverse sm:flex-row sm:justify-between w-full pt-6 gap-2">
-                    {selectedDetail && (
-                        <Button
-                            type="button"
-                            variant="destructive"
-                            onClick={() => onDelete(selectedDetail.barcode)}
-                            className="sm:mr-auto"
-                            disabled={isProcessing}
-                        >
-                            <Trash className="mr-2 h-4 w-4" /> Eliminar Producto
-                        </Button>
-                    )}
-                    {!selectedDetail && <div className="sm:mr-auto"></div>}
-                    <div className="flex gap-2 justify-end">
-                         <Button type="button" variant="outline" onClick={handleClose} disabled={isProcessing} className="dark:text-gray-300 dark:border-gray-600 dark:hover:bg-gray-700">Cancelar</Button>
-                         <Button type="submit" disabled={isProcessing} className="dark:bg-teal-600 dark:hover:bg-teal-700">
-                             {isProcessing ? "Guardando..." : (selectedDetail ? <><Save className="mr-2 h-4 w-4" /> Guardar Cambios</> : "Agregar Producto")}
-                         </Button>
-                    </div>
-                </DialogFooter>
-            </form>
-          </Form>
-        </DialogContent>
-      </Dialog>
-  );
-};
 
 // --- Google Sheet Parsing Logic (Position-Based) ---
-const parseGoogleSheetUrl = (sheetUrl: string): { spreadsheetId: string | null; gid: string } => {
-    try {
-        new URL(sheetUrl);
-    } catch (error) {
-        console.error("Invalid Google Sheet URL provided:", sheetUrl, error);
-        throw new Error("URL de Hoja de Google inválida.");
-    }
-    const spreadsheetIdMatch = sheetUrl.match(/\/spreadsheets\/d\/([a-zA-Z0-9-_]+)/);
-    const gidMatch = sheetUrl.match(/[#&]gid=([0-9]+)/);
-
-    const spreadsheetId = spreadsheetIdMatch ? spreadsheetIdMatch[1] : null;
-    const gid = gidMatch ? gidMatch[1] : '0';
+const parseGoogleSheetUrl = (sheetUrlOrId: string): { spreadsheetId: string | null; gid: string } => {
+    const spreadsheetId = extractSpreadsheetId(sheetUrlOrId);
+    const gidMatch = sheetUrlOrId.match(/[#&]gid=([0-9]+)/);
+    const gid = gidMatch ? gidMatch[1] : '0'; // Default to first sheet (gid=0)
 
     if (!spreadsheetId) {
-         console.warn("Could not extract spreadsheet ID from URL:", sheetUrl);
-         throw new Error("No se pudo extraer el ID de la hoja de cálculo de la URL.");
+         console.warn("Could not extract spreadsheet ID from input:", sheetUrlOrId);
+         throw new Error("No se pudo extraer el ID de la hoja de cálculo de la URL/ID proporcionado.");
     }
     return { spreadsheetId, gid };
 };
 
-async function fetchAndParseGoogleSheetData(sheetUrl: string): Promise<{ details: ProductDetail[], inventory: InventoryItem[] }> {
-    const { spreadsheetId, gid } = parseGoogleSheetUrl(sheetUrl);
+async function fetchAndParseGoogleSheetData(sheetUrlOrId: string): Promise<{ details: ProductDetail[], inventory: InventoryItem[] }> {
+    const { spreadsheetId, gid } = parseGoogleSheetUrl(sheetUrlOrId);
     const csvExportUrl = `https://docs.google.com/spreadsheets/d/${spreadsheetId}/export?format=csv&gid=${gid}`;
     console.log("Fetching Google Sheet CSV from:", csvExportUrl);
 
@@ -331,9 +104,9 @@ async function fetchAndParseGoogleSheetData(sheetUrl: string): Promise<{ details
         response = await fetch(urlWithCacheBust, { cache: "no-store" });
     } catch (error: any) {
         console.error("Network error fetching Google Sheet:", error);
-        let userMessage = "Error de red al obtener la hoja. Verifique su conexión y la URL.";
+        let userMessage = "Error de red al obtener la hoja. Verifique su conexión y la URL/ID.";
         if (error.message?.includes('Failed to fetch')) {
-            userMessage += " Posible problema de CORS o conectividad, o la URL es incorrecta.";
+            userMessage += " Posible problema de CORS o conectividad, o la URL/ID es incorrecta.";
         } else {
             userMessage += ` Detalle: ${error.message}`;
         }
@@ -347,10 +120,10 @@ async function fetchAndParseGoogleSheetData(sheetUrl: string): Promise<{ details
         console.error(`Failed to fetch Google Sheet data: ${status} ${statusText}`, { url: csvExportUrl, body: errorBody.substring(0, 500) });
 
         let userMessage = `Error ${status} al obtener datos. `;
-        if (status === 400) userMessage += "Verifique la URL y asegúrese de que el ID de la hoja (gid=...) sea correcto.";
+        if (status === 400) userMessage += "Verifique la URL/ID y asegúrese de que el ID de la hoja (gid=...) sea correcto.";
         else if (status === 403 || errorBody.toLowerCase().includes("google accounts sign in")) userMessage = "Error de Acceso: La hoja no es pública. Cambie la configuración de compartir a 'Cualquier persona con el enlace puede ver'.";
-        else if (status === 404) userMessage += "Hoja no encontrada. Verifique la URL y el ID de la hoja.";
-        else userMessage += ` ${statusText}. Revise los permisos de la hoja o la URL.`;
+        else if (status === 404) userMessage += "Hoja no encontrada. Verifique la URL/ID y el ID de la hoja.";
+        else userMessage += ` ${statusText}. Revise los permisos de la hoja o la URL/ID.`;
 
         throw new Error(userMessage);
     }
@@ -359,14 +132,12 @@ async function fetchAndParseGoogleSheetData(sheetUrl: string): Promise<{ details
     console.log(`Successfully fetched CSV data (length: ${csvText.length}). Parsing...`);
 
     const result = Papa.parse<string[]>(csvText, {
-      header: false, // Treat first row as data
+      header: false,
       skipEmptyLines: true,
     });
 
     if (result.errors.length > 0) {
       console.warn("Parsing errors encountered:", result.errors);
-      // Optionally throw an error or return partial data based on requirements
-      // throw new Error("Error parsing CSV data.");
     }
 
     const productDetails: ProductDetail[] = [];
@@ -380,7 +151,6 @@ async function fetchAndParseGoogleSheetData(sheetUrl: string): Promise<{ details
 
     console.log(`Processing ${result.data.length} data rows (including potential header).`);
 
-     // Skip header row by starting from index 1 if header: true was used, or 0 if header: false
     const startDataRow = 1; // Skip header row assumed to be the first
 
     for (let i = startDataRow; i < result.data.length; i++) {
@@ -397,7 +167,7 @@ async function fetchAndParseGoogleSheetData(sheetUrl: string): Promise<{ details
             console.warn(`Skipping row ${i + 1}: Missing or empty barcode (Column 1). Row:`, values);
             continue;
         }
-        if (barcode.length > 100) { // Basic validation
+        if (barcode.length > 100) {
            console.warn(`Skipping row ${i + 1}: Barcode too long (${barcode.length} chars). Row:`, values);
            continue;
         }
@@ -421,7 +191,7 @@ async function fetchAndParseGoogleSheetData(sheetUrl: string): Promise<{ details
             barcode: barcode,
             warehouseId: defaultWarehouseId,
             stock: stockMain,
-            count: 0, // Default count to 0 on import
+            count: 0,
             lastUpdated: new Date().toISOString(),
         });
     }
@@ -449,11 +219,14 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = ({ currentWarehou
   const [initialStockForEdit, setInitialStockForEdit] = useState<number>(0);
   const [isAlertOpen, setIsAlertOpen] = useState(false);
   const [alertAction, setAlertAction] = useState<'deleteProduct' | 'clearDatabase' | null>(null);
-  const [productToDelete, setProductToDelete] = useState<ProductDetail | null>(null); // Store the detail to delete
+  const [productToDelete, setProductToDelete] = useState<ProductDetail | null>(null);
   const [uploadProgress, setUploadProgress] = useState(0);
   const [isProcessing, setIsProcessing] = useState(false);
   const [processingStatus, setProcessingStatus] = useState<string>("");
-  const [googleSheetUrl, setGoogleSheetUrl] = useState("");
+  const [googleSheetUrlOrId, setGoogleSheetUrlOrId] = useLocalStorage<string>( // Renamed state variable
+      GOOGLE_SHEET_URL_LOCALSTORAGE_KEY,
+      ""
+  );
   const [searchTerm, setSearchTerm] = useState("");
   const [selectedProviderFilter, setSelectedProviderFilter] = useState<string>("all");
 
@@ -481,22 +254,10 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = ({ currentWarehou
     loadInitialData();
   }, [loadInitialData]);
 
-  // Load and save Google Sheet URL from localStorage
-  useEffect(() => {
-    if (typeof window !== 'undefined') {
-      const savedUrl = localStorage.getItem(GOOGLE_SHEET_URL_LOCALSTORAGE_KEY);
-      if (savedUrl) {
-        setGoogleSheetUrl(savedUrl);
-      }
-    }
-  }, []);
 
-  const handleGoogleSheetUrlChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const newUrl = e.target.value;
-    setGoogleSheetUrl(newUrl);
-    if (typeof window !== 'undefined') {
-      localStorage.setItem(GOOGLE_SHEET_URL_LOCALSTORAGE_KEY, newUrl);
-    }
+  const handleGoogleSheetUrlOrIdChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const newUrlOrId = e.target.value;
+    setGoogleSheetUrlOrId(newUrlOrId); // Updates state and localStorage via the hook
   };
 
 
@@ -505,7 +266,7 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = ({ currentWarehou
  const handleAddOrUpdateDetailSubmit = useCallback(async (data: ProductDetailValues) => {
     const isUpdating = !!selectedDetail;
     const detailData: ProductDetail = {
-        barcode: isUpdating ? selectedDetail!.barcode : data.barcode.trim(), // Use selectedDetail barcode if updating
+        barcode: isUpdating ? selectedDetail!.barcode : data.barcode.trim(),
         description: data.description.trim() || `Producto ${data.barcode.trim()}`,
         provider: data.provider?.trim() || "Desconocido",
     };
@@ -522,22 +283,20 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = ({ currentWarehou
 
         let currentCount = 0;
         if (isUpdating) {
-            // Fetch existing item only if updating to preserve count
             const existingItem = await getInventoryItem(detailData.barcode, 'main');
             currentCount = existingItem?.count ?? 0;
         }
 
         const inventoryItemData: InventoryItem = {
             barcode: detailData.barcode,
-            warehouseId: 'main', // Apply stock to 'main' warehouse
+            warehouseId: 'main',
             stock: data.stock ?? 0,
-            count: currentCount, // Preserve count if updating, otherwise 0
+            count: currentCount,
             lastUpdated: new Date().toISOString(),
         };
         await addOrUpdateInventoryItem(inventoryItemData);
 
-        // Update local states optimistically but correctly
-        await loadInitialData(); // Reload all data to ensure consistency
+        await loadInitialData();
 
         toast({
             title: isUpdating ? "Producto Actualizado" : "Producto Agregado",
@@ -556,9 +315,9 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = ({ currentWarehou
     } finally {
         setIsProcessing(false);
         setProcessingStatus("");
-        setSelectedDetail(null); // Clear selected detail after operation
+        setSelectedDetail(null);
     }
- }, [selectedDetail, toast, loadInitialData]); // Added loadInitialData dependency
+ }, [selectedDetail, toast, loadInitialData]);
 
 
  const handleDeleteProduct = useCallback(async (barcode: string | null) => {
@@ -566,21 +325,20 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = ({ currentWarehou
         toast({ variant: "destructive", title: "Error Interno", description: "No se puede eliminar el producto sin código de barras." });
         return;
     }
-    const detailToDelete = productDetails.find(d => d.barcode === barcode); // Get description for toast
+    const detailToDelete = productDetails.find(d => d.barcode === barcode);
 
     setIsProcessing(true);
     setProcessingStatus("Eliminando producto...");
     try {
       await deleteProductCompletely(barcode);
-      // Update local states by reloading
       await loadInitialData();
       toast({
         title: "Producto Eliminado",
         description: `El producto ${detailToDelete?.description || barcode} y todo su inventario asociado han sido eliminados.`,
       });
-      setIsEditModalOpen(false); // Close edit dialog if open
-      setIsAlertOpen(false);     // Close confirmation dialog
-      setProductToDelete(null);  // Clear the product marked for deletion
+      setIsEditModalOpen(false);
+      setIsAlertOpen(false);
+      setProductToDelete(null);
       setAlertAction(null);
     } catch (error: any) {
       console.error("Failed to delete product completely", error);
@@ -589,7 +347,7 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = ({ currentWarehou
           setIsProcessing(false);
           setProcessingStatus("");
     }
-  }, [toast, loadInitialData, productDetails]); // Added loadInitialData and productDetails
+  }, [toast, loadInitialData, productDetails]);
 
 
   const handleClearDatabase = useCallback(async () => {
@@ -620,18 +378,18 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = ({ currentWarehou
          setInitialStockForEdit(mainInventory?.stock ?? 0);
          setSelectedDetail(detail);
     } else {
-        setInitialStockForEdit(0); // Default for new product
+        setInitialStockForEdit(0);
         setSelectedDetail(null);
     }
     setIsEditModalOpen(true);
   }, []);
 
-  const triggerDeleteProductAlert = useCallback((detail: ProductDetail | null) => { // Accept detail object
+  const triggerDeleteProductAlert = useCallback((detail: ProductDetail | null) => {
       if (!detail) {
          toast({ variant: "destructive", title: "Error Interno", description: "Datos del producto no disponibles para eliminar." });
          return;
       }
-      setProductToDelete(detail); // Store the detail to delete
+      setProductToDelete(detail);
       setAlertAction('deleteProduct');
       setIsAlertOpen(true);
   }, [toast]);
@@ -647,13 +405,12 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = ({ currentWarehou
 
    const handleDeleteConfirmation = useCallback(() => {
         if (alertAction === 'deleteProduct' && productToDelete) {
-            handleDeleteProduct(productToDelete.barcode); // Pass barcode
+            handleDeleteProduct(productToDelete.barcode);
         } else if (alertAction === 'clearDatabase') {
             handleClearDatabase();
         } else {
             console.warn("Delete confirmation called with invalid state:", { alertAction, productToDelete });
         }
-        // Reset state regardless of action taken
         setIsAlertOpen(false);
         setProductToDelete(null);
         setAlertAction(null);
@@ -663,8 +420,8 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = ({ currentWarehou
 
    // --- Google Sheet Loading ---
    const handleLoadFromGoogleSheet = useCallback(async () => {
-        if (!googleSheetUrl) {
-            toast({ variant: "destructive", title: "URL Requerida", description: "Introduce la URL de la hoja de Google." });
+        if (!googleSheetUrlOrId) { // Check if input is empty
+            toast({ variant: "destructive", title: "URL/ID Requerido", description: "Introduce la URL de la hoja de Google o el ID." });
             return;
         }
 
@@ -673,10 +430,10 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = ({ currentWarehou
         setProcessingStatus("Obteniendo datos de Google Sheet...");
 
         try {
-            const { details, inventory } = await fetchAndParseGoogleSheetData(googleSheetUrl);
+            const { details, inventory } = await fetchAndParseGoogleSheetData(googleSheetUrlOrId); // Pass the input value
             const totalItemsToLoad = details.length + inventory.length;
              let itemsLoaded = 0;
-             const batchSize = 100; // Process in batches
+             const batchSize = 100;
 
              if (totalItemsToLoad === 0) {
                  toast({ title: "Hoja Vacía o Sin Datos Válidos", description: "No se encontraron productos válidos en la hoja.", variant: "default" });
@@ -687,7 +444,6 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = ({ currentWarehou
                      await addProductDetailsInBulk(batch);
                      itemsLoaded += batch.length;
                      setUploadProgress(Math.round((itemsLoaded / totalItemsToLoad) * 100));
-                     // Optional small delay to allow UI update
                      await new Promise(resolve => setTimeout(resolve, 5));
                  }
 
@@ -697,12 +453,11 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = ({ currentWarehou
                      await addInventoryItemsInBulk(batch);
                      itemsLoaded += batch.length;
                      setUploadProgress(Math.round((itemsLoaded / totalItemsToLoad) * 100));
-                      // Optional small delay
                      await new Promise(resolve => setTimeout(resolve, 5));
                  }
 
                  console.log("Bulk add/update to IndexedDB completed.");
-                 await loadInitialData(); // Reload data after bulk operations
+                 await loadInitialData();
                  toast({ title: "Carga Completa", description: `Se procesaron ${details.length} detalles y ${inventory.length} registros de inventario.` });
              }
 
@@ -715,7 +470,7 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = ({ currentWarehou
             setProcessingStatus("");
             setUploadProgress(0);
         }
-    }, [googleSheetUrl, toast, loadInitialData]);
+    }, [googleSheetUrlOrId, toast, loadInitialData]); // Depend on the URL/ID state
 
 
   // --- Export and Filtering ---
@@ -735,7 +490,7 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = ({ currentWarehou
          document.body.appendChild(link);
          link.click();
          document.body.removeChild(link);
-         URL.revokeObjectURL(link.href); // Clean up object URL
+         URL.revokeObjectURL(link.href);
          toast({ title: "Exportación Iniciada", description: "Se ha iniciado la descarga del archivo CSV de detalles." });
      } catch (error) {
           console.error("Error exporting database details:", error);
@@ -750,7 +505,6 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = ({ currentWarehou
         const safeQuote = (field: any): string => {
             const str = String(field ?? '');
             const escapedStr = str.replace(/"/g, '""');
-            // Quote if it contains comma, quote, or newline
             return (str.includes(',') || str.includes('"') || str.includes('\n')) ? `"${escapedStr}"` : str;
         };
         const rows = data.map((detail) => [
@@ -790,7 +544,7 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = ({ currentWarehou
       const providerDetails = productDetails.filter(detail => (detail.provider || "Desconocido") === selectedProviderFilter);
       if (providerDetails.length === 0) {
         toast({ title: "Vacío", description: `No hay productos registrados para el proveedor ${selectedProviderFilter}.` });
-        setIsProcessing(false); // Ensure processing state is reset
+        setIsProcessing(false);
         setProcessingStatus("");
         return;
       }
@@ -805,12 +559,12 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = ({ currentWarehou
           ...detail,
           warehouseId: currentWarehouseId,
           stock: inventory?.stock ?? 0,
-          count: 0, // Reset count for the new session
-          lastUpdated: inventory?.lastUpdated || new Date().toISOString(), // Provide a default if not present
+          count: 0,
+          lastUpdated: inventory?.lastUpdated || new Date().toISOString(),
         };
       });
 
-      onStartCountByProvider(productsToCount); // Call callback
+      onStartCountByProvider(productsToCount);
 
     } catch (error) {
       console.error("Error starting count by provider:", error);
@@ -903,20 +657,20 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = ({ currentWarehou
       {/* --- Google Sheet Loader --- */}
        <div className="space-y-2 p-4 border rounded-lg bg-card dark:bg-gray-800 shadow-sm">
            <Label htmlFor="google-sheet-url" className="block font-medium mb-1 dark:text-gray-200">
-              Cargar/Actualizar desde Google Sheet:
+              Cargar/Actualizar desde Google Sheet (URL o ID):
            </Label>
           <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
              <Input
              id="google-sheet-url"
-             type="url"
-             placeholder="URL de Hoja de Google (pública y compartida)"
-             value={googleSheetUrl}
-             onChange={handleGoogleSheetUrlChange}
+             type="text" // Changed to text to allow URL or ID
+             placeholder="URL de Hoja de Google o ID de Hoja" // Updated placeholder
+             value={googleSheetUrlOrId}
+             onChange={handleGoogleSheetUrlOrIdChange} // Use the new handler
              className="flex-grow h-10 dark:bg-gray-700 dark:border-gray-600 dark:text-white"
              disabled={isProcessing || isLoading}
              aria-describedby="google-sheet-info"
              />
-             <Button variant="secondary" disabled={isProcessing || isLoading || !googleSheetUrl} onClick={handleLoadFromGoogleSheet}>
+             <Button variant="secondary" disabled={isProcessing || isLoading || !googleSheetUrlOrId} onClick={handleLoadFromGoogleSheet}>
                 {isProcessing && processingStatus.includes("Google") ?
                   <Loader2 className="mr-2 h-4 w-4 animate-spin" /> :
                   <Upload className="mr-2 h-4 w-4" />
@@ -925,7 +679,7 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = ({ currentWarehou
              </Button>
          </div>
          <p id="google-sheet-info" className="text-xs text-muted-foreground dark:text-gray-400 mt-1">
-                Asegúrese de que la hoja sea pública ('Cualquier persona con el enlace puede ver'). Se leerán las primeras 4 columnas por posición, ignorando la primera fila (encabezado): 1:Código Barras, 2:Descripción, 3:Proveedor, 4:Stock (para almacén 'main').
+               Introduzca la URL completa de la Hoja de Google (compartida públicamente) o simplemente el ID de la hoja de cálculo. Se leerán las primeras 4 columnas por posición, ignorando la primera fila: 1:Código Barras, 2:Descripción, 3:Proveedor, 4:Stock (para almacén 'main').
          </p>
          {isProcessing && (
              <div className="mt-4 space-y-1">
@@ -985,7 +739,7 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = ({ currentWarehou
            searchTerm={searchTerm}
            selectedProviderFilter={selectedProviderFilter}
            onEdit={handleOpenEditDialog}
-           onDelete={(barcode) => { // Find the detail to pass to triggerDeleteProductAlert
+           onDelete={(barcode) => {
                 const detail = productDetails.find(d => d.barcode === barcode);
                 if (detail) {
                      triggerDeleteProductAlert(detail);
@@ -1002,7 +756,7 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = ({ currentWarehou
           selectedDetail={selectedDetail}
           setSelectedDetail={setSelectedDetail}
           onSubmit={handleAddOrUpdateDetailSubmit}
-          onDelete={(barcode) => { // Find the detail to pass to triggerDeleteProductAlert
+          onDelete={(barcode) => {
                 const detail = productDetails.find(d => d.barcode === barcode);
                 if (detail) {
                      triggerDeleteProductAlert(detail);
@@ -1016,5 +770,3 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = ({ currentWarehou
     </div>
   );
 };
-
-    

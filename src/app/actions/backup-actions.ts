@@ -10,7 +10,7 @@ import { format } from 'date-fns';
 const SERVICE_ACCOUNT_EMAIL = process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL;
 // Replace escaped newlines in the private key if stored as a single line env var
 const PRIVATE_KEY = process.env.GOOGLE_PRIVATE_KEY?.replace(/\\n/g, '\n');
-const DEFAULT_SHEET_NAME = 'Inventario'; // Default sheet name if needed, but appending works without it
+const DEFAULT_SHEET_NAME = 'Inventario'; // Default sheet name to append data to
 
 // --- Helper Function to Authenticate ---
 const authenticate = async () => {
@@ -20,7 +20,7 @@ const authenticate = async () => {
 
   if (!SERVICE_ACCOUNT_EMAIL) {
     console.error("Authentication Error: Missing GOOGLE_SERVICE_ACCOUNT_EMAIL environment variable.");
-    throw new Error("Configuración incompleta: Falta el email de la cuenta de servicio (GOOGLE_SERVICE_ACCOUNT_EMAIL).");
+    throw new Error("Configuración incompleta: Falta el email de la cuenta de servicio (GOOGLE_SERVICE_ACCOUNT_EMAIL). Verifica las variables de entorno.");
   }
   // Check if private key is truly missing or just consists of the newline character replacement artifact
   if (!PRIVATE_KEY || PRIVATE_KEY.trim().length <= '-----BEGIN PRIVATE KEY-----\n-----END PRIVATE KEY-----\n'.length) {
@@ -53,7 +53,7 @@ const authenticate = async () => {
 export const backupToGoogleSheet = async (
     countingListData: DisplayProduct[],
     warehouseName: string,
-    spreadsheetId: string
+    spreadsheetId: string // Expecting only the ID now
 ): Promise<{ success: boolean; message: string }> => {
   console.log("Starting backupToGoogleSheet Server Action...");
   console.log(`Target Spreadsheet ID: ${spreadsheetId}`);
@@ -81,6 +81,7 @@ export const backupToGoogleSheet = async (
     // The first row of your sheet should ideally match these headers.
     // The `append` operation won't add headers, it just adds data rows.
     // If the sheet is empty, you might want to add headers first (separate operation).
+    // Current columns: Backup Timestamp, Warehouse, Barcode, Description, Provider, System Stock, Counted Quantity, Last Product Update
     const headers = ["Fecha Respaldo", "Almacén", "Código Barras", "Descripción", "Proveedor", "Stock Sistema", "Cantidad Contada", "Última Actualización Producto"];
 
     const values = countingListData.map(product => [

@@ -298,6 +298,7 @@ export default function Home() {
   const valueInputRef = useRef<HTMLInputElement>(null); // Ref for the value input
   const [isBackingUp, setIsBackingUp] = useState(false); // State for backup loading
   const [backupSheetId, setBackupSheetId] = useState<string>(''); // State for the backup Google Sheet ID
+  const [isInitializingCamera, setIsInitializingCamera] = useState(false); // State for camera initialization
 
 
   // Load initial warehouses and active section from localStorage
@@ -1088,21 +1089,29 @@ export default function Home() {
     useEffect(() => {
         let reader: BrowserMultiFormatReader | null = null;
         let cancelled = false;
-        let timeoutId: NodeJS.Timeout | null = null;
         let isMounted = true; // Track if component is still mounted
 
         const initScanner = async () => {
              if (!isScanning || !isMounted) {
                  stopCameraStream();
+                 setIsInitializingCamera(false); // Reset camera initialization state
                  return;
              }
+
+             setIsInitializingCamera(true); // Indicate camera is initializing
 
              // Ensure videoRef is available before proceeding
              if (!videoRef.current) {
                  console.error("Video element ref is not available.");
                  // Retry after a short delay if component is still mounted and scanning
-                 if (!cancelled && isMounted) {
-                      timeoutId = setTimeout(initScanner, 100);
+                  if (!cancelled && isMounted && isScanning) { // Check isScanning again before retrying
+                      setTimeout(() => {
+                          if (isScanning && isMounted) { // Re-check before initiating
+                             initScanner();
+                          }
+                      }, 150); // Increased retry delay slightly
+                 } else {
+                      setIsInitializingCamera(false);
                  }
                  return;
              }
@@ -1120,6 +1129,7 @@ export default function Home() {
                 const stream = await navigator.mediaDevices.getUserMedia(constraints);
                  if (cancelled || !isMounted) {
                      stream.getTracks().forEach(track => track.stop());
+                     setIsInitializingCamera(false);
                      return;
                  }
 
@@ -1132,16 +1142,26 @@ export default function Home() {
                   // Wait for metadata to load before playing
                   await new Promise<void>((resolve, reject) => {
                     currentVideoRef.onloadedmetadata = () => resolve();
-                    currentVideoRef.onerror = (e) => reject(new Error(`Video metadata error: ${e}`));
+                    currentVideoRef.onerror = (e) => {
+                        console.error("Video metadata error:", e);
+                         reject(new Error(`Video metadata error: ${e}`));
+                     };
                   });
 
 
-                  if (cancelled || !isMounted) return; // Check again after await
+                  if (cancelled || !isMounted) {
+                       setIsInitializingCamera(false);
+                       return;
+                  } // Check again after await
 
                   await currentVideoRef.play(); // Play the video stream
 
-                   if (cancelled || !isMounted) return; // Check again after await
+                   if (cancelled || !isMounted) {
+                        setIsInitializingCamera(false);
+                        return;
+                   } // Check again after await
                    console.log("Video stream attached and playing.");
+                   setIsInitializingCamera(false); // Camera is ready
 
                    if (reader) {
                        console.log("Starting barcode decoding from video device...");
@@ -1183,12 +1203,13 @@ export default function Home() {
                      console.warn("Video ref became null after permission grant.");
                      stream.getTracks().forEach(track => track.stop());
                    }
+                    setIsInitializingCamera(false);
                 }
 
             } catch (error: any) {
                 if (cancelled || !isMounted) return;
 
-                console.error('Error accessing camera or starting scanner:', error);
+                console.error('Error accessing camera or starting scanner:', error.name, error.message, error.stack);
                 setHasCameraPermission(false);
                 toast({
                     variant: 'destructive',
@@ -1198,6 +1219,7 @@ export default function Home() {
                 });
                 stopCameraStream();
                 setIsScanning(false);
+                 setIsInitializingCamera(false);
             }
         };
 
@@ -1207,16 +1229,16 @@ export default function Home() {
          } else {
              console.log("isScanning is false, ensuring camera is stopped.");
              stopCameraStream();
+             setIsInitializingCamera(false);
          }
 
+        // Cleanup function
         return () => {
             console.log("Cleaning up camera effect...");
             isMounted = false;
             cancelled = true;
-            if (timeoutId) {
-                clearTimeout(timeoutId);
-            }
             stopCameraStream();
+             setIsInitializingCamera(false);
         };
      // eslint-disable-next-line react-hooks/exhaustive-deps
      }, [isScanning, toast, playBeep, handleAddProduct, stopCameraStream]);
@@ -1455,7 +1477,14 @@ export default function Home() {
                             <div className="w-3/4 h-1/2 border-2 border-red-500 rounded-md opacity-75"></div>
                         </div>
                     )}
-                    {hasCameraPermission === null && isScanning && (
+                     {/* Loading/Initializing Indicator */}
+                    {isInitializingCamera && (
+                       <div className="absolute inset-0 flex items-center justify-center bg-black bg-opacity-50 text-white">
+                           <Loader2 className="mr-2 h-6 w-6 animate-spin" />
+                           Iniciando cámara...
+                       </div>
+                    )}
+                    {hasCameraPermission === null && !isInitializingCamera && isScanning && (
                        <div className="absolute inset-0 flex items-center justify-center bg-black bg-opacity-50 text-white">Solicitando permiso...</div>
                     )}
                     {hasCameraPermission === false && (
@@ -1468,9 +1497,6 @@ export default function Home() {
                            </AlertDescription>
                          </Alert>
                        </div>
-                     )}
-                     {!isScanning && hasCameraPermission === null && (
-                          <div className="absolute inset-0 flex items-center justify-center bg-black bg-opacity-50 text-white">Iniciando cámara...</div>
                      )}
                 </div>
                <DialogFooter className="mt-4">
@@ -1665,3 +1691,5 @@ export default function Home() {
     </div>
   );
 }
+
+    

@@ -1,4 +1,3 @@
-
 // src/components/counting-list-table.tsx
 import React from 'react';
 import { DisplayProduct } from '@/types/product';
@@ -141,5 +140,3 @@ export const CountingListTable: React.FC<CountingListTableProps> = ({
     </ScrollArea>
   );
 };
-
-    

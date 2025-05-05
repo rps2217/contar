@@ -1,4 +1,3 @@
-
 // src/components/modify-value-dialog.tsx
 import React, { useState, useRef, useEffect } from 'react';
 import { Button } from "@/components/ui/button";
@@ -76,6 +75,8 @@ export const ModifyValueDialog: React.FC<ModifyValueDialogProps> = ({
     }
     setEditingValue('');
     setIsEditing(false);
+    // Optional: Close dialog after submit, handled by onSet in parent now
+    // onClose();
   };
 
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -94,7 +95,7 @@ export const ModifyValueDialog: React.FC<ModifyValueDialogProps> = ({
   const handleInputKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
     if (e.key === 'Enter') {
       e.preventDefault();
-      handleValueSubmit(null, e.shiftKey);
+      handleValueSubmit(null, e.shiftKey); // Pass shiftKey status for sum functionality
     } else if (e.key === 'Escape') {
       setIsEditing(false);
       setEditingValue('');
@@ -197,5 +198,3 @@ export const ModifyValueDialog: React.FC<ModifyValueDialogProps> = ({
     </Dialog>
   );
 };
-
-    

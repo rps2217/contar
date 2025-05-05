@@ -1,4 +1,3 @@
-
 // src/hooks/use-local-storage.ts
 import { useState, useEffect, useCallback } from 'react';
 import { getLocalStorageItem, setLocalStorageItem } from '@/lib/utils';
@@ -35,5 +34,3 @@ export function useLocalStorage<T>(key: string, initialValue: T): [T, (value: T 
 
   return [storedValue, setValue];
 }
-
-    

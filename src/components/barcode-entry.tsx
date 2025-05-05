@@ -1,4 +1,3 @@
-
 // src/components/barcode-entry.tsx
 import React from 'react';
 import { Input } from "@/components/ui/input";
@@ -90,5 +89,3 @@ export const BarcodeEntry: React.FC<BarcodeEntryProps> = ({
     </div>
   );
 };
-
-    

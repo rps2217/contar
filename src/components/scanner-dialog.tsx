@@ -1,6 +1,5 @@
-
 // src/components/scanner-dialog.tsx
-import React, { useRef, useState, useEffect } from 'react';
+import React from 'react';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Alert, AlertTitle, AlertDescription } from "@/components/ui/alert";
@@ -69,5 +68,3 @@ export const ScannerDialog: React.FC<ScannerDialogProps> = ({
     </Dialog>
   );
 };
-
-    

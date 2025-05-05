@@ -1,4 +1,3 @@
-
 // src/components/confirmation-dialog.tsx
 import React from 'react';
 import {
@@ -72,5 +71,3 @@ export const ConfirmationDialog: React.FC<ConfirmationDialogProps> = ({
     </AlertDialog>
   );
 };
-
-    

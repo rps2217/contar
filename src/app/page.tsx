@@ -33,9 +33,9 @@ import { BrowserMultiFormatReader, NotFoundException } from '@zxing/library';
 import {
     addOrUpdateInventoryItem,
     getDisplayProductForWarehouse,
-    getProductDetail,
     addOrUpdateProductDetail,
     getInventoryItemsForWarehouse,
+    getInventoryItem, // Import getInventoryItem to fetch stock for edit dialog
 } from '@/lib/indexeddb-helpers';
 
 const LOCAL_STORAGE_COUNTING_LIST_KEY_PREFIX = 'stockCounterPro_countingList_';
@@ -473,7 +473,8 @@ export default function Home() {
 
  // Handles adding or incrementing a product in the counting list for the current warehouse
  const handleAddProduct = useCallback(async (barcodeToAdd?: string) => {
-    const trimmedBarcode = (barcodeToAdd ?? barcode).trim().replace(/\r?\n|\r/g, ''); // Trim and remove potential trailing newlines
+    const rawBarcode = barcodeToAdd ?? barcode;
+    const trimmedBarcode = rawBarcode.trim().replace(/\r?\n|\r/g, ''); // Trim and remove potential trailing newlines
 
     if (!trimmedBarcode) {
       toast({
@@ -504,7 +505,7 @@ export default function Home() {
             const updatedProductData: DisplayProduct = {
                 ...updatedList[internalIndex],
                 count: newCount,
-                lastUpdated: format(new Date(), 'yyyy-MM-dd HH:mm:ss'),
+                lastUpdated: new Date().toISOString(), // Use ISO string
             };
              updatedList.splice(internalIndex, 1);
              updatedList.unshift(updatedProductData);
@@ -528,7 +529,7 @@ export default function Home() {
                 const newProductForList: DisplayProduct = {
                     ...displayProduct,
                     count: 1,
-                    lastUpdated: format(new Date(), 'yyyy-MM-dd HH:mm:ss'),
+                    lastUpdated: new Date().toISOString(), // Use ISO string
                  };
                  setCountingList(prevList => [newProductForList, ...prevList]);
                  toast({
@@ -549,7 +550,7 @@ export default function Home() {
                     warehouseId: currentWarehouseId,
                     stock: 0,
                     count: 1,
-                    lastUpdated: format(new Date(), 'yyyy-MM-dd HH:mm:ss'),
+                    lastUpdated: new Date().toISOString(), // Use ISO string
                  };
 
                  await addOrUpdateProductDetail(newProductDetail);
@@ -619,14 +620,14 @@ export default function Home() {
                  console.log("Confirmation needed for", product.barcode, "in warehouse", warehouseId);
                  updatedList[index] = { ...product }; // Keep current state temporarily
              } else {
-                 updatedList[index] = { ...product, count: finalValue, lastUpdated: format(new Date(), 'yyyy-MM-dd HH:mm:ss') };
+                 updatedList[index] = { ...product, count: finalValue, lastUpdated: new Date().toISOString() };
              }
 
         } else { // type === 'stock'
             originalValue = product.stock;
             finalValue = product.stock + change;
             if (finalValue < 0) finalValue = 0;
-            updatedList[index] = { ...product, stock: finalValue, lastUpdated: format(new Date(), 'yyyy-MM-dd HH:mm:ss') };
+            updatedList[index] = { ...product, stock: finalValue, lastUpdated: new Date().toISOString() };
         }
 
         return updatedList;
@@ -646,7 +647,7 @@ export default function Home() {
                     warehouseId: warehouseId,
                     stock: newStock,
                     count: currentProduct?.count ?? 0, // Use current count
-                    lastUpdated: format(new Date(), 'yyyy-MM-dd HH:mm:ss')
+                    lastUpdated: new Date().toISOString()
                 };
                  await addOrUpdateInventoryItem(itemToUpdate);
                  toast({ title: "Stock Actualizado", description: `Stock de ${updatedProductDescription} (${getWarehouseName(warehouseId)}) actualizado a ${newStock} en la base de datos.` });
@@ -727,14 +728,14 @@ export default function Home() {
                  updatedList[index] = { ...product }; // Keep current state temporarily
                  setConfirmNewValue(finalValue); // Store the intended final value for confirmation
              } else {
-                 updatedList[index] = { ...product, count: finalValue, lastUpdated: format(new Date(), 'yyyy-MM-dd HH:mm:ss') };
+                 updatedList[index] = { ...product, count: finalValue, lastUpdated: new Date().toISOString() };
              }
          } else { // type === 'stock'
              originalValue = product.stock;
              if (sumValue) {
                  finalValue = originalValue + newValue; // Calculate sum if needed
              }
-             updatedList[index] = { ...product, stock: finalValue, lastUpdated: format(new Date(), 'yyyy-MM-dd HH:mm:ss') };
+             updatedList[index] = { ...product, stock: finalValue, lastUpdated: new Date().toISOString() };
          }
          return updatedList;
      });
@@ -748,7 +749,7 @@ export default function Home() {
                  warehouseId: warehouseId,
                  stock: finalValue, // Use finalValue
                  count: currentProduct?.count ?? 0, // Keep current count
-                 lastUpdated: format(new Date(), 'yyyy-MM-dd HH:mm:ss')
+                 lastUpdated: new Date().toISOString()
              };
              await addOrUpdateInventoryItem(itemToUpdate);
              toast({ title: "Stock Actualizado", description: `Stock de ${updatedProductDescription} (${getWarehouseName(warehouseId)}) actualizado a ${finalValue} en la base de datos.` });
@@ -821,7 +822,7 @@ export default function Home() {
             updatedList[index] = {
                 ...product,
                 count: finalConfirmedCount,
-                lastUpdated: format(new Date(), 'yyyy-MM-dd HH:mm:ss')
+                lastUpdated: new Date().toISOString()
             };
             return updatedList;
         });
@@ -927,7 +928,7 @@ export default function Home() {
         return prevCountingList.map(countingProduct => {
           const dbInventoryItem = inventoryMap.get(countingProduct.barcode);
           return dbInventoryItem
-            ? { ...countingProduct, stock: dbInventoryItem.stock, lastUpdated: format(new Date(), 'yyyy-MM-dd HH:mm:ss') }
+            ? { ...countingProduct, stock: dbInventoryItem.stock, lastUpdated: new Date().toISOString() }
             : countingProduct;
         });
       });
@@ -1024,8 +1025,8 @@ export default function Home() {
 
              // Ensure videoRef is available before proceeding
              if (!videoRef.current) {
-                 console.warn("Video element ref not available yet. Retrying...");
-                 // Retry after a short delay
+                 console.error("Video element ref is not available.");
+                 // Retry after a short delay if component is still mounted and scanning
                  setTimeout(() => {
                      if (isScanning && !cancelled) {
                          initScanner();
@@ -1064,31 +1065,47 @@ export default function Home() {
                              videoRef.current.play().then(() => {
                                 console.log("Video stream attached and playing.");
                                  // Start continuous scanning only after video is playing
-                                 console.log("Starting barcode decoding from video device...");
-                                 reader?.decodeFromVideoDevice(undefined, videoRef.current!, (result, err) => {
-                                    if (cancelled) return;
+                                 if (reader) { // Check if reader is initialized
+                                      console.log("Starting barcode decoding from video device...");
+                                      reader.decodeFromVideoDevice(undefined, videoRef.current!, (result, err) => {
+                                         if (cancelled) return;
 
-                                    if (result) {
-                                        console.log('Barcode detected:', result.getText());
-                                        const detectedBarcode = result.getText();
-                                        setIsScanning(false); // Close modal on successful scan
-                                        playBeep(900, 80);
-                                        requestAnimationFrame(() => {
-                                            setBarcode(detectedBarcode); // Update state first
-                                            handleAddProduct(detectedBarcode); // Then call add product
-                                        });
-                                    }
-                                    if (err && !(err instanceof NotFoundException)) {
-                                        console.error('Scanning error:', err);
-                                        // Maybe add a non-intrusive indicator of scanning issues?
-                                    }
-                                });
-                                console.log("Barcode decoding started.");
+                                         if (result) {
+                                             console.log('Barcode detected:', result.getText());
+                                             const detectedBarcode = result.getText().trim().replace(/\r?\n|\r/g, ''); // Clean barcode
+                                             setIsScanning(false); // Close modal on successful scan
+                                             playBeep(900, 80);
+                                             requestAnimationFrame(() => {
+                                                 setBarcode(detectedBarcode); // Update state first
+                                                 handleAddProduct(detectedBarcode); // Then call add product
+                                             });
+                                         }
+                                         if (err && !(err instanceof NotFoundException)) {
+                                             console.error('Scanning error:', err);
+                                             // Maybe add a non-intrusive indicator of scanning issues?
+                                         }
+                                     });
+                                     console.log("Barcode decoding started.");
+                                 } else {
+                                    console.error("Scanner reader was not initialized.");
+                                    stopCameraStream(); // Stop if reader failed to initialize
+                                    setIsScanning(false);
+                                    toast({ variant: "destructive", title: "Error de escáner", description: "No se pudo inicializar el lector de códigos."});
+                                 }
                              }).catch(playError => {
                                  console.error("Error playing video stream:", playError);
+                                 toast({ variant: 'destructive', title: 'Error de Video', description: 'No se pudo iniciar la reproducción de la cámara.'});
+                                 stopCameraStream();
+                                 setIsScanning(false);
                              });
                          }
                      };
+                      videoRef.current.onerror = (e) => {
+                        console.error("Video element error:", e);
+                        toast({ variant: 'destructive', title: 'Error de Cámara', description: 'Hubo un problema con el elemento de video.'});
+                        stopCameraStream();
+                        setIsScanning(false);
+                    };
                  } else {
                      console.warn("Video ref became null before attaching stream.");
                      stream.getTracks().forEach(track => track.stop());
@@ -1103,10 +1120,11 @@ export default function Home() {
                 toast({
                     variant: 'destructive',
                     title: 'Acceso a Cámara Denegado',
-                    description: `Por favor, habilita los permisos de cámara. Error: ${error.message}`,
+                    description: `Por favor, habilita los permisos de cámara. Error: ${error.name || error.message}`,
                     duration: 9000
                 });
-                setIsScanning(false); // Close modal if permission denied
+                stopCameraStream(); // Ensure cleanup on error
+                setIsScanning(false); // Close modal if permission denied or other errors
             }
         };
 
@@ -1126,6 +1144,7 @@ export default function Home() {
             // Explicitly release the reader instance? According to docs, reset should be enough.
             // scannerReaderRef.current = null; // Consider if this is necessary
         };
+     // eslint-disable-next-line react-hooks/exhaustive-deps
      }, [isScanning, toast, playBeep, handleAddProduct, stopCameraStream]); // Ensure all dependencies are correct
 
 

@@ -1,4 +1,3 @@
-
 "use client";
 
 import type { DisplayProduct, InventoryItem, ProductDetail } from '@/types/product';
@@ -25,7 +24,7 @@ import {
 } from "@/components/ui/table";
 import { WarehouseManagement } from "@/components/warehouse-management";
 import { format } from 'date-fns';
-import { Minus, Plus, Trash, RefreshCw, Warehouse as WarehouseIcon, Camera, AlertCircle, Search, Check, AppWindow, Database, Boxes } from "lucide-react";
+import { Minus, Plus, Trash, RefreshCw, Warehouse as WarehouseIcon, Camera, AlertCircle, Search, Check, AppWindow, Database, Boxes, VideoOff } from "lucide-react";
 import React, { useCallback, useEffect, useRef, useState } from "react";
 // Import ZXing library for barcode scanning
 import { BrowserMultiFormatReader, NotFoundException } from '@zxing/library';
@@ -42,6 +41,7 @@ const LOCAL_STORAGE_COUNTING_LIST_KEY_PREFIX = 'stockCounterPro_countingList_';
 const LOCAL_STORAGE_WAREHOUSE_KEY = 'stockCounterPro_currentWarehouse';
 const LOCAL_STORAGE_WAREHOUSES_KEY = 'stockCounterPro_warehouses';
 const LOCAL_STORAGE_ACTIVE_SECTION_KEY = 'stockCounterPro_activeSection'; // Key for active section
+const LOCAL_STORAGE_GOOGLE_SHEET_URL_KEY = 'stockCounterPro_googleSheetUrl'; // Key for google sheet url
 
 // --- Helper Components ---
 
@@ -49,10 +49,10 @@ interface BarcodeEntryProps {
   barcode: string;
   setBarcode: (value: string) => void;
   onAddProduct: () => void;
-  onScanClick: () => void;
+  onScanClick: () => void; // Changed: This will now toggle split-screen scanning
   onRefreshStock: () => void;
   isLoading: boolean;
-  isScanning: boolean;
+  isScanning: boolean; // Passed to disable elements when split-screen scanning is active
   isRefreshingStock: boolean;
   inputRef: React.RefObject<HTMLInputElement>;
 }
@@ -61,17 +61,17 @@ const BarcodeEntry: React.FC<BarcodeEntryProps> = ({
   barcode,
   setBarcode,
   onAddProduct,
-  onScanClick,
+  onScanClick, // Renamed from onScanClick to onToggleScan for clarity
   onRefreshStock,
   isLoading,
-  isScanning,
+  isScanning, // If true, disable input/buttons
   isRefreshingStock,
   inputRef
 }) => {
   const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
     if (e.key === "Enter") {
        e.preventDefault();
-       onAddProduct();
+       if (!isScanning) onAddProduct(); // Prevent adding via Enter when camera scanning is active
     }
  };
 
@@ -79,36 +79,39 @@ const BarcodeEntry: React.FC<BarcodeEntryProps> = ({
     <div className="flex items-center mb-4 gap-2">
         <Input
            type="number"
-           pattern="\d*" // Ensures numeric keyboard on mobile if supported
-           inputMode="numeric" // Better semantic for numeric input
+           pattern="\d*"
+           inputMode="numeric"
            placeholder="Escanear o ingresar código de barras"
            value={barcode}
            onChange={(e) => {
-               // Ensure only digits are entered
                const numericValue = e.target.value.replace(/\D/g, '');
                setBarcode(numericValue);
            }}
            className="mr-2 flex-grow bg-yellow-100 dark:bg-yellow-900 border-teal-300 dark:border-teal-700 focus:ring-teal-500 focus:border-teal-500 rounded-md shadow-sm"
            ref={inputRef}
            onKeyDown={handleKeyDown}
-            aria-label="Código de barras"
+           aria-label="Código de barras"
+           disabled={isScanning || isLoading} // Disable when scanning or loading
          />
          <Button
-            onClick={onScanClick}
+            onClick={onScanClick} // Call the toggle function
             variant="outline"
             size="icon"
-            className="text-blue-600 dark:text-blue-400 border-blue-300 dark:border-blue-600 hover:bg-blue-50 dark:hover:bg-blue-900 hover:text-blue-700 dark:hover:text-blue-300"
-            aria-label="Escanear código de barras con la cámara"
-            title="Escanear con Cámara"
-            disabled={isLoading || isScanning}
+            className={cn(
+               "text-blue-600 dark:text-blue-400 border-blue-300 dark:border-blue-600 hover:bg-blue-50 dark:hover:bg-blue-900 hover:text-blue-700 dark:hover:text-blue-300",
+               isScanning && "bg-blue-100 dark:bg-blue-800" // Indicate active scanning state
+            )}
+            aria-label="Activar/Desactivar escaneo con cámara"
+            title={isScanning ? "Detener Escaneo con Cámara" : "Escanear con Cámara"}
+            disabled={isLoading} // Only disabled by general loading state
          >
-             <Camera className="h-5 w-5" />
+             {isScanning ? <VideoOff className="h-5 w-5 text-red-500" /> : <Camera className="h-5 w-5" />}
          </Button>
          <Button
            onClick={onAddProduct}
            className="bg-teal-600 hover:bg-teal-700 text-white rounded-md shadow-sm px-5 py-2 transition-colors duration-200"
            aria-label="Agregar producto al almacén actual"
-           disabled={isLoading}
+           disabled={isLoading || isScanning} // Disable when scanning or loading
          >
            Agregar
          </Button>
@@ -117,7 +120,7 @@ const BarcodeEntry: React.FC<BarcodeEntryProps> = ({
              variant="outline"
              size="icon"
              className="text-blue-600 dark:text-blue-400 border-blue-300 dark:border-blue-600 hover:bg-blue-50 dark:hover:bg-blue-900 hover:text-blue-700 dark:hover:text-blue-300"
-             disabled={isRefreshingStock || isLoading}
+             disabled={isRefreshingStock || isLoading || isScanning} // Disable when scanning or loading
              aria-label="Actualizar stocks desde la base de datos para este almacén"
              title="Actualizar Stocks"
          >
@@ -137,6 +140,7 @@ interface CountingListTableProps {
   onOpenQuantityDialog: (product: DisplayProduct) => void;
   onDecrement: (barcode: string, type: 'count' | 'stock') => void;
   onIncrement: (barcode: string, type: 'count' | 'stock') => void;
+  tableHeightClass?: string; // Allow custom height
 }
 
 const CountingListTable: React.FC<CountingListTableProps> = ({
@@ -148,9 +152,10 @@ const CountingListTable: React.FC<CountingListTableProps> = ({
   onOpenQuantityDialog,
   onDecrement,
   onIncrement,
+  tableHeightClass = "h-[calc(100vh-360px)] md:h-[calc(100vh-330px)]" // Default height
 }) => {
   return (
-    <ScrollArea className="h-[calc(100vh-360px)] md:h-[calc(100vh-330px)] border rounded-lg shadow-sm bg-white dark:bg-gray-800">
+    <ScrollArea className={cn(tableHeightClass, "border rounded-lg shadow-sm bg-white dark:bg-gray-800")}>
         <Table>
            <TableCaption className="py-3 text-sm text-gray-500 dark:text-gray-400">Inventario para {warehouseName}.</TableCaption>
            <TableHeader className="bg-gray-50 dark:bg-gray-700 sticky top-0 z-10 shadow-sm">
@@ -294,7 +299,7 @@ export default function Home() {
   const [productToDelete, setProductToDelete] = useState<DisplayProduct | null>(null);
   const [isDbLoading, setIsDbLoading] = useState(true); // Loading state for initial data load for the warehouse
   const [isRefreshingStock, setIsRefreshingStock] = useState(false);
-  const [isScanning, setIsScanning] = useState(false); // State to control camera scanning view/modal
+  const [isScanning, setIsScanning] = useState(false); // State to control split-screen camera scanning
   const [hasCameraPermission, setHasCameraPermission] = useState<boolean | null>(null); // State for camera permission
   const scannerReaderRef = useRef<BrowserMultiFormatReader | null>(null); // Ref for the scanner reader instance
   const streamRef = useRef<MediaStream | null>(null); // Ref to hold the camera stream
@@ -329,13 +334,19 @@ export default function Home() {
                      if (Array.isArray(parsedList) && parsedList.every(item =>
                          typeof item === 'object' && item !== null &&
                          typeof item.barcode === 'string' &&
-                         typeof item.warehouseId === 'string' &&
+                         // Ensure warehouseId exists, default if necessary
+                         (typeof item.warehouseId === 'string' || item.warehouseId === undefined) &&
                          typeof item.description === 'string' &&
                          typeof item.count === 'number' &&
                          typeof item.stock === 'number'
                      )) {
-                        setCountingList(parsedList);
-                         console.log(`Loaded counting list for warehouse ${warehouseId} from localStorage:`, parsedList.length, "items");
+                         // Ensure all items have the current warehouseId (fix legacy data)
+                         const correctedList = parsedList.map(item => ({
+                            ...item,
+                            warehouseId: item.warehouseId ?? warehouseId // Default to current if missing
+                         }));
+                        setCountingList(correctedList);
+                         console.log(`Loaded counting list for warehouse ${warehouseId} from localStorage:`, correctedList.length, "items");
                     } else {
                          console.warn(`Invalid data in localStorage for warehouse ${warehouseId}. Clearing.`);
                          localStorage.removeItem(savedListKey);
@@ -363,9 +374,9 @@ export default function Home() {
         setCountingList([]);
     } finally {
         setIsDbLoading(false);
-        barcodeInputRef.current?.focus();
+        if (!isScanning) barcodeInputRef.current?.focus(); // Focus only if not scanning
     }
-  }, [toast]);
+  }, [toast, isScanning]); // Added isScanning dependency
 
   // Load data when the component mounts or warehouse changes
   useEffect(() => {
@@ -467,9 +478,11 @@ export default function Home() {
         description: "Por favor, introduce un código de barras válido.",
       });
       setBarcode("");
-      requestAnimationFrame(() => {
-          barcodeInputRef.current?.focus();
-      });
+      if (!isScanning) {
+         requestAnimationFrame(() => {
+             barcodeInputRef.current?.focus();
+         });
+      }
       return;
     }
 
@@ -561,11 +574,13 @@ export default function Home() {
     }
 
     setBarcode("");
-    requestAnimationFrame(() => {
-        barcodeInputRef.current?.focus();
-    });
+    if (!isScanning) {
+         requestAnimationFrame(() => {
+             barcodeInputRef.current?.focus();
+         });
+    }
 
- }, [barcode, countingList, currentWarehouseId, toast, playBeep, getWarehouseName]);
+ }, [barcode, countingList, currentWarehouseId, toast, playBeep, getWarehouseName, isScanning]); // Added isScanning
 
 
  // Modify product count or stock, handling confirmation dialog
@@ -576,89 +591,89 @@ export default function Home() {
     let updatedProductDescription = '';
     const warehouseId = currentWarehouseId;
 
-     setCountingList(prevList => {
-        const index = prevList.findIndex(p => p.barcode === barcodeToUpdate && p.warehouseId === warehouseId);
-        if (index === -1) return prevList;
+     // Fetch current product state before modification
+     const currentProductIndex = countingList.findIndex(p => p.barcode === barcodeToUpdate && p.warehouseId === warehouseId);
+     if (currentProductIndex === -1) {
+         console.warn(`Product ${barcodeToUpdate} not found in warehouse ${warehouseId} for modification.`);
+         return; // Product not found, nothing to modify
+     }
+     const currentProduct = countingList[currentProductIndex];
+     updatedProductDescription = currentProduct.description;
 
-        const updatedList = [...prevList];
-        const product = updatedList[index];
-        updatedProductDescription = product.description;
-        let finalValue;
+     let finalValue;
+     if (type === 'count') {
+         originalValue = currentProduct.count;
+         finalValue = currentProduct.count + change;
+         if (finalValue < 0) finalValue = 0;
 
-        if (type === 'count') {
-            originalValue = product.count;
-            finalValue = product.count + change;
-            if (finalValue < 0) finalValue = 0;
-
-            // Confirmation logic
-            if (product.stock !== 0) {
-                 const changingToMatch = change > 0 && finalValue === product.stock;
-                 const changingFromMatch = change < 0 && product.count === product.stock;
-                if (changingToMatch || changingFromMatch) {
-                    productToConfirm = { ...product };
-                    needsConfirmation = true;
-                }
-            }
-
-             if (needsConfirmation) {
-                 console.log("Confirmation needed for", product.barcode, "in warehouse", warehouseId);
-                 updatedList[index] = { ...product }; // Keep current state temporarily
-             } else {
-                 updatedList[index] = { ...product, count: finalValue, lastUpdated: format(new Date(), 'yyyy-MM-dd HH:mm:ss') };
+         // Confirmation logic
+         if (currentProduct.stock !== 0) {
+             const changingToMatch = change > 0 && finalValue === currentProduct.stock;
+             const changingFromMatch = change < 0 && currentProduct.count === currentProduct.stock;
+             if (changingToMatch || changingFromMatch) {
+                 productToConfirm = { ...currentProduct };
+                 needsConfirmation = true;
              }
+         }
+     } else { // type === 'stock'
+         originalValue = currentProduct.stock;
+         finalValue = currentProduct.stock + change;
+         if (finalValue < 0) finalValue = 0;
+     }
 
-        } else { // type === 'stock'
-            originalValue = product.stock;
-            finalValue = product.stock + change;
-            if (finalValue < 0) finalValue = 0;
-            updatedList[index] = { ...product, stock: finalValue, lastUpdated: format(new Date(), 'yyyy-MM-dd HH:mm:ss') };
-        }
+     // Optimistic UI Update
+     if (!needsConfirmation) {
+         setCountingList(prevList => {
+             const index = prevList.findIndex(p => p.barcode === barcodeToUpdate && p.warehouseId === warehouseId);
+             if (index === -1) return prevList; // Should not happen if found earlier, but safety check
+             const updatedList = [...prevList];
+             updatedList[index] = {
+                 ...updatedList[index],
+                 [type]: finalValue, // Update count or stock
+                 lastUpdated: format(new Date(), 'yyyy-MM-dd HH:mm:ss'),
+             };
+             return updatedList;
+         });
+     } else {
+         // If confirmation is needed, don't update the UI optimistically yet
+         console.log("Confirmation needed for", barcodeToUpdate, "in warehouse", warehouseId);
+     }
 
-        return updatedList;
-    });
 
      // Update stock in IndexedDB if stock changed
      if (type === 'stock') {
-        const originalStockValue = countingList.find(p => p.barcode === barcodeToUpdate && p.warehouseId === warehouseId)?.stock ?? 0;
-        const newStock = originalStockValue + change;
-
-         if (newStock >= 0) {
+          if (finalValue >= 0) { // finalValue already ensures >= 0
              try {
                  const itemToUpdate: InventoryItem = {
                     barcode: barcodeToUpdate,
                     warehouseId: warehouseId,
-                    stock: newStock,
-                    count: countingList.find(p => p.barcode === barcodeToUpdate && p.warehouseId === warehouseId)?.count ?? 0,
+                    stock: finalValue,
+                    count: currentProduct.count, // Use the current count from before potential modification
                     lastUpdated: format(new Date(), 'yyyy-MM-dd HH:mm:ss')
                 };
                  await addOrUpdateInventoryItem(itemToUpdate);
-                 toast({ title: "Stock Actualizado", description: `Stock de ${updatedProductDescription} (${getWarehouseName(warehouseId)}) actualizado a ${newStock} en la base de datos.` });
+                 toast({ title: "Stock Actualizado", description: `Stock de ${updatedProductDescription} (${getWarehouseName(warehouseId)}) actualizado a ${finalValue} en la base de datos.` });
              } catch (error) {
                  console.error("Failed to update stock in DB:", error);
                  toast({ variant: "destructive", title: "Error DB", description: "No se pudo actualizar el stock en la base de datos." });
-                 // Revert stock change in state
-                 setCountingList(prevList => {
-                    const index = prevList.findIndex(p => p.barcode === barcodeToUpdate && p.warehouseId === warehouseId);
-                    if (index === -1) return prevList;
-                    const revertedList = [...prevList];
-                    revertedList[index] = { ...revertedList[index], stock: originalStockValue };
-                    return revertedList;
-                });
-            }
-        } else {
-            toast({ variant: "destructive", title: "Stock Inválido", description: "El stock no puede ser negativo." });
-             // Revert optimistic UI update
-              setCountingList(prevList => {
-                 const index = prevList.findIndex(p => p.barcode === barcodeToUpdate && p.warehouseId === warehouseId);
-                 if (index === -1) return prevList;
-                 const revertedList = [...prevList];
-                 revertedList[index] = { ...revertedList[index], stock: originalStockValue };
-                 return revertedList;
-             });
-        }
-    }
+                 // Revert stock change in state ONLY if it was updated optimistically
+                 if (!needsConfirmation) {
+                     setCountingList(prevList => {
+                         const index = prevList.findIndex(p => p.barcode === barcodeToUpdate && p.warehouseId === warehouseId);
+                         if (index === -1) return prevList;
+                         const revertedList = [...prevList];
+                         revertedList[index] = { ...revertedList[index], stock: originalValue }; // Revert to original value
+                         return revertedList;
+                     });
+                 }
+             }
+         } else {
+             // This case should technically not be reached due to finalValue check
+             toast({ variant: "destructive", title: "Stock Inválido", description: "El stock no puede ser negativo." });
+         }
+     }
 
-    // Handle confirmation dialog
+    // Handle confirmation dialog AFTER DB operation for stock, or immediately for count
     if (needsConfirmation && productToConfirm && type === 'count') {
         console.log("Setting up confirmation dialog for:", productToConfirm.barcode, "in warehouse", warehouseId);
         setConfirmProductBarcode(productToConfirm.barcode);
@@ -666,8 +681,7 @@ export default function Home() {
         setIsConfirmDialogOpen(true);
     } else if (type === 'count' && !needsConfirmation) {
         // Toast for non-confirmed count changes
-         const finalCountValue = originalValue + change;
-         toast({ title: "Cantidad Modificada", description: `Cantidad de ${updatedProductDescription} (${getWarehouseName(warehouseId)}) cambiada a ${finalCountValue < 0 ? 0 : finalCountValue}.` });
+         toast({ title: "Cantidad Modificada", description: `Cantidad de ${updatedProductDescription} (${getWarehouseName(warehouseId)}) cambiada a ${finalValue}.` });
     }
 
  }, [countingList, currentWarehouseId, toast, getWarehouseName]);
@@ -684,43 +698,50 @@ export default function Home() {
      let needsConfirmation = false;
      let productToConfirm: DisplayProduct | null = null;
      let updatedProductDescription = '';
-     let originalValue = -1; // Added for toast message
+     let originalValue = -1; // Added for toast message and revert
      let finalValue = newValue; // Initialize finalValue
 
-     setCountingList(prevList => {
-         const index = prevList.findIndex(p => p.barcode === barcodeToUpdate && p.warehouseId === warehouseId);
-         if (index === -1) return prevList;
+     // Fetch current product state before modification
+     const currentProductIndex = countingList.findIndex(p => p.barcode === barcodeToUpdate && p.warehouseId === warehouseId);
+     if (currentProductIndex === -1) {
+         console.warn(`Product ${barcodeToUpdate} not found in warehouse ${warehouseId} for setting value.`);
+         return;
+     }
+     const currentProduct = countingList[currentProductIndex];
+     updatedProductDescription = currentProduct.description;
 
-         const updatedList = [...prevList];
-         const product = updatedList[index];
-         updatedProductDescription = product.description;
-
-         if (type === 'count') {
-             originalValue = product.count;
-              if (sumValue) {
-                 finalValue = originalValue + newValue; // Calculate sum if needed
-             }
-             // Confirmation logic when setting count directly
-             if (product.stock !== 0 && finalValue === product.stock && originalValue !== product.stock) {
-                 needsConfirmation = true;
-                 productToConfirm = { ...product };
-             }
-
-             if (needsConfirmation) {
-                 updatedList[index] = { ...product }; // Keep current state temporarily
-                 setConfirmNewValue(finalValue); // Store the intended final value for confirmation
-             } else {
-                 updatedList[index] = { ...product, count: finalValue, lastUpdated: format(new Date(), 'yyyy-MM-dd HH:mm:ss') };
-             }
-         } else { // type === 'stock'
-             originalValue = product.stock;
-             if (sumValue) {
-                 finalValue = originalValue + newValue; // Calculate sum if needed
-             }
-             updatedList[index] = { ...product, stock: finalValue, lastUpdated: format(new Date(), 'yyyy-MM-dd HH:mm:ss') };
+     if (type === 'count') {
+         originalValue = currentProduct.count;
+         if (sumValue) {
+             finalValue = originalValue + newValue; // Calculate sum if needed
          }
-         return updatedList;
-     });
+         // Confirmation logic when setting count directly
+         if (currentProduct.stock !== 0 && finalValue === currentProduct.stock && originalValue !== currentProduct.stock) {
+             needsConfirmation = true;
+             productToConfirm = { ...currentProduct };
+             setConfirmNewValue(finalValue); // Store the intended final value for confirmation
+         }
+     } else { // type === 'stock'
+         originalValue = currentProduct.stock;
+         if (sumValue) {
+             finalValue = originalValue + newValue; // Calculate sum if needed
+         }
+     }
+
+     // Optimistic UI Update (if no confirmation needed)
+     if (!needsConfirmation) {
+         setCountingList(prevList => {
+             const index = prevList.findIndex(p => p.barcode === barcodeToUpdate && p.warehouseId === warehouseId);
+             if (index === -1) return prevList;
+             const updatedList = [...prevList];
+             updatedList[index] = {
+                 ...updatedList[index],
+                 [type]: finalValue,
+                 lastUpdated: format(new Date(), 'yyyy-MM-dd HH:mm:ss'),
+             };
+             return updatedList;
+         });
+     }
 
      // Update stock in IndexedDB if stock changed
      if (type === 'stock') {
@@ -729,7 +750,7 @@ export default function Home() {
                   barcode: barcodeToUpdate,
                   warehouseId: warehouseId,
                   stock: finalValue, // Use finalValue
-                  count: countingList.find(p => p.barcode === barcodeToUpdate && p.warehouseId === warehouseId)?.count ?? 0, // Keep current count
+                  count: currentProduct.count, // Use the count before modification
                   lastUpdated: format(new Date(), 'yyyy-MM-dd HH:mm:ss')
               };
              await addOrUpdateInventoryItem(itemToUpdate);
@@ -737,21 +758,22 @@ export default function Home() {
          } catch (error) {
              console.error("Failed to update stock in DB:", error);
              toast({ variant: "destructive", title: "Error DB", description: "No se pudo actualizar el stock en la base de datos." });
-             // Revert stock change in state
-             setCountingList(prevList => {
-                 const index = prevList.findIndex(p => p.barcode === barcodeToUpdate && p.warehouseId === warehouseId);
-                 if (index === -1) return prevList;
-                 const revertedList = [...prevList];
-                 revertedList[index] = { ...revertedList[index], stock: originalValue };
-                 return revertedList;
-             });
+             // Revert stock change in state ONLY if updated optimistically
+             if (!needsConfirmation) {
+                 setCountingList(prevList => {
+                     const index = prevList.findIndex(p => p.barcode === barcodeToUpdate && p.warehouseId === warehouseId);
+                     if (index === -1) return prevList;
+                     const revertedList = [...prevList];
+                     revertedList[index] = { ...revertedList[index], stock: originalValue }; // Revert to original value
+                     return revertedList;
+                 });
+             }
          }
      }
 
      // Handle confirmation dialog
      if (needsConfirmation && productToConfirm && type === 'count') {
          setConfirmProductBarcode(productToConfirm.barcode);
-         // Use 'set' action for confirmation, store the target value
          setConfirmAction('set');
          setIsConfirmDialogOpen(true);
      } else if (type === 'count' && !needsConfirmation) {
@@ -1051,7 +1073,7 @@ export default function Home() {
                                     if (result) {
                                         console.log('Barcode detected:', result.getText());
                                         const detectedBarcode = result.getText();
-                                        setIsScanning(false);
+                                        // setIsScanning(false); // Keep scanning in split view
                                         playBeep(900, 80);
                                         requestAnimationFrame(() => {
                                             setBarcode(detectedBarcode); // Update state first
@@ -1086,7 +1108,7 @@ export default function Home() {
                     description: `Por favor, habilita los permisos de cámara. Error: ${error.message}`,
                     duration: 9000
                 });
-                setIsScanning(false);
+                setIsScanning(false); // Stop scanning if permission denied
             }
         };
 
@@ -1106,20 +1128,19 @@ export default function Home() {
             // Explicitly release the reader instance? According to docs, reset should be enough.
             // scannerReaderRef.current = null; // Consider if this is necessary
         };
-     }, [isScanning, toast, playBeep, handleAddProduct, stopCameraStream]);
+     }, [isScanning, toast, playBeep, handleAddProduct, stopCameraStream]); // Ensure all dependencies are correct
 
 
-    // Handler to start scanning
-    const handleScanButtonClick = () => {
-        console.log("Scan button clicked, setting isScanning to true.");
-        setHasCameraPermission(null); // Reset permission status before starting
-        setIsScanning(true);
-    };
-
-    // Handler to stop scanning
-    const handleStopScanning = () => {
-        console.log("Stop scanning button clicked, setting isScanning to false.");
-        setIsScanning(false);
+    // Handler to toggle split-screen scanning
+    const handleToggleScan = () => {
+        setIsScanning(prev => !prev);
+         if (isScanning) {
+            // If turning off scanning, focus the input
+            requestAnimationFrame(() => barcodeInputRef.current?.focus());
+        } else {
+            // If turning on scanning, reset permission status
+            setHasCameraPermission(null);
+        }
     };
 
 
@@ -1176,10 +1197,12 @@ export default function Home() {
             // Timeout allows button click to register before blur closes edit mode
              setTimeout(() => {
                 // Check if focus moved to one of the submit buttons, if not, exit edit mode.
-                // This logic might be complex depending on exact focus management needs.
                  // For simplicity, let's just exit on blur for now. Revisit if needed.
-                 setIsEditingValueInDialog(false);
-                 setEditingValue(''); // Also clear input on blur exit
+                 // Added a check to see if input is still focused before exiting
+                 if (document.activeElement !== valueInputRef.current) {
+                    setIsEditingValueInDialog(false);
+                    setEditingValue(''); // Also clear input on blur exit
+                }
              }, 150); // Small delay to allow button clicks
          };
 
@@ -1243,6 +1266,8 @@ export default function Home() {
                                              variant="outline"
                                              className="bg-green-100 dark:bg-green-900 border-green-500 hover:bg-green-200 dark:hover:bg-green-800 text-green-700 dark:text-green-300"
                                              title="Guardar (Reemplazar)"
+                                             // Ensure clicking the button submits the value
+                                             onMouseDown={(e) => e.preventDefault()} // Prevent blur before click registers
                                          >
                                              <Check className="h-4 w-4 mr-1" /> Guardar
                                          </Button>
@@ -1253,6 +1278,8 @@ export default function Home() {
                                               className="bg-blue-100 dark:bg-blue-900 border-blue-500 hover:bg-blue-200 dark:hover:bg-blue-800 text-blue-700 dark:text-blue-300"
                                              onClick={() => handleValueSubmit(null, true)} // Submit with sum = true
                                              title="Sumar a la cantidad actual (Shift+Enter)"
+                                              // Ensure clicking the button submits the value
+                                              onMouseDown={(e) => e.preventDefault()} // Prevent blur before click registers
                                          >
                                               <Plus className="h-4 w-4 mr-1" /> Sumar
                                          </Button>
@@ -1328,48 +1355,39 @@ export default function Home() {
        </AlertDialog>
    );
 
-   // --- Camera Scanning Modal/View ---
+   // --- Camera Scanning View (Split Screen) ---
    const renderScannerView = () => (
-       <Dialog open={isScanning} onOpenChange={(open) => { if (!open) { setIsScanning(false); } else { setIsScanning(true); } }}>
-           <DialogContent className="max-w-md w-full p-4 bg-white dark:bg-gray-800 rounded-lg shadow-xl">
-               <DialogHeader>
-                   <DialogTitle className="text-center text-lg font-semibold text-gray-800 dark:text-gray-200">Escanear Código de Barras</DialogTitle>
-                   <DialogDescription className="text-center text-sm text-gray-600 dark:text-gray-400">
-                       Apunta la cámara al código de barras.
-                   </DialogDescription>
-               </DialogHeader>
-                <div className="my-4 relative aspect-video">
-                    {/* Ensure video element is always rendered to avoid ref issues */}
-                    <video ref={videoRef} className={cn("w-full aspect-video rounded-md bg-black", { 'hidden': !isScanning && hasCameraPermission !== false })} autoPlay muted playsInline />
-                    {/* Red border overlay */}
-                    <div className={cn("absolute inset-0 flex items-center justify-center pointer-events-none", {'hidden': !isScanning})}>
-                        <div className="w-3/4 h-1/2 border-2 border-red-500 rounded-md opacity-75"></div>
-                    </div>
-                    {/* Permission related messages */}
-                    {hasCameraPermission === null && isScanning && (
-                       <div className="absolute inset-0 flex items-center justify-center bg-black bg-opacity-50 text-white">Solicitando permiso...</div>
-                    )}
-                    {hasCameraPermission === false && (
-                       <div className="absolute inset-0 flex items-center justify-center bg-black bg-opacity-75 p-4 rounded-md">
-                         <Alert variant="destructive" className="w-full">
-                           <AlertCircle className="h-4 w-4" />
-                           <AlertTitle>Acceso a Cámara Requerido</AlertTitle>
-                           <AlertDescription>
-                             Permite el acceso a la cámara en la configuración de tu navegador.
-                           </AlertDescription>
-                         </Alert>
-                       </div>
-                     )}
-                     {/* Loading/Initializing indicator */}
-                     {!isScanning && hasCameraPermission === null && (
-                          <div className="absolute inset-0 flex items-center justify-center bg-black bg-opacity-50 text-white">Iniciando cámara...</div>
-                     )}
-                </div>
-               <DialogFooter className="mt-4">
-                   <Button variant="outline" onClick={handleStopScanning}>Cancelar</Button>
-               </DialogFooter>
-           </DialogContent>
-       </Dialog>
+        <div className="relative w-full aspect-video bg-black rounded-lg shadow-inner overflow-hidden mb-4">
+            {/* Video element always present for ref stability */}
+            <video ref={videoRef} className={cn("w-full h-full object-cover", { 'hidden': !isScanning })} autoPlay muted playsInline />
+            {/* Red border overlay */}
+            {isScanning && (
+                 <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+                    <div className="w-3/4 h-1/2 border-2 border-red-500 rounded-md opacity-75"></div>
+                 </div>
+            )}
+            {/* Permission related messages */}
+            {hasCameraPermission === null && isScanning && (
+               <div className="absolute inset-0 flex items-center justify-center bg-black bg-opacity-50 text-white">Solicitando permiso...</div>
+            )}
+            {hasCameraPermission === false && (
+               <div className="absolute inset-0 flex items-center justify-center bg-black bg-opacity-75 p-4 rounded-md">
+                 <Alert variant="destructive" className="w-full">
+                   <AlertCircle className="h-4 w-4" />
+                   <AlertTitle>Acceso a Cámara Requerido</AlertTitle>
+                   <AlertDescription>
+                     Permite el acceso a la cámara en la configuración de tu navegador.
+                   </AlertDescription>
+                 </Alert>
+               </div>
+             )}
+             {/* Message when scanning is off */}
+             {!isScanning && (
+                 <div className="absolute inset-0 flex items-center justify-center bg-gray-700 text-gray-400">
+                     Cámara desactivada. Presiona el botón <Camera className="inline-block h-4 w-4 mx-1" /> para iniciar.
+                 </div>
+             )}
+        </div>
    );
 
  // --- Count by Provider ---
@@ -1423,7 +1441,7 @@ export default function Home() {
                 </Select>
               </div>
                <Select value={activeSection} onValueChange={handleSectionChange}>
-                    <SelectTrigger className="w-[180px] sm:w-[200px] bg-white dark:bg-gray-800 border-gray-300 dark:border-gray-600">
+                    <SelectTrigger className="w-full sm:w-auto md:w-[200px] bg-white dark:bg-gray-800 border-gray-300 dark:border-gray-600">
                         <SelectValue placeholder="Seleccionar Sección" />
                     </SelectTrigger>
                     <SelectContent>
@@ -1452,45 +1470,62 @@ export default function Home() {
         {/* Content for the Counter Section */}
         {activeSection === 'Contador' && (
             <div id="contador-content">
-                <BarcodeEntry
-                    barcode={barcode}
-                    setBarcode={setBarcode}
-                    onAddProduct={() => handleAddProduct()}
-                    onScanClick={handleScanButtonClick}
-                    onRefreshStock={handleRefreshStock}
-                    isLoading={isDbLoading}
-                    isScanning={isScanning}
-                    isRefreshingStock={isRefreshingStock}
-                    inputRef={barcodeInputRef}
-                />
-                {/* Search Input for Counting List */}
-                 <div className="relative mb-4">
-                    <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
-                    <Input
-                        type="search"
-                        placeholder="Buscar en inventario actual..."
-                        value={searchTerm}
-                        onChange={(e) => setSearchTerm(e.target.value)}
-                        className="pl-8 w-full bg-white dark:bg-gray-800 border-gray-300 dark:border-gray-600"
-                        aria-label="Buscar en lista de conteo"
-                    />
+                 {/* Split Screen Layout */}
+                 <div className={cn("flex flex-col", isScanning ? "h-[calc(100vh-200px)]" : "h-auto")}>
+                    {/* Top Half: Camera View */}
+                    {isScanning && (
+                         <div className="flex-shrink-0 h-1/2">
+                             {renderScannerView()}
+                         </div>
+                    )}
+
+                    {/* Bottom Half / Main Content */}
+                     <div className={cn("flex-grow", isScanning ? "h-1/2 overflow-hidden" : "h-auto")}>
+                         <BarcodeEntry
+                             barcode={barcode}
+                             setBarcode={setBarcode}
+                             onAddProduct={() => handleAddProduct()}
+                             onScanClick={handleToggleScan} // Use the toggle function
+                             onRefreshStock={handleRefreshStock}
+                             isLoading={isDbLoading}
+                             isScanning={isScanning} // Pass scanning state
+                             isRefreshingStock={isRefreshingStock}
+                             inputRef={barcodeInputRef}
+                         />
+                         {/* Search Input for Counting List */}
+                         <div className="relative mb-4">
+                             <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
+                             <Input
+                                 type="search"
+                                 placeholder="Buscar en inventario actual..."
+                                 value={searchTerm}
+                                 onChange={(e) => setSearchTerm(e.target.value)}
+                                 className="pl-8 w-full bg-white dark:bg-gray-800 border-gray-300 dark:border-gray-600"
+                                 aria-label="Buscar en lista de conteo"
+                                 disabled={isScanning || isDbLoading} // Disable search when scanning
+                             />
+                         </div>
+                         <CountingListTable
+                             countingList={filteredCountingList} // Use filtered list here
+                             warehouseName={getWarehouseName(currentWarehouseId)}
+                             isLoading={isDbLoading}
+                             onDeleteRequest={handleDeleteRequest}
+                             onOpenStockDialog={handleOpenStockDialog}
+                             onOpenQuantityDialog={handleOpenQuantityDialog}
+                             onDecrement={handleDecrement}
+                             onIncrement={handleIncrement}
+                             // Adjust height dynamically based on scanning mode
+                             tableHeightClass={isScanning ? "h-full" : "h-[calc(100vh-360px)] md:h-[calc(100vh-330px)]"}
+                         />
+                     </div>
                 </div>
-               <CountingListTable
-                    countingList={filteredCountingList} // Use filtered list here
-                    warehouseName={getWarehouseName(currentWarehouseId)}
-                    isLoading={isDbLoading}
-                    onDeleteRequest={handleDeleteRequest}
-                    onOpenStockDialog={handleOpenStockDialog}
-                    onOpenQuantityDialog={handleOpenQuantityDialog}
-                    onDecrement={handleDecrement}
-                    onIncrement={handleIncrement}
-                />
+
 
               <div className="mt-4 flex justify-end items-center">
                 <Button
                     onClick={handleExport}
                      className="bg-blue-600 hover:bg-blue-700 text-white rounded-md shadow-sm px-5 py-2 transition-colors duration-200"
-                     disabled={countingList.length === 0 || isDbLoading}
+                     disabled={countingList.length === 0 || isDbLoading || isScanning} // Disable export when scanning
                      aria-label="Exportar inventario actual a CSV"
                  >
                       Exportar Inventario ({getWarehouseName(currentWarehouseId)})
@@ -1527,11 +1562,8 @@ export default function Home() {
             {renderConfirmationDialog()}
             {renderDeleteConfirmationDialog()}
 
-            {/* Render Scanner View */}
-            {renderScannerView()}
+            {/* Scanner Modal Removed - Replaced by split-screen view */}
+
     </div>
   );
 }
-
-
-    

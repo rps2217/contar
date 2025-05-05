@@ -1086,7 +1086,7 @@ export default function Home() {
     }, []);
 
     // Effect to request camera permission and set up video stream/scanning
-    useEffect(() => {
+     useEffect(() => {
         let reader: BrowserMultiFormatReader | null = null;
         let cancelled = false;
         let isMounted = true; // Track if component is still mounted
@@ -1691,5 +1691,3 @@ export default function Home() {
     </div>
   );
 }
-
-    

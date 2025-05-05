@@ -16,13 +16,13 @@ import {
     getAllInventoryItems,
     addInventoryItemsInBulk,
     addProductDetailsInBulk,
-    getInventoryItemsForWarehouse, // Import needed function
+    getInventoryItemsForWarehouse,
 } from '@/lib/indexeddb-helpers';
 import {
     Edit, FileDown, Filter, Save, Trash, Upload, AlertCircle, Warehouse as WarehouseIcon, Play
 } from "lucide-react";
-import Papa from 'papaparse'; // Using PapaParse for robust CSV parsing
-import * as React from "react"; // Import React
+import Papa from 'papaparse';
+import * as React from "react";
 import { useCallback, useEffect, useState } from "react";
 import { useForm } from "react-hook-form";
 import * as z from "zod";
@@ -33,7 +33,7 @@ import {
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import {
-    Dialog, DialogClose, DialogContent, DialogDescription, DialogFooter,
+    Dialog, DialogContent, DialogDescription, DialogFooter,
     DialogHeader, DialogTitle
 } from "@/components/ui/dialog";
 import {
@@ -58,7 +58,7 @@ const productDetailSchema = z.object({
   provider: z.string().optional(),
   stock: z.preprocess(
     (val) => (val === "" || val === undefined || val === null ? 0 : Number(val)),
-    z.number().min(0, { message: "El stock debe ser mayor o igual a 0." })
+    z.number().min(0, { message: "El stock debe ser mayor o igual a 0." }).default(0)
   ),
 });
 type ProductDetailValues = z.infer<typeof productDetailSchema>;
@@ -74,6 +74,7 @@ interface ProductTableProps {
   searchTerm: string;
   selectedProviderFilter: string;
   onEdit: (detail: ProductDetail) => void;
+  onDelete: (barcode: string) => void;
 }
 
 const ProductTable: React.FC<ProductTableProps> = ({
@@ -83,6 +84,7 @@ const ProductTable: React.FC<ProductTableProps> = ({
   searchTerm,
   selectedProviderFilter,
   onEdit,
+  onDelete,
 }) => {
     const filteredDetails = React.useMemo(() => {
         return productDetails.filter(detail => {
@@ -200,13 +202,12 @@ const EditProductDialog: React.FC<EditProductDialogProps> = ({
         });
     } else if (!isOpen) {
          resetDetailForm({ barcode: "", description: "", provider: "Desconocido", stock: 0 });
-         setSelectedDetail(null); // Ensure selectedDetail is cleared when dialog closes
+         setSelectedDetail(null);
     }
-   }, [isOpen, selectedDetail, resetDetailForm, initialStock, setSelectedDetail]); // Added initialStock and setSelectedDetail
+   }, [isOpen, selectedDetail, resetDetailForm, initialStock, setSelectedDetail]);
 
   const handleClose = () => {
     setIsOpen(false);
-    // Resetting form and selectedDetail is handled by the useEffect above
   };
 
   return (
@@ -268,7 +269,7 @@ const EditProductDialog: React.FC<EditProductDialogProps> = ({
                       <FormControl>
                       <Input type="number" {...field} aria-required="true" disabled={isProcessing} className="dark:bg-gray-700 dark:border-gray-600"/>
                       </FormControl>
-                       <FormDescUi className="text-xs dark:text-gray-400">Este stock se aplica al almacén 'Principal'.</FormDescUi>
+                       <FormDescUi className="text-xs dark:text-gray-400">Este stock se aplica al almacén 'main'.</FormDescUi>
                       <FormMessage />
                   </FormItem>
                   )}
@@ -360,7 +361,6 @@ async function fetchAndParseGoogleSheetData(sheetUrl: string): Promise<{ details
     const csvText = await response.text();
     console.log(`Successfully fetched CSV data (length: ${csvText.length}). Parsing...`);
 
-     // --- Robust CSV Parsing Logic - Rely on Column Position ---
      const lines = csvText.split(/\r?\n/);
      if (lines.length < 1) {
          console.warn("CSV data is empty or contains only empty lines.");
@@ -370,9 +370,7 @@ async function fetchAndParseGoogleSheetData(sheetUrl: string): Promise<{ details
      const productDetails: ProductDetail[] = [];
      const inventoryItems: InventoryItem[] = [];
      const defaultWarehouseId = 'main';
-
-      // Skip header row - Data starts from the second row (index 1)
-     const startDataRow = 1;
+     const startDataRow = 1; // Skip header row
 
      if (startDataRow >= lines.length) {
          console.warn("CSV contains only a header row or is empty.");
@@ -383,7 +381,7 @@ async function fetchAndParseGoogleSheetData(sheetUrl: string): Promise<{ details
 
      for (let i = startDataRow; i < lines.length; i++) {
          const line = lines[i].trim();
-         if (!line) continue; // Skip empty lines
+         if (!line) continue;
 
          const result = Papa.parse<string[]>(line, { delimiter: ',', skipEmptyLines: true });
 
@@ -391,25 +389,20 @@ async function fetchAndParseGoogleSheetData(sheetUrl: string): Promise<{ details
              console.warn(`Skipping row ${i + 1} due to parsing errors: ${result.errors[0].message}. Line: "${line}"`);
              continue;
          }
-         if (!result.data || result.data.length === 0 || !result.data[0] || result.data[0].length < 4) { // Check if at least 4 columns exist
-             console.warn(`Skipping row ${i + 1}: Insufficient columns or no data parsed. Line: "${line}"`);
+         if (!result.data || result.data.length === 0 || !result.data[0] || result.data[0].length < 4) {
+             console.warn(`Skipping row ${i + 1}: Insufficient columns or no data parsed. Expected at least 4 columns. Line: "${line}"`);
              continue;
          }
 
          const values = result.data[0];
 
          // --- Column Position Mapping (0-based index) ---
-         // Column 0: Barcode (Required)
-         // Column 1: Description
-         // Column 2: Provider
-         // Column 3: Stock (for 'main' warehouse)
-
          const barcode = values[0]?.trim();
          if (!barcode) {
              console.warn(`Skipping row ${i + 1}: Missing or empty barcode (Column 1). Line: "${line}"`);
              continue;
          }
-          if (barcode.length > 100) {
+          if (barcode.length > 100) { // Basic validation
              console.warn(`Skipping row ${i + 1}: Barcode too long (${barcode.length} chars). Line: "${line}"`);
              continue;
           }
@@ -433,7 +426,7 @@ async function fetchAndParseGoogleSheetData(sheetUrl: string): Promise<{ details
              barcode: barcode,
              warehouseId: defaultWarehouseId,
              stock: stockMain,
-             count: 0, // Initialize count to 0 during import
+             count: 0,
              lastUpdated: new Date().toISOString(),
          });
      }
@@ -457,7 +450,7 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = ({ currentWarehou
   const [isLoading, setIsLoading] = useState(true);
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
   const [selectedDetail, setSelectedDetail] = useState<ProductDetail | null>(null);
-  const [initialStockForEdit, setInitialStockForEdit] = useState<number>(0); // State to hold stock for the edit dialog
+  const [initialStockForEdit, setInitialStockForEdit] = useState<number>(0);
   const [isAlertOpen, setIsAlertOpen] = useState(false);
   const [alertAction, setAlertAction] = useState<'deleteProduct' | 'clearDatabase' | null>(null);
   const [productToDeleteBarcode, setProductToDeleteBarcode] = useState<string | null>(null);
@@ -467,7 +460,7 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = ({ currentWarehou
   const [googleSheetUrl, setGoogleSheetUrl] = useState("");
   const [searchTerm, setSearchTerm] = useState("");
   const [selectedProviderFilter, setSelectedProviderFilter] = useState<string>("all");
-  const isMobile = useIsMobile(); // Use hook if needed for responsiveness
+  const isMobile = useIsMobile();
 
   // Load initial data from IndexedDB on mount
   const loadInitialData = useCallback(async () => {
@@ -517,7 +510,7 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = ({ currentWarehou
  const handleAddOrUpdateDetailSubmit = useCallback(async (data: ProductDetailValues) => {
     const isUpdating = !!selectedDetail;
     const detailData: ProductDetail = {
-        barcode: isUpdating ? selectedDetail.barcode : data.barcode.trim(),
+        barcode: isUpdating ? selectedDetail!.barcode : data.barcode.trim(), // Use selectedDetail barcode if updating
         description: data.description.trim() || `Producto ${data.barcode.trim()}`,
         provider: data.provider?.trim() || "Desconocido",
     };
@@ -534,20 +527,21 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = ({ currentWarehou
 
         let currentCount = 0;
         if (isUpdating) {
+            // Fetch existing item only if updating to preserve count
             const existingItem = await getInventoryItem(detailData.barcode, 'main');
             currentCount = existingItem?.count ?? 0;
         }
 
         const inventoryItemData: InventoryItem = {
             barcode: detailData.barcode,
-            warehouseId: 'main',
+            warehouseId: 'main', // Apply stock to 'main' warehouse
             stock: data.stock ?? 0,
-            count: currentCount,
+            count: currentCount, // Preserve count if updating, otherwise 0
             lastUpdated: new Date().toISOString(),
         };
         await addOrUpdateInventoryItem(inventoryItemData);
 
-        // Update local states
+        // Update local states optimistically but correctly
         setProductDetails(prevDetails => {
             const existingIndex = prevDetails.findIndex(d => d.barcode === detailData.barcode);
             if (existingIndex > -1) {
@@ -555,17 +549,17 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = ({ currentWarehou
                 newDetails[existingIndex] = detailData;
                 return newDetails;
             } else {
-                return [detailData, ...prevDetails];
+                return [detailData, ...prevDetails]; // Add new detail to beginning
             }
         });
          setInventoryItems(prevItems => {
              const existingInvIndex = prevItems.findIndex(i => i.barcode === inventoryItemData.barcode && i.warehouseId === inventoryItemData.warehouseId);
              if (existingInvIndex > -1) {
                  const newItems = [...prevItems];
-                 newItems[existingInvIndex] = inventoryItemData;
+                 newItems[existingInvIndex] = inventoryItemData; // Update existing item
                  return newItems;
              } else {
-                 return [...prevItems, inventoryItemData];
+                 return [...prevItems, inventoryItemData]; // Add new inventory item
              }
          });
 
@@ -573,7 +567,7 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = ({ currentWarehou
             title: isUpdating ? "Producto Actualizado" : "Producto Agregado",
             description: `${detailData.description} (${detailData.barcode}) ha sido ${isUpdating ? 'actualizado (incluyendo stock en almacén principal)' : 'agregado con stock inicial'}.`,
         });
-        setIsEditModalOpen(false); // Close dialog on success
+        setIsEditModalOpen(false);
     } catch (error: any) {
         console.error("Detail/Inventory operation failed", error);
         let errorMessage = `Error al ${isUpdating ? 'actualizar' : 'guardar'} el producto.`;
@@ -586,6 +580,7 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = ({ currentWarehou
     } finally {
         setIsProcessing(false);
         setProcessingStatus("");
+        setSelectedDetail(null); // Clear selected detail after operation
     }
  }, [selectedDetail, toast]); // Dependencies
 
@@ -606,8 +601,8 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = ({ currentWarehou
           title: "Producto Eliminado",
           description: `El producto ${barcode} y todo su inventario asociado han sido eliminados.`,
         });
-        setIsEditModalOpen(false); // Close edit dialog if open for deleted product
-        setIsAlertOpen(false); // Close confirmation dialog
+        setIsEditModalOpen(false);
+        setIsAlertOpen(false);
         setProductToDeleteBarcode(null);
         setAlertAction(null);
       } catch (error: any) {
@@ -617,7 +612,6 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = ({ currentWarehou
             setIsProcessing(false);
             setProcessingStatus("");
       }
-      // No finally needed here as it's handled within the try/catch now
   }, [toast]);
 
 
@@ -646,10 +640,10 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = ({ currentWarehou
   const handleOpenEditDialog = useCallback(async (detail: ProductDetail | null) => {
     if (detail) {
          const mainInventory = await getInventoryItem(detail.barcode, 'main');
-         setInitialStockForEdit(mainInventory?.stock ?? 0); // Set initial stock for the dialog
+         setInitialStockForEdit(mainInventory?.stock ?? 0);
          setSelectedDetail(detail);
     } else {
-        setInitialStockForEdit(0); // Default stock for new product
+        setInitialStockForEdit(0); // Default for new product
         setSelectedDetail(null);
     }
     setIsEditModalOpen(true);
@@ -675,7 +669,6 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = ({ currentWarehou
   }, [productDetails, inventoryItems, toast]);
 
    const handleDeleteConfirmation = useCallback(() => {
-        console.log(`Confirming action: ${alertAction}`);
         if (alertAction === 'deleteProduct' && productToDeleteBarcode) {
             handleDeleteProduct(productToDeleteBarcode);
         } else if (alertAction === 'clearDatabase') {
@@ -697,7 +690,6 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = ({ currentWarehou
             return;
         }
 
-        console.log("Starting Google Sheet load process...");
         setIsProcessing(true);
         setUploadProgress(0);
         setProcessingStatus("Obteniendo datos de Google Sheet...");
@@ -706,19 +698,18 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = ({ currentWarehou
             const { details, inventory } = await fetchAndParseGoogleSheetData(googleSheetUrl);
             const totalItemsToLoad = details.length + inventory.length;
              let itemsLoaded = 0;
-             const batchSize = 100; // Process in batches
+             const batchSize = 100;
 
              if (totalItemsToLoad === 0) {
                  toast({ title: "Hoja Vacía o Sin Datos Válidos", description: "No se encontraron productos válidos en la hoja.", variant: "default" });
              } else {
-                 // --- Incremental Database Update in Batches ---
                  setProcessingStatus(`Actualizando detalles (${details.length})...`);
                  for (let i = 0; i < details.length; i += batchSize) {
                      const batch = details.slice(i, i + batchSize);
                      await addProductDetailsInBulk(batch);
                      itemsLoaded += batch.length;
                      setUploadProgress(Math.round((itemsLoaded / totalItemsToLoad) * 100));
-                     await new Promise(resolve => setTimeout(resolve, 10)); // Small delay to prevent blocking UI thread
+                     await new Promise(resolve => setTimeout(resolve, 10));
                  }
 
                  setProcessingStatus(`Actualizando inventario (${inventory.length})...`);
@@ -727,12 +718,12 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = ({ currentWarehou
                      await addInventoryItemsInBulk(batch);
                      itemsLoaded += batch.length;
                      setUploadProgress(Math.round((itemsLoaded / totalItemsToLoad) * 100));
-                      await new Promise(resolve => setTimeout(resolve, 10)); // Small delay
+                      await new Promise(resolve => setTimeout(resolve, 10));
                  }
 
                  console.log("Bulk add/update to IndexedDB completed.");
-                 await loadInitialData(); // Reload data to reflect changes
-                 toast({ title: "Carga Completa", description: `Se procesaron ${details.length} detalles y ${inventory.length} registros de inventario desde la Hoja de Google.` });
+                 await loadInitialData();
+                 toast({ title: "Carga Completa", description: `Se procesaron ${details.length} detalles y ${inventory.length} registros de inventario.` });
              }
 
         } catch (error: any) {
@@ -743,7 +734,6 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = ({ currentWarehou
             setIsProcessing(false);
             setProcessingStatus("");
             setUploadProgress(0);
-            console.log("Google Sheet load process finished.");
         }
     }, [googleSheetUrl, toast, loadInitialData]);
 
@@ -765,6 +755,7 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = ({ currentWarehou
          document.body.appendChild(link);
          link.click();
          document.body.removeChild(link);
+         URL.revokeObjectURL(link.href); // Clean up object URL
          toast({ title: "Exportación Iniciada", description: "Se ha iniciado la descarga del archivo CSV de detalles." });
      } catch (error) {
           console.error("Error exporting database details:", error);
@@ -779,7 +770,8 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = ({ currentWarehou
         const safeQuote = (field: any): string => {
             const str = String(field ?? '');
             const escapedStr = str.replace(/"/g, '""');
-            return `"${escapedStr}"`;
+            // Quote if it contains comma, quote, or newline
+            return (str.includes(',') || str.includes('"') || str.includes('\n')) ? `"${escapedStr}"` : str;
         };
         const rows = data.map((detail) => [
             safeQuote(detail.barcode),
@@ -792,11 +784,12 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = ({ currentWarehou
     // Generate unique provider options from productDetails
     const providerOptions = React.useMemo(() => {
         const providers = new Set(productDetails.map(p => p.provider || "Desconocido").filter(Boolean));
-        return ["all", ...Array.from(providers)].sort((a, b) => {
+        const sortedProviders = ["all", ...Array.from(providers)].sort((a, b) => {
             if (a === 'all') return -1;
             if (b === 'all') return 1;
             return (a as string).localeCompare(b as string);
         });
+        return sortedProviders;
     }, [productDetails]);
 
  // --- Count by Provider ---
@@ -814,19 +807,18 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = ({ currentWarehou
     setProcessingStatus(`Buscando productos de ${selectedProviderFilter} en almacén ${currentWarehouseId}...`);
 
     try {
-      // 1. Filter productDetails by selected provider
       const providerDetails = productDetails.filter(detail => (detail.provider || "Desconocido") === selectedProviderFilter);
       if (providerDetails.length === 0) {
         toast({ title: "Vacío", description: `No hay productos registrados para el proveedor ${selectedProviderFilter}.` });
+        setIsProcessing(false); // Ensure processing state is reset
+        setProcessingStatus("");
         return;
       }
 
-      // 2. Get inventory for the current warehouse
       const warehouseInventory = await getInventoryItemsForWarehouse(currentWarehouseId);
       const inventoryMap = new Map<string, InventoryItem>();
       warehouseInventory.forEach(item => inventoryMap.set(item.barcode, item));
 
-      // 3. Create DisplayProduct list for the provider in the current warehouse
       const productsToCount: DisplayProduct[] = providerDetails.map(detail => {
         const inventory = inventoryMap.get(detail.barcode);
         return {
@@ -834,12 +826,11 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = ({ currentWarehou
           warehouseId: currentWarehouseId,
           stock: inventory?.stock ?? 0,
           count: 0, // Reset count for the new session
-          lastUpdated: inventory?.lastUpdated,
+          lastUpdated: inventory?.lastUpdated || new Date().toISOString(), // Provide a default if not present
         };
       });
 
-      // 4. Call the callback function passed from Home to update the counting list
-      onStartCountByProvider(productsToCount);
+      onStartCountByProvider(productsToCount); // Call callback
 
     } catch (error) {
       console.error("Error starting count by provider:", error);
@@ -883,7 +874,7 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = ({ currentWarehou
                   <SelectItem value="export" disabled={productDetails.length === 0}>
                     Exportar Detalles
                   </SelectItem>
-                  <SelectItem value="clear" disabled={(productDetails.length === 0 && inventoryItems.length === 0)}>Borrar Todo</SelectItem>
+                  <SelectItem value="clear" disabled={productDetails.length === 0 && inventoryItems.length === 0}>Borrar Todo</SelectItem>
                 </SelectGroup>
               </SelectContent>
             </Select>
@@ -917,7 +908,6 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = ({ currentWarehou
                      ))}
                  </SelectContent>
              </Select>
-             {/* Add Count by Provider Button */}
             <Button
                 onClick={handleStartCountByProviderClick}
                 disabled={selectedProviderFilter === 'all' || isProcessing || isLoading}
@@ -1010,6 +1000,7 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = ({ currentWarehou
            searchTerm={searchTerm}
            selectedProviderFilter={selectedProviderFilter}
            onEdit={handleOpenEditDialog}
+           onDelete={triggerDeleteProductAlert} // Pass trigger for deletion alert
        />
 
       {/* Add/Edit Product Dialog */}
@@ -1019,7 +1010,7 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = ({ currentWarehou
           selectedDetail={selectedDetail}
           setSelectedDetail={setSelectedDetail}
           onSubmit={handleAddOrUpdateDetailSubmit}
-          onDelete={triggerDeleteProductAlert} // Pass the trigger function
+          onDelete={triggerDeleteProductAlert}
           isProcessing={isProcessing}
           initialStock={initialStockForEdit}
        />

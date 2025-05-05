@@ -1086,123 +1086,123 @@ export default function Home() {
     }, []);
 
     // Effect to request camera permission and set up video stream/scanning
-     useEffect(() => {
+    useEffect(() => {
         let reader: BrowserMultiFormatReader | null = null;
         let cancelled = false;
         let isMounted = true; // Track if component is still mounted
+        let initTimeoutId: NodeJS.Timeout | null = null; // Store timeout ID for cleanup
 
         const initScanner = async () => {
-             if (!isScanning || !isMounted) {
-                 stopCameraStream();
-                 setIsInitializingCamera(false); // Reset camera initialization state
-                 return;
-             }
+            if (!isScanning || !isMounted) {
+                stopCameraStream();
+                setIsInitializingCamera(false); // Reset camera initialization state
+                return;
+            }
 
-             setIsInitializingCamera(true); // Indicate camera is initializing
+            setIsInitializingCamera(true); // Indicate camera is initializing
 
-             // Ensure videoRef is available before proceeding
-             if (!videoRef.current) {
-                 console.error("Video element ref is not available.");
-                 // Retry after a short delay if component is still mounted and scanning
-                  if (!cancelled && isMounted && isScanning) { // Check isScanning again before retrying
-                      setTimeout(() => {
-                          if (isScanning && isMounted) { // Re-check before initiating
-                             initScanner();
-                          }
-                      }, 150); // Increased retry delay slightly
-                 } else {
-                      setIsInitializingCamera(false);
-                 }
-                 return;
-             }
-             const currentVideoRef = videoRef.current;
+            // Ensure videoRef is available before proceeding
+            if (!videoRef.current) {
+                console.error("Video element ref is not available.");
+                // Retry after a short delay if component is still mounted and scanning
+                if (!cancelled && isMounted && isScanning) { // Check isScanning again before retrying
+                    initTimeoutId = setTimeout(() => {
+                        if (isScanning && isMounted) { // Re-check before initiating
+                            initScanner();
+                        }
+                    }, 150); // Increased retry delay slightly
+                } else {
+                    setIsInitializingCamera(false);
+                }
+                return;
+            }
+            const currentVideoRef = videoRef.current;
 
-             if (!scannerReaderRef.current) {
-                 scannerReaderRef.current = new BrowserMultiFormatReader();
-                 console.log("ZXing BrowserMultiFormatReader initialized.");
-             }
-             reader = scannerReaderRef.current;
+            if (!scannerReaderRef.current) {
+                scannerReaderRef.current = new BrowserMultiFormatReader();
+                console.log("ZXing BrowserMultiFormatReader initialized.");
+            }
+            reader = scannerReaderRef.current;
 
             try {
                 console.log("Requesting camera permission...");
                 const constraints = { video: { facingMode: "environment" } };
                 const stream = await navigator.mediaDevices.getUserMedia(constraints);
-                 if (cancelled || !isMounted) {
-                     stream.getTracks().forEach(track => track.stop());
-                     setIsInitializingCamera(false);
-                     return;
-                 }
+                if (cancelled || !isMounted) {
+                    stream.getTracks().forEach(track => track.stop());
+                    setIsInitializingCamera(false);
+                    return;
+                }
 
                 console.log("Camera permission granted.");
                 setHasCameraPermission(true);
                 streamRef.current = stream;
 
                 if (currentVideoRef) { // Double check ref after await
-                  currentVideoRef.srcObject = stream;
-                  // Wait for metadata to load before playing
-                  await new Promise<void>((resolve, reject) => {
-                    currentVideoRef.onloadedmetadata = () => resolve();
-                    currentVideoRef.onerror = (e) => {
-                        console.error("Video metadata error:", e);
-                         reject(new Error(`Video metadata error: ${e}`));
-                     };
-                  });
+                    currentVideoRef.srcObject = stream;
+                    // Wait for metadata to load before playing
+                    await new Promise<void>((resolve, reject) => {
+                        currentVideoRef.onloadedmetadata = () => resolve();
+                        currentVideoRef.onerror = (e) => {
+                            console.error("Video metadata error:", e);
+                            reject(new Error(`Video metadata error: ${e}`));
+                        };
+                    });
 
-
-                  if (cancelled || !isMounted) {
-                       setIsInitializingCamera(false);
-                       return;
-                  } // Check again after await
-
-                  await currentVideoRef.play(); // Play the video stream
-
-                   if (cancelled || !isMounted) {
+                    if (cancelled || !isMounted) {
                         setIsInitializingCamera(false);
                         return;
-                   } // Check again after await
-                   console.log("Video stream attached and playing.");
-                   setIsInitializingCamera(false); // Camera is ready
+                    } // Check again after await
 
-                   if (reader) {
-                       console.log("Starting barcode decoding from video device...");
+                    await currentVideoRef.play(); // Play the video stream
+
+                    if (cancelled || !isMounted) {
+                        setIsInitializingCamera(false);
+                        return;
+                    } // Check again after await
+                    console.log("Video stream attached and playing.");
+                    setIsInitializingCamera(false); // Camera is ready
+
+                    if (reader) {
+                        console.log("Starting barcode decoding from video device...");
                         reader.decodeFromVideoDevice(undefined, currentVideoRef, (result, err) => {
-                           if (cancelled || !isMounted) return;
+                            if (cancelled || !isMounted) return;
 
-                           if (result) {
-                               console.log('Barcode detected:', result.getText());
-                               const detectedBarcode = result.getText().trim().replace(/\r?\n|\r/g, ''); // Clean barcode
-                               setIsScanning(false); // Close modal on successful scan
-                               playBeep(900, 80);
-                               requestAnimationFrame(() => {
-                                   setBarcode(detectedBarcode);
-                                   handleAddProduct(detectedBarcode);
-                               });
-                           }
-                           if (err && !(err instanceof NotFoundException)) {
-                               console.error('Scanning error:', err);
-                               // Consider adding non-intrusive UI feedback for scanning errors
-                           }
+                            if (result) {
+                                console.log('Barcode detected:', result.getText());
+                                const detectedBarcode = result.getText().trim().replace(/\r?\n|\r/g, ''); // Clean barcode
+                                setIsScanning(false); // Close modal on successful scan
+                                playBeep(900, 80);
+                                requestAnimationFrame(() => {
+                                    setBarcode(detectedBarcode);
+                                    handleAddProduct(detectedBarcode);
+                                });
+                            }
+                            if (err && !(err instanceof NotFoundException)) {
+                                console.error('Scanning error:', err);
+                                // Consider adding non-intrusive UI feedback for scanning errors
+                            }
                         }).catch(decodeErr => {
-                             if (!cancelled && isMounted) {
+                            if (!cancelled && isMounted) {
                                 console.error("Error starting decodeFromVideoDevice:", decodeErr);
                                 toast({ variant: "destructive", title: "Error de Escaneo", description: "No se pudo iniciar la decodificación del código de barras."});
                                 stopCameraStream();
                                 setIsScanning(false);
-                             }
+                            }
                         });
-                       console.log("Barcode decoding started.");
-                   } else {
-                       if (cancelled || !isMounted) return;
-                       console.error("Scanner reader was not initialized.");
-                       stopCameraStream();
-                       setIsScanning(false);
-                       toast({ variant: "destructive", title: "Error de escáner", description: "No se pudo inicializar el lector de códigos."});
-                   }
+                        console.log("Barcode decoding started.");
+                    } else {
+                        if (cancelled || !isMounted) return;
+                        console.error("Scanner reader was not initialized.");
+                        stopCameraStream();
+                        setIsScanning(false);
+                        toast({ variant: "destructive", title: "Error de escáner", description: "No se pudo inicializar el lector de códigos."});
+                    }
                 } else {
-                   if (!cancelled) {
-                     console.warn("Video ref became null after permission grant.");
-                     stream.getTracks().forEach(track => track.stop());
-                   }
+                    if (!cancelled) {
+                        console.warn("Video ref became null after permission grant.");
+                        stream.getTracks().forEach(track => track.stop());
+                    }
                     setIsInitializingCamera(false);
                 }
 
@@ -1219,29 +1219,37 @@ export default function Home() {
                 });
                 stopCameraStream();
                 setIsScanning(false);
-                 setIsInitializingCamera(false);
+                setIsInitializingCamera(false);
             }
         };
 
         if (isScanning) {
-             console.log("isScanning is true, initializing scanner...");
-             initScanner();
-         } else {
-             console.log("isScanning is false, ensuring camera is stopped.");
-             stopCameraStream();
-             setIsInitializingCamera(false);
-         }
+            console.log("isScanning is true, initializing scanner...");
+            // Delay the initial call slightly to ensure DOM is fully ready
+             initTimeoutId = setTimeout(() => {
+                 if (isScanning && isMounted) { // Check again before starting
+                     initScanner();
+                 }
+             }, 50); // Short delay (e.g., 50ms)
+        } else {
+            console.log("isScanning is false, ensuring camera is stopped.");
+            stopCameraStream();
+            setIsInitializingCamera(false);
+        }
 
         // Cleanup function
         return () => {
             console.log("Cleaning up camera effect...");
+             if (initTimeoutId) {
+                 clearTimeout(initTimeoutId); // Clear initial timeout if it exists
+             }
             isMounted = false;
             cancelled = true;
             stopCameraStream();
-             setIsInitializingCamera(false);
+            setIsInitializingCamera(false);
         };
-     // eslint-disable-next-line react-hooks/exhaustive-deps
-     }, [isScanning, toast, playBeep, handleAddProduct, stopCameraStream]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [isScanning, toast, playBeep, handleAddProduct, stopCameraStream]);
 
 
     // Handler to start scanning (open modal)
@@ -1691,3 +1699,4 @@ export default function Home() {
     </div>
   );
 }
+    

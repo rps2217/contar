@@ -1,3 +1,4 @@
+
 "use client";
 
 import type { DisplayProduct, InventoryItem, ProductDetail } from '@/types/product';
@@ -22,10 +23,9 @@ import {
 import {
     Table, TableBody, TableCaption, TableCell, TableHead, TableHeader, TableRow
 } from "@/components/ui/table";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { WarehouseManagement } from "@/components/warehouse-management";
 import { format } from 'date-fns';
-import { Minus, Plus, Trash, RefreshCw, Warehouse as WarehouseIcon, Camera, AlertCircle, Search, Check } from "lucide-react";
+import { Minus, Plus, Trash, RefreshCw, Warehouse as WarehouseIcon, Camera, AlertCircle, Search, Check, AppWindow, Database, Boxes } from "lucide-react";
 import React, { useCallback, useEffect, useRef, useState } from "react";
 // Import ZXing library for barcode scanning
 import { BrowserMultiFormatReader, NotFoundException } from '@zxing/library';
@@ -33,7 +33,6 @@ import { BrowserMultiFormatReader, NotFoundException } from '@zxing/library';
 import {
     addOrUpdateInventoryItem,
     getDisplayProductForWarehouse,
-    getAllDisplayProductsForWarehouse,
     getProductDetail,
     addOrUpdateProductDetail,
     getInventoryItemsForWarehouse,
@@ -42,6 +41,7 @@ import {
 const LOCAL_STORAGE_COUNTING_LIST_KEY_PREFIX = 'stockCounterPro_countingList_';
 const LOCAL_STORAGE_WAREHOUSE_KEY = 'stockCounterPro_currentWarehouse';
 const LOCAL_STORAGE_WAREHOUSES_KEY = 'stockCounterPro_warehouses';
+const LOCAL_STORAGE_ACTIVE_SECTION_KEY = 'stockCounterPro_activeSection'; // Key for active section
 
 // --- Helper Components ---
 
@@ -298,7 +298,12 @@ export default function Home() {
   const [hasCameraPermission, setHasCameraPermission] = useState<boolean | null>(null); // State for camera permission
   const scannerReaderRef = useRef<BrowserMultiFormatReader | null>(null); // Ref for the scanner reader instance
   const streamRef = useRef<MediaStream | null>(null); // Ref to hold the camera stream
-  const [activeTab, setActiveTab] = useState("Contador"); // State for active tab
+  const [activeSection, setActiveSection] = useState<string>(() => {
+    if (typeof window !== 'undefined') {
+        return localStorage.getItem(LOCAL_STORAGE_ACTIVE_SECTION_KEY) || 'Contador';
+    }
+    return 'Contador'; // Default section
+  });
   const [isEditingValueInDialog, setIsEditingValueInDialog] = useState(false); // State for inline editing in dialog
   const [editingValue, setEditingValue] = useState<string>(''); // State for the input value
   const valueInputRef = useRef<HTMLInputElement>(null); // Ref for the value input
@@ -318,22 +323,28 @@ export default function Home() {
             const savedListKey = getLocalStorageKeyForWarehouse(warehouseId);
             const savedList = localStorage.getItem(savedListKey);
             if (savedList) {
-                 const parsedList: DisplayProduct[] = JSON.parse(savedList);
-                 // Basic validation
-                 if (Array.isArray(parsedList) && parsedList.every(item =>
-                    typeof item === 'object' && item !== null &&
-                    typeof item.barcode === 'string' &&
-                    typeof item.warehouseId === 'string' &&
-                    typeof item.description === 'string' &&
-                    typeof item.count === 'number' &&
-                    typeof item.stock === 'number'
-                 )) {
-                    setCountingList(parsedList);
-                     console.log(`Loaded counting list for warehouse ${warehouseId} from localStorage:`, parsedList.length, "items");
-                } else {
-                     console.warn(`Invalid data in localStorage for warehouse ${warehouseId}. Clearing.`);
-                     localStorage.removeItem(savedListKey);
-                     setCountingList([]);
+                 try {
+                     const parsedList: DisplayProduct[] = JSON.parse(savedList);
+                     // Basic validation
+                     if (Array.isArray(parsedList) && parsedList.every(item =>
+                         typeof item === 'object' && item !== null &&
+                         typeof item.barcode === 'string' &&
+                         typeof item.warehouseId === 'string' &&
+                         typeof item.description === 'string' &&
+                         typeof item.count === 'number' &&
+                         typeof item.stock === 'number'
+                     )) {
+                        setCountingList(parsedList);
+                         console.log(`Loaded counting list for warehouse ${warehouseId} from localStorage:`, parsedList.length, "items");
+                    } else {
+                         console.warn(`Invalid data in localStorage for warehouse ${warehouseId}. Clearing.`);
+                         localStorage.removeItem(savedListKey);
+                         setCountingList([]);
+                     }
+                 } catch (parseError) {
+                      console.error(`Error parsing localStorage data for warehouse ${warehouseId}:`, parseError);
+                      localStorage.removeItem(savedListKey);
+                      setCountingList([]);
                  }
             } else {
                 setCountingList([]);
@@ -392,6 +403,13 @@ export default function Home() {
     }
   }, [warehouses]);
 
+   // Save active section to localStorage
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      localStorage.setItem(LOCAL_STORAGE_ACTIVE_SECTION_KEY, activeSection);
+    }
+  }, [activeSection]);
+
 
    const getWarehouseName = useCallback((warehouseId: string) => {
     const warehouse = warehouses.find(w => w.id === warehouseId);
@@ -440,7 +458,7 @@ export default function Home() {
 
  // Handles adding or incrementing a product in the counting list for the current warehouse
  const handleAddProduct = useCallback(async (barcodeToAdd?: string) => {
-    const trimmedBarcode = (barcodeToAdd ?? barcode).trim();
+    const trimmedBarcode = (barcodeToAdd ?? barcode).trim().replace(/\r?\n|\r/g, ''); // Trim and remove potential trailing newlines
 
     if (!trimmedBarcode) {
       toast({
@@ -707,13 +725,13 @@ export default function Home() {
      // Update stock in IndexedDB if stock changed
      if (type === 'stock') {
          try {
-             const itemToUpdate: InventoryItem = {
-                 barcode: barcodeToUpdate,
-                 warehouseId: warehouseId,
-                 stock: finalValue, // Use finalValue
-                 count: countingList.find(p => p.barcode === barcodeToUpdate && p.warehouseId === warehouseId)?.count ?? 0,
-                 lastUpdated: format(new Date(), 'yyyy-MM-dd HH:mm:ss')
-             };
+              const itemToUpdate: InventoryItem = {
+                  barcode: barcodeToUpdate,
+                  warehouseId: warehouseId,
+                  stock: finalValue, // Use finalValue
+                  count: countingList.find(p => p.barcode === barcodeToUpdate && p.warehouseId === warehouseId)?.count ?? 0, // Keep current count
+                  lastUpdated: format(new Date(), 'yyyy-MM-dd HH:mm:ss')
+              };
              await addOrUpdateInventoryItem(itemToUpdate);
              toast({ title: "Stock Actualizado", description: `Stock de ${updatedProductDescription} (${getWarehouseName(warehouseId)}) actualizado a ${finalValue} en la base de datos.` });
          } catch (error) {
@@ -1020,35 +1038,42 @@ export default function Home() {
                  // Attach stream to video element if it's still mounted
                  if (videoRef.current) {
                      videoRef.current.srcObject = stream;
-                      await videoRef.current.play();
-                     console.log("Video stream attached and playing.");
+                      // Make sure play() is called only after srcObject is set and element is ready
+                     videoRef.current.onloadedmetadata = () => {
+                         if (videoRef.current && !cancelled) {
+                             videoRef.current.play().then(() => {
+                                console.log("Video stream attached and playing.");
+                                 // Start continuous scanning only after video is playing
+                                 console.log("Starting barcode decoding from video device...");
+                                 reader?.decodeFromVideoDevice(undefined, videoRef.current!, (result, err) => {
+                                    if (cancelled) return;
+
+                                    if (result) {
+                                        console.log('Barcode detected:', result.getText());
+                                        const detectedBarcode = result.getText();
+                                        setIsScanning(false);
+                                        playBeep(900, 80);
+                                        requestAnimationFrame(() => {
+                                            setBarcode(detectedBarcode); // Update state first
+                                            handleAddProduct(detectedBarcode); // Then call add product
+                                        });
+                                    }
+                                    if (err && !(err instanceof NotFoundException)) {
+                                        console.error('Scanning error:', err);
+                                        // Maybe add a non-intrusive indicator of scanning issues?
+                                    }
+                                });
+                                console.log("Barcode decoding started.");
+                             }).catch(playError => {
+                                 console.error("Error playing video stream:", playError);
+                             });
+                         }
+                     };
                  } else {
                      console.warn("Video ref became null before attaching stream.");
                      stream.getTracks().forEach(track => track.stop());
                      return;
                  }
-
-                 // Start continuous scanning
-                 console.log("Starting barcode decoding from video device...");
-                 reader.decodeFromVideoDevice(undefined, videoRef.current, (result, err) => {
-                      if (cancelled) return;
-
-                      if (result) {
-                          console.log('Barcode detected:', result.getText());
-                          const detectedBarcode = result.getText();
-                          setIsScanning(false);
-                          playBeep(900, 80);
-                          requestAnimationFrame(() => {
-                              setBarcode(detectedBarcode); // Update state first
-                              handleAddProduct(detectedBarcode); // Then call add product
-                          });
-                      }
-                      if (err && !(err instanceof NotFoundException)) {
-                          console.error('Scanning error:', err);
-                          // Maybe add a non-intrusive indicator of scanning issues?
-                      }
-                 });
-                 console.log("Barcode decoding started.");
 
             } catch (error: any) {
                 if (cancelled) return;
@@ -1314,13 +1339,13 @@ export default function Home() {
                    </DialogDescription>
                </DialogHeader>
                 <div className="my-4 relative aspect-video">
-                    <video ref={videoRef} className="w-full aspect-video rounded-md bg-black" autoPlay muted playsInline />
-                    <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+                    {/* Ensure video element is always rendered to avoid ref issues */}
+                    <video ref={videoRef} className={cn("w-full aspect-video rounded-md bg-black", { 'hidden': !isScanning && hasCameraPermission !== false })} autoPlay muted playsInline />
+                    {/* Red border overlay */}
+                    <div className={cn("absolute inset-0 flex items-center justify-center pointer-events-none", {'hidden': !isScanning})}>
                         <div className="w-3/4 h-1/2 border-2 border-red-500 rounded-md opacity-75"></div>
                     </div>
-                    {hasCameraPermission === null && !isScanning && (
-                        <div className="absolute inset-0 flex items-center justify-center bg-black bg-opacity-50 text-white">Iniciando cámara...</div>
-                    )}
+                    {/* Permission related messages */}
                     {hasCameraPermission === null && isScanning && (
                        <div className="absolute inset-0 flex items-center justify-center bg-black bg-opacity-50 text-white">Solicitando permiso...</div>
                     )}
@@ -1334,6 +1359,10 @@ export default function Home() {
                            </AlertDescription>
                          </Alert>
                        </div>
+                     )}
+                     {/* Loading/Initializing indicator */}
+                     {!isScanning && hasCameraPermission === null && (
+                          <div className="absolute inset-0 flex items-center justify-center bg-black bg-opacity-50 text-white">Iniciando cámara...</div>
                      )}
                 </div>
                <DialogFooter className="mt-4">
@@ -1351,7 +1380,7 @@ export default function Home() {
     }
     // Clear current counting list? Or merge? Let's replace for simplicity.
     setCountingList(productsToCount);
-    setActiveTab("Contador"); // Switch to the counting tab
+    setActiveSection("Contador"); // Switch to the counting tab
     toast({ title: "Conteo por Proveedor Iniciado", description: `Cargados ${productsToCount.length} productos.` });
  }, [toast]);
 
@@ -1368,115 +1397,127 @@ export default function Home() {
     );
   }, [countingList, searchTerm]);
 
+  const handleSectionChange = (newSection: string) => {
+    setActiveSection(newSection);
+  };
 
   // --- Main Component Render ---
   return (
     <div className="container mx-auto p-4">
-      <div className="flex justify-between items-center mb-4">
+      <div className="flex flex-col md:flex-row justify-between items-center mb-4 gap-4">
          <h1 className="text-2xl font-bold text-gray-700 dark:text-gray-200">StockCounter Pro</h1>
-         <div className="flex items-center gap-2">
-              <WarehouseIcon className="h-5 w-5 text-gray-600 dark:text-gray-400"/>
-              <Select value={currentWarehouseId} onValueChange={handleWarehouseChange}>
-                <SelectTrigger className="w-[180px] sm:w-[250px] bg-white dark:bg-gray-800 border-gray-300 dark:border-gray-600">
-                    <SelectValue placeholder="Seleccionar Almacén" />
-                </SelectTrigger>
-                <SelectContent>
-                    {warehouses.map((warehouse) => (
-                    <SelectItem key={warehouse.id} value={warehouse.id}>
-                        {warehouse.name}
-                    </SelectItem>
-                    ))}
-                </SelectContent>
-             </Select>
+         <div className="flex flex-wrap justify-center md:justify-end items-center gap-2 w-full md:w-auto">
+              <div className="flex items-center gap-2">
+                <WarehouseIcon className="h-5 w-5 text-gray-600 dark:text-gray-400"/>
+                <Select value={currentWarehouseId} onValueChange={handleWarehouseChange}>
+                    <SelectTrigger className="w-[180px] sm:w-[200px] bg-white dark:bg-gray-800 border-gray-300 dark:border-gray-600">
+                        <SelectValue placeholder="Seleccionar Almacén" />
+                    </SelectTrigger>
+                    <SelectContent>
+                        {warehouses.map((warehouse) => (
+                        <SelectItem key={warehouse.id} value={warehouse.id}>
+                            {warehouse.name}
+                        </SelectItem>
+                        ))}
+                    </SelectContent>
+                </Select>
+              </div>
+               <Select value={activeSection} onValueChange={handleSectionChange}>
+                    <SelectTrigger className="w-[180px] sm:w-[200px] bg-white dark:bg-gray-800 border-gray-300 dark:border-gray-600">
+                        <SelectValue placeholder="Seleccionar Sección" />
+                    </SelectTrigger>
+                    <SelectContent>
+                         <SelectItem value="Contador">
+                            <div className="flex items-center gap-2">
+                                <AppWindow className="h-4 w-4"/> Contador ({getWarehouseName(currentWarehouseId)})
+                             </div>
+                         </SelectItem>
+                         <SelectItem value="Base de Datos">
+                             <div className="flex items-center gap-2">
+                                <Database className="h-4 w-4"/> Base de Datos
+                            </div>
+                        </SelectItem>
+                         <SelectItem value="Almacenes">
+                              <div className="flex items-center gap-2">
+                                <Boxes className="h-4 w-4"/> Almacenes
+                             </div>
+                         </SelectItem>
+                    </SelectContent>
+                </Select>
          </div>
       </div>
 
 
-      <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full md:w-[800px] lg:w-[1000px] mx-auto">
-         <TabsList className="grid w-full grid-cols-3 bg-gray-100 dark:bg-gray-800 p-1 rounded-lg mb-4 shadow-inner">
-           <TabsTrigger
-              value="Contador"
-              className="data-[state=active]:bg-teal-600 data-[state=active]:text-white data-[state=inactive]:text-gray-600 dark:data-[state=inactive]:text-gray-300 py-2 px-4 rounded-md transition-colors duration-200 ease-in-out font-medium text-xs sm:text-sm"
-           >
-               Contador ({getWarehouseName(currentWarehouseId)})
-           </TabsTrigger>
-           <TabsTrigger
-              value="Base de Datos"
-              className="data-[state=active]:bg-teal-600 data-[state=active]:text-white data-[state=inactive]:text-gray-600 dark:data-[state=inactive]:text-gray-300 py-2 px-4 rounded-md transition-colors duration-200 ease-in-out font-medium text-xs sm:text-sm"
-            >
-                Base de Datos
-            </TabsTrigger>
-              <TabsTrigger
-              value="Almacenes"
-              className="data-[state=active]:bg-teal-600 data-[state=active]:text-white data-[state=inactive]:text-gray-600 dark:data-[state=inactive]:text-gray-300 py-2 px-4 rounded-md transition-colors duration-200 ease-in-out font-medium text-xs sm:text-sm"
-            >
-                Almacenes
-            </TabsTrigger>
-         </TabsList>
-
-        {/* Content for the Counter Tab */}
-        <TabsContent value="Contador">
-            <BarcodeEntry
-                barcode={barcode}
-                setBarcode={setBarcode}
-                onAddProduct={() => handleAddProduct()}
-                onScanClick={handleScanButtonClick}
-                onRefreshStock={handleRefreshStock}
-                isLoading={isDbLoading}
-                isScanning={isScanning}
-                isRefreshingStock={isRefreshingStock}
-                inputRef={barcodeInputRef}
-            />
-            {/* Search Input for Counting List */}
-             <div className="relative mb-4">
-                <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
-                <Input
-                    type="search"
-                    placeholder="Buscar en inventario actual..."
-                    value={searchTerm}
-                    onChange={(e) => setSearchTerm(e.target.value)}
-                    className="pl-8 w-full bg-white dark:bg-gray-800 border-gray-300 dark:border-gray-600"
-                    aria-label="Buscar en lista de conteo"
+      <div className="w-full md:w-[800px] lg:w-[1000px] mx-auto">
+        {/* Content for the Counter Section */}
+        {activeSection === 'Contador' && (
+            <div id="contador-content">
+                <BarcodeEntry
+                    barcode={barcode}
+                    setBarcode={setBarcode}
+                    onAddProduct={() => handleAddProduct()}
+                    onScanClick={handleScanButtonClick}
+                    onRefreshStock={handleRefreshStock}
+                    isLoading={isDbLoading}
+                    isScanning={isScanning}
+                    isRefreshingStock={isRefreshingStock}
+                    inputRef={barcodeInputRef}
                 />
+                {/* Search Input for Counting List */}
+                 <div className="relative mb-4">
+                    <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
+                    <Input
+                        type="search"
+                        placeholder="Buscar en inventario actual..."
+                        value={searchTerm}
+                        onChange={(e) => setSearchTerm(e.target.value)}
+                        className="pl-8 w-full bg-white dark:bg-gray-800 border-gray-300 dark:border-gray-600"
+                        aria-label="Buscar en lista de conteo"
+                    />
+                </div>
+               <CountingListTable
+                    countingList={filteredCountingList} // Use filtered list here
+                    warehouseName={getWarehouseName(currentWarehouseId)}
+                    isLoading={isDbLoading}
+                    onDeleteRequest={handleDeleteRequest}
+                    onOpenStockDialog={handleOpenStockDialog}
+                    onOpenQuantityDialog={handleOpenQuantityDialog}
+                    onDecrement={handleDecrement}
+                    onIncrement={handleIncrement}
+                />
+
+              <div className="mt-4 flex justify-end items-center">
+                <Button
+                    onClick={handleExport}
+                     className="bg-blue-600 hover:bg-blue-700 text-white rounded-md shadow-sm px-5 py-2 transition-colors duration-200"
+                     disabled={countingList.length === 0 || isDbLoading}
+                     aria-label="Exportar inventario actual a CSV"
+                 >
+                      Exportar Inventario ({getWarehouseName(currentWarehouseId)})
+                 </Button>
+              </div>
             </div>
-           <CountingListTable
-                countingList={filteredCountingList} // Use filtered list here
-                warehouseName={getWarehouseName(currentWarehouseId)}
-                isLoading={isDbLoading}
-                onDeleteRequest={handleDeleteRequest}
-                onOpenStockDialog={handleOpenStockDialog}
-                onOpenQuantityDialog={handleOpenQuantityDialog}
-                onDecrement={handleDecrement}
-                onIncrement={handleIncrement}
-            />
+        )}
 
-          <div className="mt-4 flex justify-end items-center">
-            <Button
-                onClick={handleExport}
-                 className="bg-blue-600 hover:bg-blue-700 text-white rounded-md shadow-sm px-5 py-2 transition-colors duration-200"
-                 disabled={countingList.length === 0 || isDbLoading}
-                 aria-label="Exportar inventario actual a CSV"
-             >
-                  Exportar Inventario ({getWarehouseName(currentWarehouseId)})
-             </Button>
-          </div>
-        </TabsContent>
+         {activeSection === 'Base de Datos' && (
+            <div id="database-content">
+               <ProductDatabase
+                  currentWarehouseId={currentWarehouseId}
+                  onStartCountByProvider={handleStartCountByProvider}
+               />
+            </div>
+         )}
 
-         <TabsContent value="Base de Datos">
-           <ProductDatabase
-              currentWarehouseId={currentWarehouseId}
-              onStartCountByProvider={handleStartCountByProvider}
-           />
-         </TabsContent>
-
-          <TabsContent value="Almacenes">
-             <WarehouseManagement
-                warehouses={warehouses}
-                onAddWarehouse={handleAddWarehouse}
-                onUpdateWarehouses={handleUpdateWarehouses}
-              />
-           </TabsContent>
-      </Tabs>
+          {activeSection === 'Almacenes' && (
+             <div id="warehouses-content">
+                 <WarehouseManagement
+                    warehouses={warehouses}
+                    onAddWarehouse={handleAddWarehouse}
+                    onUpdateWarehouses={handleUpdateWarehouses}
+                  />
+             </div>
+           )}
+      </div>
 
             {/* Render Modify Dialogs */}
             {renderModifyDialog(openQuantityDialog, setOpenQuantityDialog, 'count', selectedProductForDialog)}
@@ -1492,3 +1533,5 @@ export default function Home() {
   );
 }
 
+
+    

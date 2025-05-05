@@ -45,7 +45,7 @@ import { Progress } from "@/components/ui/progress";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import {
     Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
-} from "@/components/ui/select";
+    SelectGroup, SelectLabel, } from "@/components/ui/select";
 import {
     Table, TableBody, TableCaption, TableCell, TableHead, TableHeader, TableRow
 } from "@/components/ui/table";
@@ -858,17 +858,37 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = ({ currentWarehou
        {/* --- Toolbar --- */}
        <div className="flex flex-col md:flex-row md:justify-between md:items-start gap-4">
          <div className="flex flex-wrap gap-2">
-             <Button onClick={() => handleOpenEditDialog(null)} disabled={isProcessing || isLoading}>
-                 Agregar Producto
-             </Button>
-             <Button onClick={handleExportDatabase} variant="outline" disabled={productDetails.length === 0 || isProcessing || isLoading}>
-                 Exportar Detalles <FileDown className="ml-2 h-4 w-4" />
-             </Button>
-             <Button variant="destructive" onClick={triggerClearDatabaseAlert} disabled={(productDetails.length === 0 && inventoryItems.length === 0) || isProcessing || isLoading}>
-                <Trash className="mr-2 h-4 w-4" /> Borrar Todo
-             </Button>
+            <Select onValueChange={(value) => {
+                switch (value) {
+                  case "add":
+                    handleOpenEditDialog(null);
+                    break;
+                  case "export":
+                    handleExportDatabase();
+                    break;
+                  case "clear":
+                    triggerClearDatabaseAlert();
+                    break;
+                }
+              }} disabled={isProcessing || isLoading}>
+              <SelectTrigger className="w-full sm:w-auto md:w-[200px] h-10">
+                <SelectValue placeholder="Acciones" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectGroup>
+                  <SelectLabel>Acciones</SelectLabel>
+                  <SelectItem value="add">
+                    Agregar Producto
+                  </SelectItem>
+                  <SelectItem value="export" disabled={productDetails.length === 0}>
+                    Exportar Detalles
+                  </SelectItem>
+                  <SelectItem value="clear" disabled={(productDetails.length === 0 && inventoryItems.length === 0)}>Borrar Todo</SelectItem>
+                </SelectGroup>
+              </SelectContent>
+            </Select>
          </div>
-          {/* Search and Filter Controls */}
+         {/* Search and Filter Controls */}
           <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 w-full md:w-auto">
             <Label htmlFor="search-product" className="sr-only">Buscar Producto</Label>
              <Input

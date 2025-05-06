@@ -563,7 +563,7 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
      // No IndexedDB deletion needed here, just removing from the current session list
      toast({
           title: "Producto eliminado (Lista Actual)",
-          description: `${descriptionForToast} ha sido eliminado del inventario actual (${getWarehouseName(warehouseId)}).`,
+          description: `${descriptionForToast} (${productToDelete.barcode}) ha sido eliminado del inventario actual (${getWarehouseName(warehouseId)}).`,
           variant: "default"
       });
 
@@ -1184,7 +1184,7 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
          isOpen={isDeleteDialogOpen}
          onOpenChange={setIsDeleteDialogOpen}
          title="Confirmar Eliminación (Lista Actual)"
-         description={`¿Seguro que deseas eliminar "${productToDelete?.description}" del inventario actual (${getWarehouseName(productToDelete?.warehouseId)})? Esta acción no se puede deshacer.`}
+         description={`¿Seguro que deseas eliminar "${productToDelete?.description}" (${productToDelete?.barcode}) del inventario actual (${getWarehouseName(productToDelete?.warehouseId)})? Esta acción no se puede deshacer.`}
          onConfirm={confirmDelete}
          onCancel={() => setIsDeleteDialogOpen(false)}
          isDestructive={true}

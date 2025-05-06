@@ -137,14 +137,14 @@ export const CountingListTable: React.FC<CountingListTableProps> = ({
             );})}
           {countingList.length === 0 && !isLoading && (
             <TableRow>
-              <TableCell colSpan={7} className="text-center px-4 py-10 text-gray-500 dark:text-gray-400">
+              <TableCell colSpan={6} className="text-center px-4 py-10 text-gray-500 dark:text-gray-400">
                 No hay productos en este inventario. Escanea un código de barras para empezar.
               </TableCell>
             </TableRow>
           )}
           {isLoading && (
             <TableRow>
-              <TableCell colSpan={7} className="text-center px-4 py-10 text-gray-500 dark:text-gray-400">
+              <TableCell colSpan={6} className="text-center px-4 py-10 text-gray-500 dark:text-gray-400">
                 Cargando datos del almacén...
               </TableCell>
             </TableRow>
@@ -154,3 +154,5 @@ export const CountingListTable: React.FC<CountingListTableProps> = ({
     </ScrollArea>
   );
 };
+
+    

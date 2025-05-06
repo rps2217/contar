@@ -22,6 +22,7 @@ export const ScannerDialog: React.FC<ScannerDialogProps> = ({
   hasPermission
 }) => {
   return (
+    // Use Radix Dialog primitive directly if needed, or keep ShadCN wrapper
     <Dialog open={isOpen} onOpenChange={(open) => { if (!open) onClose(); }}>
       <DialogContent className="max-w-md w-full p-4 bg-white dark:bg-gray-800 rounded-lg shadow-xl">
         <DialogHeader>
@@ -30,36 +31,52 @@ export const ScannerDialog: React.FC<ScannerDialogProps> = ({
             Apunta la cámara al código de barras.
           </DialogDescription>
         </DialogHeader>
-        <div className="my-4 relative aspect-video">
-          {/* Video element always rendered to prevent ref issues */}
-          <video ref={videoRef} className={cn("w-full aspect-video rounded-md bg-black")} autoPlay muted playsInline />
-          {/* Overlay elements */}
-          {isOpen && (
-            <div className={cn("absolute inset-0 flex items-center justify-center pointer-events-none")}>
-              <div className="w-3/4 h-1/2 border-2 border-red-500 rounded-md opacity-75"></div>
-            </div>
-          )}
+        <div className="my-4 relative aspect-video overflow-hidden rounded-md"> {/* Added overflow-hidden */}
+          {/* Video element is always rendered */}
+          <video
+            ref={videoRef}
+            className={cn(
+              "w-full h-full object-cover", // Use object-cover for better fit
+              "transition-opacity duration-300",
+              (isInitializing || hasPermission === false) ? "opacity-0" : "opacity-100" // Fade in/out video
+            )}
+            autoPlay
+            muted
+            playsInline // Important for mobile
+          />
+
+          {/* Centered Red Finder Box Overlay */}
+          <div className={cn("absolute inset-0 flex items-center justify-center pointer-events-none")}>
+            <div className="w-3/4 h-1/2 border-2 border-red-500 rounded-md opacity-75 animate-pulse"></div> {/* Optional pulse animation */}
+          </div>
+
           {/* Loading/Initializing Indicator */}
           {isInitializing && (
-            <div className="absolute inset-0 flex items-center justify-center bg-black bg-opacity-50 text-white">
-              <Loader2 className="mr-2 h-6 w-6 animate-spin" />
-              Iniciando cámara...
+            <div className="absolute inset-0 flex flex-col items-center justify-center bg-black bg-opacity-75 text-white p-4 rounded-md">
+              <Loader2 className="mb-2 h-8 w-8 animate-spin" />
+              <span className="text-center">Iniciando cámara...</span>
             </div>
           )}
-          {hasPermission === null && !isInitializing && isOpen && (
-            <div className="absolute inset-0 flex items-center justify-center bg-black bg-opacity-50 text-white">Solicitando permiso...</div>
-          )}
-          {hasPermission === false && (
-            <div className="absolute inset-0 flex items-center justify-center bg-black bg-opacity-75 p-4 rounded-md">
-              <Alert variant="destructive" className="w-full">
-                <AlertCircle className="h-4 w-4" />
-                <AlertTitle>Acceso a Cámara Requerido</AlertTitle>
+
+          {/* Permission Denied Message */}
+          {hasPermission === false && !isInitializing && (
+            <div className="absolute inset-0 flex items-center justify-center bg-black bg-opacity-85 p-4 rounded-md">
+              <Alert variant="destructive" className="w-full text-center">
+                <AlertCircle className="h-6 w-6 mx-auto mb-2" />
+                <AlertTitle className="mb-1">Acceso a Cámara Requerido</AlertTitle>
                 <AlertDescription>
-                  Permite el acceso a la cámara en la configuración de tu navegador.
+                  Permite el acceso a la cámara en la configuración de tu navegador para usar esta función.
                 </AlertDescription>
               </Alert>
             </div>
           )}
+
+            {/* Permission Prompt Helper (Optional, only if hasPermission is null and not initializing) */}
+            {hasPermission === null && !isInitializing && isOpen && (
+                <div className="absolute inset-0 flex items-center justify-center bg-black bg-opacity-60 text-white p-4 rounded-md">
+                Esperando permiso de cámara...
+                </div>
+            )}
         </div>
         <DialogFooter className="mt-4">
           <Button variant="outline" onClick={onClose}>Cancelar</Button>

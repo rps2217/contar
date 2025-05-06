@@ -6,27 +6,26 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import { useToast } from "@/hooks/use-toast";
 import { cn, getLocalStorageItem, setLocalStorageItem } from "@/lib/utils";
 import {
-    addOrUpdateProductDetail,
-    getAllProductDetails,
-    deleteProductCompletely,
-    clearDatabaseCompletely,
-    addOrUpdateInventoryItem,
-    getInventoryItem,
-    getAllInventoryItems,
-    addInventoryItemsInBulk,
-    addProductDetailsInBulk,
-    getInventoryItemsForWarehouse,
-} from '@/lib/indexeddb-helpers';
+  addOrUpdateProductDetail,
+  getAllProductDetails,
+  deleteProductCompletely,
+  clearDatabaseCompletely,
+  addOrUpdateInventoryItem,
+  getInventoryItem,
+  getAllInventoryItems,
+  addInventoryItemsInBulk,
+  addProductDetailsInBulk,
+  getInventoryItemsForWarehouse,
+} from '@/lib/firebase-helpers'; // Import Firebase helpers
 import {
     Edit, Filter, Play, Loader2, Save, Trash, Upload, AlertCircle, Warehouse as WarehouseIcon
 } from "lucide-react";
-import Papa from 'papaparse'; // Using PapaParse for robust CSV parsing
-import * as React from "react"; // Import React
+import * as React from "react";
 import { useCallback, useEffect, useState } from "react";
 import { useForm } from "react-hook-form";
 import * as z from "zod";
-import { ConfirmationDialog } from "@/components/confirmation-dialog"; // Import ConfirmationDialog
-import { EditProductDialog } from "@/components/edit-product-dialog"; // Import EditProductDialog
+import { ConfirmationDialog } from "@/components/confirmation-dialog";
+import { EditProductDialog } from "@/components/edit-product-dialog";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -39,11 +38,11 @@ import {
 import {
     Table, TableBody, TableCaption, TableCell, TableHead, TableHeader, TableRow
 } from "@/components/ui/table";
-import { useLocalStorage } from '@/hooks/use-local-storage'; // Import useLocalStorage
-
+import { useLocalStorage } from '@/hooks/use-local-storage';
+import { db } from '@/lib/firebase'; // Import Firestore instance
+import { collection, onSnapshot } from 'firebase/firestore'; // Import onSnapshot
 
 // --- Zod Schema ---
-// Schema remains the same as it defines the data structure *within* the app
 const productDetailSchema = z.object({
   barcode: z.string().min(1, { message: "El código de barras es requerido." }),
   description: z.string().min(1, { message: "La descripción es requerida." }),
@@ -55,7 +54,7 @@ const productDetailSchema = z.object({
 });
 type ProductDetailValues = z.infer<typeof productDetailSchema>;
 
-const GOOGLE_SHEET_URL_LOCALSTORAGE_KEY = 'stockCounterPro_googleSheetUrl'; // Key for storing the full URL or ID
+const GOOGLE_SHEET_URL_LOCALSTORAGE_KEY = 'stockCounterPro_googleSheetUrl';
 const GOOGLE_SHEET_ID_PATTERN = /\/spreadsheets\/d\/([a-zA-Z0-9-_]+)/;
 
 // --- Helper Function to Extract Spreadsheet ID ---
@@ -63,21 +62,19 @@ const extractSpreadsheetId = (input: string): string | null => {
   if (!input) return null;
   const match = input.match(GOOGLE_SHEET_ID_PATTERN);
   if (match && match[1]) {
-    return match[1]; // Return the ID if found in a URL
+    return match[1];
   }
-  // Assume the input is the ID itself if it doesn't look like a URL
-  if (!input.startsWith('http') && input.length > 20) { // Basic check for ID-like string
-      return input;
+  if (!input.startsWith('http') && input.length > 20) {
+    return input;
   }
-  return null; // Return null if no ID could be extracted
+  return null;
 };
-
 
 // --- Google Sheet Parsing Logic (Position-Based) ---
 const parseGoogleSheetUrl = (sheetUrlOrId: string): { spreadsheetId: string | null; gid: string } => {
     const spreadsheetId = extractSpreadsheetId(sheetUrlOrId);
     const gidMatch = sheetUrlOrId.match(/[#&]gid=([0-9]+)/);
-    const gid = gidMatch ? gidMatch[1] : '0'; // Default to first sheet (gid=0)
+    const gid = gidMatch ? gidMatch[1] : '0';
 
     if (!spreadsheetId) {
          console.warn("Could not extract spreadsheet ID from input:", sheetUrlOrId);
@@ -124,31 +121,35 @@ async function fetchAndParseGoogleSheetData(sheetUrlOrId: string): Promise<{ det
     const csvText = await response.text();
     console.log(`Successfully fetched CSV data (length: ${csvText.length}). Parsing...`);
 
-    const result = Papa.parse<string[]>(csvText, {
-      header: false, // Parse by position, not header names
+    // Use Papaparse for robust CSV parsing
+    const { data: csvData, errors: parseErrors } = Papa.parse<string[]>(csvText, {
+      header: false, // Parse by position
       skipEmptyLines: true,
     });
 
-    if (result.errors.length > 0) {
-      console.warn("Parsing errors encountered:", result.errors);
+    if (parseErrors.length > 0) {
+        console.warn("Parsing errors encountered:", parseErrors);
+        // Decide if errors are critical or can be skipped
+        // throw new Error("Error parsing CSV data from Google Sheet.");
     }
 
     const productDetails: ProductDetail[] = [];
     const inventoryItems: InventoryItem[] = [];
     const defaultWarehouseId = 'main'; // Stock from sheet goes to the 'main' warehouse
 
-    if (result.data.length === 0) {
+    if (csvData.length === 0) {
         console.warn("CSV data is empty or contains only empty lines.");
         return { details: [], inventory: [] };
     }
 
-    console.log(`Processing ${result.data.length} data rows (including potential header).`);
+    console.log(`Processing ${csvData.length} data rows (including potential header).`);
 
-    // Assume the first row is headers and skip it
-    const startDataRow = 1;
+    // Assume the first row might be headers, start processing from the second row if needed
+    // For position-based, we might process all rows if headers aren't guaranteed
+    const startDataRow = 0; // Start from the first row if no headers assumed
 
-    for (let i = startDataRow; i < result.data.length; i++) {
-        const values = result.data[i];
+    for (let i = startDataRow; i < csvData.length; i++) {
+        const values = csvData[i];
 
         // Expecting at least 10 columns now to access provider safely
         if (!values || values.length < 10) {
@@ -156,14 +157,14 @@ async function fetchAndParseGoogleSheetData(sheetUrlOrId: string): Promise<{ det
             continue;
         }
 
-        // --- NEW Column Position Mapping (0-based index) ---
+        // --- Column Position Mapping (0-based index) ---
         // Column 1: Barcode
         const barcode = values[0]?.trim();
         if (!barcode) {
             console.warn(`Skipping row ${i + 1}: Missing or empty barcode (Column 1). Row:`, values);
             continue;
         }
-         if (barcode.length > 100) {
+         if (barcode.length > 100) { // Add length check if needed
              console.warn(`Skipping row ${i + 1}: Barcode too long (${barcode.length} chars). Row:`, values);
              continue;
          }
@@ -179,7 +180,6 @@ async function fetchAndParseGoogleSheetData(sheetUrlOrId: string): Promise<{ det
         }
         // Column 10: Provider
         const provider = values[9]?.trim() || "Desconocido"; // Index 9 for Column 10
-
 
         productDetails.push({
             barcode: barcode,
@@ -200,19 +200,17 @@ async function fetchAndParseGoogleSheetData(sheetUrlOrId: string): Promise<{ det
     return { details: productDetails, inventory: inventoryItems };
 }
 
- // --- Props Interface for ProductDatabase ---
+
  interface ProductDatabaseProps {
     currentWarehouseId: string;
     onStartCountByProvider: (products: DisplayProduct[]) => void;
  }
 
 
-// --- React Component ---
-
 export const ProductDatabase: React.FC<ProductDatabaseProps> = ({ currentWarehouseId, onStartCountByProvider }) => {
   const { toast } = useToast();
   const [productDetails, setProductDetails] = useState<ProductDetail[]>([]);
-  const [inventoryItems, setInventoryItems] = useState<InventoryItem[]>([]);
+  const [inventoryItems, setInventoryItems] = useState<InventoryItem[]>([]); // Keep track of all inventory
   const [isLoading, setIsLoading] = useState(true);
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
   const [selectedDetail, setSelectedDetail] = useState<ProductDetail | null>(null);
@@ -223,45 +221,80 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = ({ currentWarehou
   const [uploadProgress, setUploadProgress] = useState(0);
   const [isProcessing, setIsProcessing] = useState(false);
   const [processingStatus, setProcessingStatus] = useState<string>("");
-  const [googleSheetUrlOrId, setGoogleSheetUrlOrId] = useLocalStorage<string>( // Renamed state variable
+  const [googleSheetUrlOrId, setGoogleSheetUrlOrId] = useLocalStorage<string>(
       GOOGLE_SHEET_URL_LOCALSTORAGE_KEY,
       ""
   );
   const [searchTerm, setSearchTerm] = useState("");
   const [selectedProviderFilter, setSelectedProviderFilter] = useState<string>("all");
 
-  // Load initial data from IndexedDB on mount
+  // Load initial data from Firestore and set up real-time listener
   const loadInitialData = useCallback(async () => {
-    setIsLoading(true);
-    console.log("ProductDatabase: Loading initial data...");
-    try {
-        const [details, inventory] = await Promise.all([
-            getAllProductDetails(),
-            getAllInventoryItems()
-        ]);
-        setProductDetails(details);
-        setInventoryItems(inventory);
-        console.log(`ProductDatabase: Loaded ${details.length} details and ${inventory.length} inventory items.`);
-    } catch (error) {
-        console.error("ProductDatabase: Failed to load initial data:", error);
-        toast({ variant: "destructive", title: "Error de Base de Datos", description: "No se pudo cargar la información de productos." });
-    } finally {
-        setIsLoading(false);
-    }
+      setIsLoading(true);
+      console.log("ProductDatabase: Loading initial data from Firestore...");
+      try {
+          // Initial fetch
+          const [details, inventory] = await Promise.all([
+              getAllProductDetails(),
+              getAllInventoryItems()
+          ]);
+          setProductDetails(details);
+          setInventoryItems(inventory);
+          console.log(`ProductDatabase: Loaded ${details.length} details and ${inventory.length} inventory items.`);
+      } catch (error) {
+          console.error("ProductDatabase: Failed to load initial data:", error);
+          toast({ variant: "destructive", title: "Error de Base de Datos", description: "No se pudo cargar la información de productos." });
+      } finally {
+          setIsLoading(false);
+      }
   }, [toast]);
 
-  useEffect(() => {
-    loadInitialData();
-  }, [loadInitialData]);
+  // Effect for real-time updates (optional but recommended for Firestore)
+   useEffect(() => {
+       // Load initial data first
+       loadInitialData();
+
+       // Set up real-time listener for Product Details
+       const detailsUnsubscribe = onSnapshot(collection(db, 'productDetails'), (querySnapshot) => {
+           const updatedDetails: ProductDetail[] = [];
+           querySnapshot.forEach((doc) => {
+               updatedDetails.push(doc.data() as ProductDetail);
+           });
+           setProductDetails(updatedDetails);
+           console.log("Product details updated in real-time.");
+       }, (error) => {
+           console.error("Error listening to product details:", error);
+           toast({ variant: "destructive", title: "Error de Sincronización", description: "No se pudo sincronizar los detalles de productos." });
+       });
+
+       // Set up real-time listener for Inventory Items
+       const inventoryUnsubscribe = onSnapshot(collection(db, 'inventoryItems'), (querySnapshot) => {
+           const updatedInventory: InventoryItem[] = [];
+           querySnapshot.forEach((doc) => {
+               const data = doc.data();
+                const lastUpdated = data.lastUpdated instanceof Timestamp ? data.lastUpdated.toDate().toISOString() : data.lastUpdated;
+                updatedInventory.push({ ...data, lastUpdated } as InventoryItem);
+           });
+           setInventoryItems(updatedInventory);
+           console.log("Inventory items updated in real-time.");
+       }, (error) => {
+           console.error("Error listening to inventory items:", error);
+           toast({ variant: "destructive", title: "Error de Sincronización", description: "No se pudo sincronizar los items de inventario." });
+       });
+
+       // Cleanup listeners on component unmount
+       return () => {
+           detailsUnsubscribe();
+           inventoryUnsubscribe();
+       };
+   }, [loadInitialData, toast]); // Depend on loadInitialData and toast
 
 
   const handleGoogleSheetUrlOrIdChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const newUrlOrId = e.target.value;
-    setGoogleSheetUrlOrId(newUrlOrId); // Updates state and localStorage via the hook
+    setGoogleSheetUrlOrId(newUrlOrId);
   };
 
-
-  // --- CRUD Handlers ---
 
  const handleAddOrUpdateDetailSubmit = useCallback(async (data: ProductDetailValues) => {
     const isUpdating = !!selectedDetail;
@@ -293,8 +326,8 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = ({ currentWarehou
         };
         await addOrUpdateInventoryItem(updatedMainInventory);
 
-        // Refresh local state to reflect changes immediately
-        await loadInitialData();
+        // No need to call loadInitialData manually if using real-time listeners
+        // await loadInitialData();
 
         toast({
             title: isUpdating ? "Producto Actualizado" : "Producto Agregado",
@@ -304,9 +337,11 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = ({ currentWarehou
     } catch (error: any) {
         console.error("Detail/Inventory operation failed", error);
         let errorMessage = `Error al ${isUpdating ? 'actualizar' : 'guardar'} el producto.`;
-        if (error.message?.includes('ConstraintError')) {
-            errorMessage = `El producto con código de barras ${detailData.barcode} ya existe.`;
-        } else if (error.message) {
+        // Firestore errors might have different structures, adjust if needed
+        // if (error.code === 'already-exists') { // Example Firestore error code
+        //     errorMessage = `El producto con código de barras ${detailData.barcode} ya existe.`;
+        // } else
+        if (error.message) {
              errorMessage += ` Detalle: ${error.message}`;
         }
         toast({ variant: "destructive", title: "Error de Base de Datos", description: errorMessage });
@@ -315,7 +350,7 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = ({ currentWarehou
         setProcessingStatus("");
         setSelectedDetail(null);
     }
- }, [selectedDetail, toast, loadInitialData]);
+ }, [selectedDetail, toast]); // Remove loadInitialData if using listeners
 
 
  const handleDeleteProduct = useCallback(async (barcode: string | null) => {
@@ -328,14 +363,15 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = ({ currentWarehou
     setIsProcessing(true);
     setProcessingStatus("Eliminando producto...");
     try {
-      await deleteProductCompletely(barcode);
-      await loadInitialData(); // Refresh data after deletion
+      await deleteProductCompletely(barcode); // This function handles both detail and inventory deletion
+      // No need to call loadInitialData manually if using real-time listeners
+      // await loadInitialData();
       toast({
         title: "Producto Eliminado",
         description: `El producto ${detailToDelete?.description || barcode} y todo su inventario asociado han sido eliminados.`,
       });
-      setIsEditModalOpen(false); // Close edit dialog if open
-      setIsAlertOpen(false); // Close confirmation dialog
+      setIsEditModalOpen(false);
+      setIsAlertOpen(false);
       setProductToDelete(null);
       setAlertAction(null);
     } catch (error: any) {
@@ -345,16 +381,17 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = ({ currentWarehou
           setIsProcessing(false);
           setProcessingStatus("");
     }
-  }, [toast, loadInitialData, productDetails]); // Added loadInitialData
+  }, [toast, productDetails]); // Removed loadInitialData
 
 
   const handleClearDatabase = useCallback(async () => {
     setIsProcessing(true);
     setProcessingStatus("Borrando base de datos...");
     try {
-      await clearDatabaseCompletely();
-      setProductDetails([]); // Clear local state
-      setInventoryItems([]); // Clear local state
+      await clearDatabaseCompletely(); // This function clears both collections
+      // State will update automatically via listeners
+      // setProductDetails([]);
+      // setInventoryItems([]);
       toast({ title: "Base de Datos Borrada", description: "Todos los productos y el inventario han sido eliminados." });
     } catch (error: any) {
       console.error("Failed to clear database", error);
@@ -368,17 +405,14 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = ({ currentWarehou
   }, [toast]);
 
 
-  // --- Dialog and Alert Triggers ---
-
   const handleOpenEditDialog = useCallback(async (detail: ProductDetail | null) => {
     if (detail) {
          const mainInventory = await getInventoryItem(detail.barcode, 'main');
          setInitialStockForEdit(mainInventory?.stock ?? 0);
          setSelectedDetail(detail);
     } else {
-        // Adding a new product, stock starts at 0
         setInitialStockForEdit(0);
-        setSelectedDetail(null); // Ensure selectedDetail is null for adding
+        setSelectedDetail(null);
     }
     setIsEditModalOpen(true);
   }, []);
@@ -410,16 +444,16 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = ({ currentWarehou
         } else {
             console.warn("Delete confirmation called with invalid state:", { alertAction, productToDelete });
         }
-        setIsAlertOpen(false); // Close dialog after action
-        setProductToDelete(null); // Reset state
-        setAlertAction(null);
+        // Dialog closing and state reset now happens within handleDeleteProduct/handleClearDatabase
+        // setIsAlertOpen(false);
+        // setProductToDelete(null);
+        // setAlertAction(null);
     }, [alertAction, productToDelete, handleDeleteProduct, handleClearDatabase]);
 
 
 
-   // --- Google Sheet Loading ---
    const handleLoadFromGoogleSheet = useCallback(async () => {
-        if (!googleSheetUrlOrId) { // Check if input is empty
+        if (!googleSheetUrlOrId) {
             toast({ variant: "destructive", title: "URL/ID Requerido", description: "Introduce la URL de la hoja de Google o el ID." });
             return;
         }
@@ -429,34 +463,29 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = ({ currentWarehou
         setProcessingStatus("Obteniendo datos de Google Sheet...");
 
         try {
-            const { details, inventory } = await fetchAndParseGoogleSheetData(googleSheetUrlOrId); // Pass the input value
+            const { details, inventory } = await fetchAndParseGoogleSheetData(googleSheetUrlOrId);
             const totalItemsToLoad = details.length + inventory.length;
              let itemsLoaded = 0;
-             const batchSize = 100;
+             const updateProgress = (loaded: number) => {
+                itemsLoaded += loaded;
+                setUploadProgress(Math.round((itemsLoaded / totalItemsToLoad) * 100));
+             };
+
 
              if (totalItemsToLoad === 0) {
                  toast({ title: "Hoja Vacía o Sin Datos Válidos", description: "No se encontraron productos válidos en la hoja.", variant: "default" });
              } else {
                  setProcessingStatus(`Actualizando detalles (${details.length})...`);
-                 for (let i = 0; i < details.length; i += batchSize) {
-                     const batch = details.slice(i, i + batchSize);
-                     await addProductDetailsInBulk(batch);
-                     itemsLoaded += batch.length;
-                     setUploadProgress(Math.round((itemsLoaded / totalItemsToLoad) * 100));
-                     await new Promise(resolve => setTimeout(resolve, 5)); // Small delay to allow UI update
-                 }
+                 await addProductDetailsInBulk(details);
+                 updateProgress(details.length); // Update progress after details are done
 
                  setProcessingStatus(`Actualizando inventario (${inventory.length})...`);
-                 for (let i = 0; i < inventory.length; i += batchSize) {
-                     const batch = inventory.slice(i, i + batchSize);
-                     await addInventoryItemsInBulk(batch);
-                     itemsLoaded += batch.length;
-                     setUploadProgress(Math.round((itemsLoaded / totalItemsToLoad) * 100));
-                     await new Promise(resolve => setTimeout(resolve, 5)); // Small delay
-                 }
+                 await addInventoryItemsInBulk(inventory);
+                 updateProgress(inventory.length); // Update progress after inventory is done
 
-                 console.log("Bulk add/update to IndexedDB completed.");
-                 await loadInitialData(); // Refresh the data displayed in the table
+                 console.log("Bulk add/update to Firestore completed.");
+                 // No need to call loadInitialData manually if using listeners
+                 // await loadInitialData();
                  toast({ title: "Carga Completa", description: `Se procesaron ${details.length} detalles y ${inventory.length} registros de inventario.` });
              }
 
@@ -469,10 +498,8 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = ({ currentWarehou
             setProcessingStatus("");
             setUploadProgress(0);
         }
-    }, [googleSheetUrlOrId, toast, loadInitialData]); // Depend on the URL/ID state
+    }, [googleSheetUrlOrId, toast]); // Removed loadInitialData
 
-
-  // --- Export and Filtering ---
 
   const handleExportDatabase = useCallback(() => {
      if (productDetails.length === 0) {
@@ -480,8 +507,14 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = ({ currentWarehou
        return;
      }
      try {
-         const csvData = convertDetailsToCSV(productDetails);
-         const blob = new Blob([`\uFEFF${csvData}`], { type: "text/csv;charset=utf-8;" });
+         // Papaparse for CSV generation
+         const csv = Papa.unparse(productDetails, {
+            header: true,
+            quotes: true, // Ensure fields with commas are quoted
+            skipEmptyLines: true,
+         });
+
+         const blob = new Blob([`\uFEFF${csv}`], { type: "text/csv;charset=utf-8;" });
          const link = document.createElement("a");
          link.href = URL.createObjectURL(blob);
          const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
@@ -497,22 +530,8 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = ({ currentWarehou
      }
    }, [productDetails, toast]);
 
-    // Converts product details data to CSV format string
-    const convertDetailsToCSV = useCallback((data: ProductDetail[]) => {
-        if (!data || data.length === 0) return "";
-        const headers = ["barcode", "description", "provider"];
-        const safeQuote = (field: any): string => {
-            const str = String(field ?? '');
-            const escapedStr = str.replace(/"/g, '""');
-            return (str.includes(',') || str.includes('"') || str.includes('\n')) ? `"${escapedStr}"` : str;
-        };
-        const rows = data.map((detail) => [
-            safeQuote(detail.barcode),
-            safeQuote(detail.description),
-            safeQuote(detail.provider),
-        ]);
-        return [headers.join(","), ...rows.map((row) => row.join(","))].join("\n");
-    }, []);
+    // Converts product details data to CSV format string - No longer needed with Papa.unparse
+    // const convertDetailsToCSV = useCallback((data: ProductDetail[]) => { ... }, []);
 
     // Generate unique provider options from productDetails
     const providerOptions = React.useMemo(() => {
@@ -525,7 +544,6 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = ({ currentWarehou
         return sortedProviders;
     }, [productDetails]);
 
- // --- Count by Provider ---
   const handleStartCountByProviderClick = useCallback(async () => {
     if (selectedProviderFilter === 'all') {
       toast({
@@ -540,6 +558,7 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = ({ currentWarehou
     setProcessingStatus(`Buscando productos de ${selectedProviderFilter} en almacén ${currentWarehouseId}...`);
 
     try {
+      // Filter details locally first
       const providerDetails = productDetails.filter(detail => (detail.provider || "Desconocido") === selectedProviderFilter);
       if (providerDetails.length === 0) {
         toast({ title: "Vacío", description: `No hay productos registrados para el proveedor ${selectedProviderFilter}.` });
@@ -548,6 +567,7 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = ({ currentWarehou
         return;
       }
 
+      // Fetch inventory specifically for the current warehouse
       const warehouseInventory = await getInventoryItemsForWarehouse(currentWarehouseId);
       const inventoryMap = new Map<string, InventoryItem>();
       warehouseInventory.forEach(item => inventoryMap.set(item.barcode, item));
@@ -575,7 +595,6 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = ({ currentWarehou
   }, [selectedProviderFilter, productDetails, currentWarehouseId, onStartCountByProvider, toast]);
 
 
-  // --- Filter Products for Display ---
   const filteredProducts = React.useMemo(() => {
     const lowerSearchTerm = searchTerm.toLowerCase();
     return productDetails.filter(product => {
@@ -590,7 +609,6 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = ({ currentWarehou
     });
   }, [productDetails, searchTerm, selectedProviderFilter]);
 
-  // --- Render ---
 
   return (
     <div className="p-4 md:p-6 space-y-6">
@@ -601,7 +619,7 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = ({ currentWarehou
             <Select onValueChange={(value) => {
                 switch (value) {
                   case "add":
-                    handleOpenEditDialog(null); // Open dialog for adding new product
+                    handleOpenEditDialog(null);
                     break;
                   case "export":
                     handleExportDatabase();
@@ -679,10 +697,10 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = ({ currentWarehou
           <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
              <Input
              id="google-sheet-url"
-             type="text" // Changed to text to allow URL or ID
-             placeholder="URL de Hoja de Google o ID de Hoja" // Updated placeholder
+             type="text"
+             placeholder="URL de Hoja de Google o ID de Hoja"
              value={googleSheetUrlOrId}
-             onChange={handleGoogleSheetUrlOrIdChange} // Use the new handler
+             onChange={handleGoogleSheetUrlOrIdChange}
              className="flex-grow h-10 dark:bg-gray-700 dark:border-gray-600 dark:text-white"
              disabled={isProcessing || isLoading}
              aria-describedby="google-sheet-info"
@@ -696,7 +714,7 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = ({ currentWarehou
              </Button>
          </div>
          <p id="google-sheet-info" className="text-xs text-muted-foreground dark:text-gray-400 mt-1">
-              Introduzca la URL completa de la Hoja de Google (compartida públicamente) o simplemente el ID de la hoja de cálculo. Se leerán las columnas 1, 2, 6 y 10 por posición (ignorando la primera fila): 1:Código Barras, 2:Descripción, 6:Stock (para almacén 'main'), 10:Proveedor. Columnas adicionales serán ignoradas.
+              Introduzca la URL completa de la Hoja de Google (compartida públicamente) o simplemente el ID de la hoja de cálculo. Se leerán las columnas por posición (ignorando la primera fila si es necesario): 1:Código Barras, 2:Descripción, 6:Stock (para almacén 'main'), 10:Proveedor.
          </p>
          {isProcessing && (
              <div className="mt-4 space-y-1">
@@ -709,15 +727,8 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = ({ currentWarehou
          {isLoading && !isProcessing && (
               <p className="text-sm text-muted-foreground dark:text-gray-400 text-center mt-2">Cargando datos iniciales...</p>
          )}
-          {typeof window !== 'undefined' && !window.indexedDB && (
-              <Alert variant="destructive" className="my-4">
-                  <AlertCircle className="h-4 w-4" />
-                 <AlertTitle>Error Crítico</AlertTitle>
-                 <AlertDescription>
-                     Este navegador no soporta IndexedDB. La funcionalidad de base de datos local no está disponible.
-                 </AlertDescription>
-              </Alert>
-          )}
+          {/* Alert if Firestore is not available (though unlikely with Firebase setup) */}
+          {/* Add check for db instance if needed */}
        </div>
 
        {/* Confirmation Dialog for Delete/Clear */}
@@ -729,21 +740,21 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = ({ currentWarehou
                 alertAction === 'deleteProduct' && productToDelete ?
                 `¿Estás seguro de que deseas eliminar permanentemente el producto "${productToDelete.description}" (${productToDelete.barcode}) y todo su inventario asociado? Esta acción no se puede deshacer.`
                 : alertAction === 'clearDatabase' ?
-                "Estás a punto de eliminar TODOS los productos y el inventario de la base de datos local permanentemente. Esta acción no se puede deshacer."
+                "Estás a punto de eliminar TODOS los productos y el inventario de la base de datos permanentemente. Esta acción no se puede deshacer."
                 : "Esta acción no se puede deshacer."
             }
             confirmText={alertAction === 'deleteProduct' ? "Sí, Eliminar Producto" : "Sí, Borrar Todo"}
             onConfirm={handleDeleteConfirmation}
-            onCancel={() => { setIsAlertOpen(false); setProductToDelete(null); setAlertAction(null); }} // Ensure state reset on cancel
-            isDestructive={true} // Make confirm button red
-            isProcessing={isProcessing} // Disable buttons while processing
+            onCancel={() => { setIsAlertOpen(false); setProductToDelete(null); setAlertAction(null); }}
+            isDestructive={true}
+            isProcessing={isProcessing}
         />
 
 
       {/* Products Table */}
        <ProductTable
-           productDetails={filteredProducts} // Use filtered products
-           inventoryItems={inventoryItems} // Pass inventoryItems to find stock for 'main'
+           productDetails={filteredProducts}
+           inventoryItems={inventoryItems}
            isLoading={isLoading}
            onEdit={handleOpenEditDialog}
            onDelete={(barcode) => {
@@ -761,12 +772,12 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = ({ currentWarehou
           isOpen={isEditModalOpen}
           setIsOpen={setIsEditModalOpen}
           selectedDetail={selectedDetail}
-          setSelectedDetail={setSelectedDetail} // Pass handler to clear selection on close
+          setSelectedDetail={setSelectedDetail}
           onSubmit={handleAddOrUpdateDetailSubmit}
-          onDelete={(barcode) => triggerDeleteProductAlert(productDetails.find(d => d.barcode === barcode) || null)} // Trigger confirmation for delete
+          onDelete={(barcode) => triggerDeleteProductAlert(productDetails.find(d => d.barcode === barcode) || null)}
           isProcessing={isProcessing}
           initialStock={initialStockForEdit}
-          context="database" // Indicate context is database management
+          context="database"
        />
     </div>
   );
@@ -790,7 +801,6 @@ const ProductTable: React.FC<ProductTableProps> = ({
   onDelete,
 }) => {
 
-  // Create a map for quick stock lookup in the 'main' warehouse
   const mainStockMap = React.useMemo(() => {
     const map = new Map<string, number>();
     inventoryItems
@@ -807,21 +817,22 @@ const ProductTable: React.FC<ProductTableProps> = ({
           <TableRow>
             <TableHead className="w-[15%] md:w-[15%] px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">Código Barras</TableHead>
             <TableHead className="w-[40%] md:w-[45%] px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">Descripción (Click para Editar)</TableHead>
-            <TableHead className="hidden md:table-cell w-[20%] px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">Proveedor</TableHead>
+             <TableHead className="hidden md:table-cell w-[20%] px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">Proveedor</TableHead>
             <TableHead className="w-[15%] md:w-[15%] px-4 py-3 text-center text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">Stock (Principal)</TableHead>
-            <TableHead className="w-[15%] md:w-[10%] text-right px-4 py-3 text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">Acciones</TableHead>
+            {/* Actions column removed as editing is triggered by clicking description */}
+            {/* <TableHead className="w-[15%] md:w-[10%] text-right px-4 py-3 text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">Acciones</TableHead> */}
           </TableRow>
         </TableHeader>
         <TableBody>
           {isLoading ? (
             <TableRow>
-              <TableCell colSpan={5} className="text-center py-10 text-gray-500 dark:text-gray-400">
+              <TableCell colSpan={4} className="text-center py-10 text-gray-500 dark:text-gray-400">
                 Cargando productos...
               </TableCell>
             </TableRow>
           ) : productDetails.length === 0 ? (
             <TableRow>
-              <TableCell colSpan={5} className="text-center py-10 text-gray-500 dark:text-gray-400">
+              <TableCell colSpan={4} className="text-center py-10 text-gray-500 dark:text-gray-400">
                 No hay productos en la base de datos.
               </TableCell>
             </TableRow>
@@ -831,7 +842,7 @@ const ProductTable: React.FC<ProductTableProps> = ({
                 <TableCell className="px-4 py-3 font-medium text-gray-700 dark:text-gray-200">{detail.barcode}</TableCell>
                 <TableCell
                     className="px-4 py-3 text-gray-800 dark:text-gray-100 cursor-pointer hover:text-blue-600 dark:hover:text-blue-400 hover:underline"
-                    onClick={() => onEdit(detail)}
+                    onClick={() => onEdit(detail)} // Trigger edit on description click
                     title={`Editar ${detail.description}`}
                  >
                     {detail.description}
@@ -840,30 +851,8 @@ const ProductTable: React.FC<ProductTableProps> = ({
                 <TableCell className="px-4 py-3 text-center text-gray-600 dark:text-gray-300 tabular-nums">
                   {mainStockMap.get(detail.barcode) ?? 0}
                 </TableCell>
-                <TableCell className="text-right px-4 py-3">
-                    <Button
-                        variant="ghost"
-                        size="sm"
-                        className="text-blue-600 dark:text-blue-400 hover:text-blue-700 dark:hover:text-blue-300"
-                        onClick={() => onEdit(detail)}
-                        aria-label={`Editar ${detail.description}`}
-                        title={`Editar ${detail.description}`}
-                    >
-                     <Edit className="mr-1 h-4 w-4" />
-                        <span className="hidden sm:inline">Editar</span>
-                    </Button>
-                    <Button
-                        variant="ghost"
-                        size="sm"
-                        className="text-red-600 dark:text-red-400 hover:text-red-700 dark:hover:text-red-300 ml-1"
-                        onClick={() => onDelete(detail.barcode)}
-                        aria-label={`Borrar ${detail.description}`}
-                        title={`Borrar ${detail.description}`}
-                    >
-                     <Trash className="mr-1 h-4 w-4" />
-                      <span className="hidden sm:inline">Borrar</span>
-                    </Button>
-                </TableCell>
+                 {/* Actions column removed */}
+                 {/* <TableCell className="text-right px-4 py-3"> ... </TableCell> */}
               </TableRow>
             ))
           )}

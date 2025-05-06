@@ -3,32 +3,78 @@
 
 import type { DisplayProduct } from '@/types/product';
 import { format } from 'date-fns';
+import { google } from 'googleapis';
+import { GoogleAuth } from 'google-auth-library';
+
+// --- Configuration ---
+// Scopes required for Google Sheets API access
+const SCOPES = ['https://www.googleapis.com/auth/spreadsheets'];
+
+// --- Authentication ---
+// Function to get authenticated Google Sheets API client
+async function getSheetsClient() {
+  // Ensure environment variables are set
+  const privateKey = process.env.GOOGLE_PRIVATE_KEY?.replace(/\\n/g, '\n');
+  const clientEmail = process.env.GOOGLE_CLIENT_EMAIL;
+  const projectId = process.env.GOOGLE_PROJECT_ID; // Optional, but good practice
+
+  if (!privateKey || !clientEmail) {
+    console.error("Missing Google Cloud credentials environment variables (GOOGLE_PRIVATE_KEY, GOOGLE_CLIENT_EMAIL).");
+    throw new Error('Missing Google Cloud credentials.');
+  }
+
+  const auth = new GoogleAuth({
+    credentials: {
+      client_email: clientEmail,
+      private_key: privateKey,
+      project_id: projectId, // Include project ID if available
+    },
+    scopes: SCOPES,
+  });
+
+  const authClient = await auth.getClient();
+  const sheets = google.sheets({ version: 'v4', auth: authClient });
+  return sheets;
+}
+
+// --- Helper to Extract Spreadsheet ID ---
+const GOOGLE_SHEET_ID_PATTERN = /\/spreadsheets\/d\/([a-zA-Z0-9-_]+)/;
+const extractSpreadsheetId = (url: string): string | null => {
+  const match = url.match(GOOGLE_SHEET_ID_PATTERN);
+  return match ? match[1] : null;
+};
 
 // --- Main Server Action ---
 export const backupToGoogleSheet = async (
-    countingListData: DisplayProduct[],
-    warehouseName: string,
-    googleScriptUrl: string // Expecting the Apps Script Web App URL now
+  countingListData: DisplayProduct[],
+  warehouseName: string,
+  googleSheetUrl: string // Expecting the full Google Sheet URL now
 ): Promise<{ success: boolean; message: string }> => {
-  console.log("Starting backupToGoogleSheet Server Action via Apps Script...");
-  console.log(`Target Google Apps Script URL: ${googleScriptUrl}`);
+  console.log("Starting backupToGoogleSheet Server Action...");
+  console.log(`Target Google Sheet URL: ${googleSheetUrl}`);
   console.log(`Warehouse Name: ${warehouseName}`);
   console.log(`Data Rows to Backup: ${countingListData.length}`);
+
+  const spreadsheetId = extractSpreadsheetId(googleSheetUrl);
+
+  if (!spreadsheetId) {
+    console.error("Backup Error: Invalid Google Sheet URL provided.");
+    return { success: false, message: 'Se requiere una URL válida de Google Sheets.' };
+  }
 
   if (!countingListData || countingListData.length === 0) {
     console.log("Backup skipped: No data provided.");
     return { success: false, message: 'No hay datos en el inventario actual para respaldar.' };
   }
-  if (!googleScriptUrl || !googleScriptUrl.trim().startsWith('https://script.google.com/macros/s/')) {
-      console.error("Backup Error: Invalid or missing Google Apps Script URL.");
-      return { success: false, message: 'Se requiere una URL válida de Google Apps Script para el respaldo.' };
-  }
 
   try {
-    // --- Prepare Data for Apps Script ---
+    const sheets = await getSheetsClient();
+
+    // --- Prepare Data ---
     const backupTimestamp = format(new Date(), 'yyyy-MM-dd HH:mm:ss');
-    // IMPORTANT: The order must match the HEADERS array in the Google Apps Script
-    // HEADERS = ["Fecha Respaldo", "Almacén", "Código Barras", "Descripción", "Proveedor", "Stock Sistema", "Cantidad Contada", "Última Actualización Producto"];
+    // Define headers (adjust order as needed in your sheet)
+    const headers = ["Fecha Respaldo", "Almacén", "Código Barras", "Descripción", "Proveedor", "Stock Sistema", "Cantidad Contada", "Última Actualización Producto"];
+    // Map data to the correct order
     const values = countingListData.map(product => [
       backupTimestamp,
       warehouseName,
@@ -40,89 +86,49 @@ export const backupToGoogleSheet = async (
       product.lastUpdated ? format(new Date(product.lastUpdated), 'yyyy-MM-dd HH:mm:ss') : 'N/A',
     ]);
 
-    const payload = {
-      data: values // The Apps Script expects the data under a "data" key
-    };
+    // Prepend headers to the data
+    const dataToAppend = [headers, ...values];
 
-    // --- Send Data to Google Apps Script ---
-    console.log(`Sending ${values.length} rows to Google Apps Script...`);
-    const response = await fetch(googleScriptUrl, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
+    // --- Append Data to Sheet ---
+    // Assume data should be appended to the first sheet (Sheet1) or specify a sheet name
+    const sheetName = 'Sheet1'; // Change if your sheet name is different
+    const range = `${sheetName}!A1`; // Append starting from cell A1 of the specified sheet
+
+    console.log(`Appending ${values.length} rows to spreadsheet ${spreadsheetId}, sheet ${sheetName}...`);
+
+    const response = await sheets.spreadsheets.values.append({
+      spreadsheetId: spreadsheetId,
+      range: range,
+      valueInputOption: 'USER_ENTERED', // Treat data as if the user typed it in
+      insertDataOption: 'INSERT_ROWS', // Insert new rows for the data
+      requestBody: {
+        values: dataToAppend,
       },
-      body: JSON.stringify(payload),
-      // Google Apps Script doPost often redirects, follow redirects is usually needed
-      // but fetch might handle it by default depending on context.
-      // redirect: 'follow', // Optional: Explicitly handle redirects if needed
-      cache: 'no-store', // Ensure fresh request
     });
 
-    console.log("Apps Script response status:", response.status);
-    console.log("Apps Script response headers:", response.headers.get('content-type'));
+    console.log("Google Sheets API append response status:", response.status);
+    // console.log("Google Sheets API append response data:", response.data); // Optional: Log detailed response
 
-
-    if (!response.ok) {
-        let errorBody = await response.text().catch(() => `Status: ${response.status}`);
-        console.error("Error response from Google Apps Script:", response.status, response.statusText, errorBody.substring(0, 500));
-         // Check if the error is likely HTML (e.g., Google login page)
-         if (errorBody.trim().startsWith('<')) {
-             errorBody = "Error: La URL del script podría requerir autenticación o ser incorrecta.";
-             if (response.status === 401 || response.status === 403) {
-                 errorBody += " Verifica que el script esté desplegado para 'Cualquier usuario'.";
-             }
-         } else {
-             // Try parsing as JSON if it's not HTML
-             try {
-                 const errorJson = JSON.parse(errorBody);
-                 errorBody = errorJson.message || errorJson.error || JSON.stringify(errorJson);
-             } catch (parseError) {
-                 // Keep the raw text if it's not valid JSON
-             }
-         }
-
-        return { success: false, message: `Error al contactar el script de respaldo (${response.status}): ${errorBody}` };
-    }
-
-    // Attempt to parse the response from the Apps Script
-    let result;
-    try {
-        result = await response.json();
-    } catch (e) {
-        const textResponse = await response.text().catch(() => "No se pudo leer la respuesta.");
-        console.error("Failed to parse JSON response from Apps Script:", e, "Raw Response:", textResponse.substring(0, 500));
-        return { success: false, message: "Error: Respuesta inesperada del script de respaldo. Verifique los logs del script." };
-    }
-
-
-    console.log("Parsed response from Apps Script:", result);
-
-    if (result.success) {
-      console.log(`Backup via Google Apps Script successful. Message: ${result.message}`);
-      return { success: true, message: result.message || "Respaldo exitoso via Apps Script." };
+    if (response.status === 200 && response.data.updates) {
+      const updatedRange = response.data.updates.updatedRange;
+      console.log(`Backup successful. Data appended to range: ${updatedRange}`);
+      return { success: true, message: `Respaldo exitoso. Datos agregados a ${updatedRange}.` };
     } else {
-      console.error("Apps Script reported failure:", result.message);
-      return { success: false, message: `Error en el script de respaldo: ${result.message || 'Error desconocido.'}` };
+      console.error("Google Sheets API append failed:", response.statusText, response.data);
+      return { success: false, message: `Error al respaldar en Google Sheets: ${response.statusText}` };
     }
 
   } catch (error: any) {
-    console.error('Error during backupToGoogleSheet (Apps Script) Server Action:', error.name, error.message, error.stack);
+    console.error('Error during backupToGoogleSheet Server Action:', error.name, error.message, error.stack);
     let errorMessage = 'Error desconocido durante el respaldo.';
 
-    // Check for specific fetch errors
-    if (error.cause && error.cause.code) {
-       // Node.js fetch specific errors
-       if (error.cause.code === 'ENOTFOUND') {
-           errorMessage = 'Error de red: No se pudo conectar a la URL del script de Google. Verifica la URL y tu conexión.';
-       } else if (error.cause.code === 'ECONNREFUSED') {
-           errorMessage = 'Error de conexión: El servidor del script rechazó la conexión.';
-       } else {
-           errorMessage = `Error de red (${error.cause.code}): ${error.message}`;
-       }
-    } else if (error instanceof TypeError && error.message.includes('fetch failed')) {
-        // Generic fetch failure (could be CORS in browser, network issue, DNS issue)
-        errorMessage = 'Error de red al intentar contactar el script de respaldo. Verifica la URL y la conectividad.';
-    } else if (error.message) {
+     if (error.code === 'PERMISSION_DENIED' || (error.errors && error.errors[0]?.reason === 'forbidden')) {
+         errorMessage = 'Error de Permiso: La cuenta de servicio no tiene permiso para editar la Hoja de Google. Asegúrate de compartir la hoja con el email de la cuenta de servicio y darle permisos de editor.';
+     } else if (error.code === 404 || (error.errors && error.errors[0]?.reason === 'notFound')) {
+          errorMessage = 'Error: Hoja de Google no encontrada. Verifica la URL.';
+     } else if (error.message.includes('Missing Google Cloud credentials')) {
+         errorMessage = 'Error de Configuración: Faltan las credenciales de Google Cloud en el servidor.';
+     } else if (error.message) {
         errorMessage = `Error inesperado: ${error.message}`;
     }
 

@@ -79,7 +79,7 @@ export default function Home() {
   const [barcode, setBarcode] = useState("");
   const [countingList, setCountingList] = useState<DisplayProduct[]>([]);
   const [searchTerm, setSearchTerm] = useState("");
-  const [openModifyDialog, setOpenModifyDialog] = useState< { type: 'count' | 'stock', product: DisplayProduct | null } | null>(null);
+  const [openModifyDialog, setOpenModifyDialog] = useState<{ type: 'count' | 'stock', product: DisplayProduct | null } | null>(null);
   const [isConfirmQuantityDialogOpen, setIsConfirmQuantityDialogOpen] = useState(false);
   const [confirmQuantityAction, setConfirmQuantityAction] = useState<'increment' | 'decrement' | 'set' | null>(null);
   const [confirmQuantityProductBarcode, setConfirmQuantityProductBarcode] = useState<string | null>(null);

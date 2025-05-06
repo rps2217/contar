@@ -31,7 +31,7 @@ import {
     getInventoryItemsForWarehouse,
     getAllProductDetails,
     getInventoryItem,
-    // Removed IndexedDB specific imports
+    deleteInventoryItem, // Ensure deleteInventoryItem is imported
 } from '@/lib/firebase-helpers'; // Import Firebase helpers
 import { backupToGoogleSheet } from './actions/backup-actions';
 import { playBeep } from '@/lib/helpers';
@@ -44,20 +44,20 @@ import { useBarcodeScanner } from '@/hooks/use-barcode-scanner';
 import { useLocalStorage } from '@/hooks/use-local-storage';
 import { EditProductDialog } from '@/components/edit-product-dialog';
 import { db } from '@/lib/firebase'; // Import Firestore instance
-import { collection, onSnapshot, Timestamp } from 'firebase/firestore'; // Import Firestore listeners
+import { collection, onSnapshot, Timestamp, writeBatch } from 'firebase/firestore'; // Import Firestore listeners and writeBatch
+import Papa from 'papaparse'; // Import PapaParse for export
 
 // --- Constants ---
-// LocalStorage keys remain relevant for UI state persistence
 const LOCAL_STORAGE_COUNTING_LIST_KEY_PREFIX = 'stockCounterPro_countingList_';
 const LOCAL_STORAGE_WAREHOUSE_KEY = 'stockCounterPro_currentWarehouse';
 const LOCAL_STORAGE_WAREHOUSES_KEY = 'stockCounterPro_warehouses';
 const LOCAL_STORAGE_ACTIVE_SECTION_KEY = 'stockCounterPro_activeSection';
-const LOCAL_STORAGE_BACKUP_SCRIPT_URL_KEY = 'stockCounterPro_backupScriptUrl';
+const LOCAL_STORAGE_BACKUP_URL_KEY = 'stockCounterPro_backupUrl'; // Changed key name
 
 // --- Main Component ---
 
 export default function Home() {
-  // LocalStorage for UI state (warehouses, current warehouse, active section, backup URL)
+  // LocalStorage for UI state
   const [warehouses, setWarehouses] = useLocalStorage<Array<{ id: string; name: string }>>(
       LOCAL_STORAGE_WAREHOUSES_KEY,
       [{ id: 'main', name: 'Almacén Principal' }]
@@ -70,14 +70,14 @@ export default function Home() {
       LOCAL_STORAGE_ACTIVE_SECTION_KEY,
       'Contador'
   );
-   const [backupScriptUrl, setBackupScriptUrl] = useLocalStorage<string>(
-      LOCAL_STORAGE_BACKUP_SCRIPT_URL_KEY,
+   const [backupUrl, setBackupUrl] = useLocalStorage<string>( // Renamed state variable
+      LOCAL_STORAGE_BACKUP_URL_KEY,
       ''
   );
 
-  // State managed in React component memory (not persisted across reloads by default)
+  // State managed in React component memory
   const [barcode, setBarcode] = useState("");
-  const [countingList, setCountingList] = useState<DisplayProduct[]>([]); // Holds the *current* counting session data for the selected warehouse
+  const [countingList, setCountingList] = useState<DisplayProduct[]>([]);
   const [searchTerm, setSearchTerm] = useState("");
   const [openQuantityDialog, setOpenQuantityDialog] = useState(false);
   const [openStockDialog, setOpenStockDialog] = useState(false);
@@ -88,42 +88,45 @@ export default function Home() {
   const [confirmQuantityNewValue, setConfirmQuantityNewValue] = useState<number | null>(null);
   const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false);
   const [productToDelete, setProductToDelete] = useState<DisplayProduct | null>(null);
-  const [isDbLoading, setIsDbLoading] = useState(true); // Tracks initial loading of Firestore data
+  const [isDbLoading, setIsDbLoading] = useState(true);
   const [isRefreshingStock, setIsRefreshingStock] = useState(false);
   const [isScanning, setIsScanning] = useState(false);
   const [isBackingUp, setIsBackingUp] = useState(false);
-  const [lastScannedBarcode, setLastScannedBarcode] = useState<string | null>(null);
+  const [lastScannedBarcode, setLastScannedBarcode] = useState<string | null>(null); // State to prevent double scans
 
   // Refs
   const { toast } = useToast();
   const barcodeInputRef = useRef<HTMLInputElement>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
+  const isMountedRef = useRef(true); // Track component mount status
 
-  // --- Firestore Real-time Data ---
-  // We don't store the entire Firestore database in React state.
-  // Instead, we fetch data as needed (e.g., when adding a product, refreshing stock)
-  // and use the `countingList` state to manage the *current session's* count for the selected warehouse.
+   // Set initial mount status
+   useEffect(() => {
+    isMountedRef.current = true;
+    return () => {
+      isMountedRef.current = false; // Cleanup on unmount
+    };
+  }, []);
 
-   const getWarehouseName = useCallback((warehouseId: string | null | undefined) => {
+  const getWarehouseName = useCallback((warehouseId: string | null | undefined) => {
         if (!warehouseId) return 'N/A';
         const warehouse = warehouses.find(w => w.id === warehouseId);
         return warehouse ? warehouse.name : `Almacén (${warehouseId})`;
     }, [warehouses]);
 
- // --- Load Counting List from LocalStorage on Warehouse Change ---
+ // --- Load Counting List from LocalStorage on Mount/Warehouse Change ---
  useEffect(() => {
-    if (currentWarehouseId) {
+    if (currentWarehouseId && isMountedRef.current) {
+        console.log(`Attempting to load list for warehouse ${currentWarehouseId}`);
         const savedListKey = `${LOCAL_STORAGE_COUNTING_LIST_KEY_PREFIX}${currentWarehouseId}`;
         const savedList = localStorage.getItem(savedListKey);
         let loadedList: DisplayProduct[] = [];
         if (savedList) {
             try {
                 const parsedList: any[] = JSON.parse(savedList);
-                // Basic validation (can be improved)
                 if (Array.isArray(parsedList) && parsedList.every(item => typeof item?.barcode === 'string')) {
-                    // Ensure data structure matches DisplayProduct and warehouseId is correct
                      loadedList = parsedList
-                        .filter(item => item.warehouseId === currentWarehouseId) // Ensure only items for this warehouse are loaded
+                        .filter(item => item.warehouseId === currentWarehouseId)
                         .map(item => ({
                             ...item,
                             stock: item.stock ?? 0,
@@ -143,19 +146,22 @@ export default function Home() {
             console.log(`No counting list found in localStorage for warehouse ${currentWarehouseId}. Starting fresh.`);
         }
         setCountingList(loadedList);
-        setIsDbLoading(false); // Indicate loading is complete (or initial state is set)
+        setIsDbLoading(false);
+    } else if (!currentWarehouseId) {
+         console.warn("No current warehouse ID selected, cannot load list.");
+         setCountingList([]); // Clear list if no warehouse selected
+         setIsDbLoading(false);
     }
- }, [currentWarehouseId]); // Only re-run when warehouseId changes
+ }, [currentWarehouseId]);
 
  // --- Save Counting List to LocalStorage ---
  useEffect(() => {
-    // Only save when not initially loading and warehouse is selected
-    if (!isDbLoading && currentWarehouseId) {
+    if (!isDbLoading && currentWarehouseId && isMountedRef.current) {
         try {
             const key = `${LOCAL_STORAGE_COUNTING_LIST_KEY_PREFIX}${currentWarehouseId}`;
-            // Filter again just to be safe
             const listToSave = countingList.filter(item => item.warehouseId === currentWarehouseId);
             localStorage.setItem(key, JSON.stringify(listToSave));
+            // console.log(`Saved ${listToSave.length} items for warehouse ${currentWarehouseId} to localStorage.`);
         } catch (error) {
             console.error(`Failed to save counting list to localStorage for warehouse ${currentWarehouseId}:`, error);
             toast({
@@ -166,12 +172,12 @@ export default function Home() {
             });
         }
     }
- }, [countingList, currentWarehouseId, toast, isDbLoading]); // Save whenever countingList or currentWarehouseId changes
+ }, [countingList, currentWarehouseId, isDbLoading, toast]); // Depend on countingList, currentWarehouseId, isDbLoading, toast
 
 
  const handleAddProduct = useCallback(async (barcodeToAdd?: string) => {
     const rawBarcode = barcodeToAdd ?? barcode;
-    const trimmedBarcode = rawBarcode.trim().replace(/\r?\n|\r$/g, '');
+    const trimmedBarcode = rawBarcode.trim().replace(/\r?\n|\r$/g, ''); // Clean barcode
 
     if (!trimmedBarcode) {
       toast({ variant: "destructive", title: "Error", description: "Por favor, introduce un código de barras válido." });
@@ -183,22 +189,22 @@ export default function Home() {
         toast({ variant: "destructive", title: "Error", description: "No se ha seleccionado ningún almacén." });
         return;
     }
+    // Debounce consecutive scans of the same barcode
     if (trimmedBarcode === lastScannedBarcode) {
         console.log("Duplicate scan detected, ignoring:", trimmedBarcode);
-        setBarcode("");
+        setBarcode(""); // Clear input after duplicate scan
         requestAnimationFrame(() => barcodeInputRef.current?.focus());
         return;
     }
-    setLastScannedBarcode(trimmedBarcode);
-    setTimeout(() => setLastScannedBarcode(null), 500);
+    setLastScannedBarcode(trimmedBarcode); // Set last scanned barcode
+    setTimeout(() => setLastScannedBarcode(null), 500); // Clear after delay
+
 
     let descriptionForToast = '';
 
-    // Check if product is already in the *current* counting list
     const existingProductIndex = countingList.findIndex((p) => p.barcode === trimmedBarcode && p.warehouseId === currentWarehouseId);
 
     if (existingProductIndex !== -1) {
-      // Product exists in the list, just increment the count
       const productToUpdate = countingList[existingProductIndex];
       descriptionForToast = productToUpdate.description;
       const newCount = (productToUpdate.count ?? 0) + 1;
@@ -210,8 +216,8 @@ export default function Home() {
 
       setCountingList(prevList => {
         const updatedList = [...prevList];
-        updatedList.splice(existingProductIndex, 1);
-        updatedList.unshift(updatedProductData);
+        updatedList.splice(existingProductIndex, 1); // Remove old entry
+        updatedList.unshift(updatedProductData); // Add updated entry to the beginning
         return updatedList;
       });
 
@@ -219,35 +225,29 @@ export default function Home() {
       playBeep(880, 100);
 
     } else {
-      // Product not in the current list, fetch from Firestore DB
-      setIsDbLoading(true); // Indicate loading from DB
+      setIsDbLoading(true);
       try {
-        // Fetch ProductDetail and InventoryItem for the current warehouse
         const displayProduct = await getDisplayProductForWarehouse(trimmedBarcode, currentWarehouseId);
 
         if (displayProduct) {
-          // Product found in DB
           descriptionForToast = displayProduct.description;
           const newProductForList: DisplayProduct = {
             ...displayProduct,
-            count: 1, // Initial count is 1
+            count: 1,
             lastUpdated: new Date().toISOString(),
           };
           setCountingList(prev => [newProductForList, ...prev]);
           toast({ title: "Producto agregado", description: `${descriptionForToast} agregado al inventario (${getWarehouseName(currentWarehouseId)}).` });
           playBeep(660, 150);
         } else {
-          // Product not found in DB (neither detail nor inventory for this warehouse)
-          // Try fetching just the detail to see if the product exists at all
           const detailOnly = await getProductDetail(trimmedBarcode);
           playBeep(440, 300);
 
           if (detailOnly) {
-              // Detail exists, but no inventory for this warehouse. Add to list with count 1, stock 0.
               const newProductForList: DisplayProduct = {
                     ...detailOnly,
                     warehouseId: currentWarehouseId,
-                    stock: 0, // Stock is 0 for this warehouse initially
+                    stock: 0,
                     count: 1,
                     lastUpdated: new Date().toISOString(),
                 };
@@ -258,11 +258,16 @@ export default function Home() {
                   description: `${descriptionForToast} agregado a ${getWarehouseName(currentWarehouseId)} con stock 0.`,
                   duration: 5000,
               });
-               // Optionally add a default inventory item to Firestore for this warehouse
-               // await addOrUpdateInventoryItem({ barcode: trimmedBarcode, warehouseId: currentWarehouseId, stock: 0, count: 0, lastUpdated: new Date().toISOString() });
+               // Create inventory item in DB if it doesn't exist for this warehouse
+              await addOrUpdateInventoryItem({
+                  barcode: trimmedBarcode,
+                  warehouseId: currentWarehouseId,
+                  stock: 0,
+                  count: 0, // Firestore count is not the session count
+                  lastUpdated: new Date().toISOString()
+              });
 
           } else {
-              // Product completely unknown. Add a placeholder to the list.
                const newPlaceholderProduct: DisplayProduct = {
                     barcode: trimmedBarcode,
                     description: `Producto desconocido ${trimmedBarcode}`,
@@ -288,7 +293,9 @@ export default function Home() {
         toast({ variant: "destructive", title: "Error de Base de Datos", description: "No se pudo verificar o agregar el producto desde Firestore." });
         playBeep(440, 300);
       } finally {
-        setIsDbLoading(false);
+        if (isMountedRef.current) { // Check if component is still mounted
+          setIsDbLoading(false);
+        }
       }
     }
 
@@ -300,12 +307,14 @@ export default function Home() {
 
  const handleScanSuccessCallback = useCallback((detectedBarcode: string) => {
     console.log("handleScanSuccess triggered with barcode:", detectedBarcode);
+    if (!isMountedRef.current) return; // Check mount status
+
     requestAnimationFrame(() => {
+        if (!isMountedRef.current) return; // Check again inside animation frame
         setIsScanning(false);
-        // Directly call handleAddProduct with the detected barcode
         handleAddProduct(detectedBarcode);
     });
- }, [handleAddProduct, setIsScanning]); // Depend on handleAddProduct
+ }, [handleAddProduct, setIsScanning]);
 
 
   const {
@@ -320,9 +329,9 @@ export default function Home() {
   });
 
 
- // Modify product count or stock in the local counting list
- // Firestore updates for 'stock' happen separately if needed (e.g., in EditProductDialog)
+ // Modify product count or LOCAL stock in the local counting list
  const modifyProductValue = useCallback(async (barcodeToUpdate: string, type: 'count' | 'stock', change: number) => {
+    if (!isMountedRef.current) return;
     let productToConfirm: DisplayProduct | null = null;
     let needsConfirmation = false;
     let originalValue = -1;
@@ -330,19 +339,22 @@ export default function Home() {
     const warehouseId = currentWarehouseId;
     let finalValue = 0;
 
-    setCountingList(prevList => {
-        const index = prevList.findIndex(p => p.barcode === barcodeToUpdate && p.warehouseId === warehouseId);
-        if (index === -1) return prevList;
+    let productIndex = -1;
+    let updatedList: DisplayProduct[] = [];
 
-        const updatedList = [...prevList];
-        const product = updatedList[index];
+    setCountingList(prevList => {
+        productIndex = prevList.findIndex(p => p.barcode === barcodeToUpdate && p.warehouseId === warehouseId);
+        if (productIndex === -1) return prevList;
+
+        updatedList = [...prevList];
+        const product = updatedList[productIndex];
         updatedProductDescription = product.description;
 
         if (type === 'count') {
             originalValue = product.count ?? 0;
             finalValue = Math.max(0, originalValue + change);
 
-             if (product.stock !== 0) {
+            if (product.stock !== 0) {
                 const changingToMatch = finalValue === product.stock && originalValue !== product.stock;
                 const changingFromMatch = originalValue === product.stock && finalValue !== product.stock;
                 if (changingToMatch || changingFromMatch) {
@@ -353,45 +365,49 @@ export default function Home() {
 
             if (needsConfirmation) {
                  console.log(`Confirmation needed for ${product.barcode}. Final: ${finalValue}, Stock: ${product.stock}`);
-                return prevList; // Don't update state yet
+                 // Do not update state here, let the confirmation dialog handle it
+                 return prevList;
             } else {
                  console.log(`Updating count directly for ${product.barcode} to ${finalValue}`);
-                 updatedList[index] = { ...product, count: finalValue, lastUpdated: new Date().toISOString() };
+                 updatedList[productIndex] = { ...product, count: finalValue, lastUpdated: new Date().toISOString() };
+                 return updatedList; // Return the updated list
             }
 
-        } else { // type === 'stock' - Update local list stock only
+        } else { // type === 'stock' - Update LOCAL list stock only
             originalValue = product.stock ?? 0;
             finalValue = Math.max(0, originalValue + change);
-             // Update local list only. DB stock update happens via Edit Dialog.
-            updatedList[index] = { ...product, stock: finalValue, lastUpdated: new Date().toISOString() };
-            // Show toast immediately for local stock change
-             toast({ title: "Stock (Local) Actualizado", description: `Stock local de ${updatedProductDescription} (${getWarehouseName(warehouseId)}) actualizado a ${finalValue}. Guarde en 'Base de Datos' para persistir.` });
-
+            updatedList[productIndex] = { ...product, stock: finalValue, lastUpdated: new Date().toISOString() };
+             // Note: We are only updating the local list stock here.
+             // Persisting this change to the DB needs to happen separately, typically via the EditProductDialog.
+             // This immediate toast reflects the LOCAL change only.
+             // Do not show toast here to avoid confusion, show it when the DB is updated.
+            // toast({ title: "Stock (Local) Actualizado", description: `Stock local de ${updatedProductDescription} (${getWarehouseName(warehouseId)}) actualizado a ${finalValue}. Guarde en 'Base de Datos' para persistir.` });
+            return updatedList; // Return the updated list
         }
-
-        return updatedList;
     });
 
-    // Trigger confirmation dialog if needed (only for 'count' changes)
+    // Trigger confirmation dialog AFTER state update attempt (if needed)
     if (needsConfirmation && productToConfirm && type === 'count') {
         setConfirmQuantityProductBarcode(productToConfirm.barcode);
         setConfirmQuantityAction(change > 0 ? 'increment' : 'decrement');
         const potentialNewCount = Math.max(0, (productToConfirm.count ?? 0) + change);
         setConfirmQuantityNewValue(potentialNewCount);
         setIsConfirmQuantityDialogOpen(true);
-    } else if (type === 'count' && !needsConfirmation) {
-          // Show immediate toast if no confirmation was needed
-         const updatedProduct = countingList.find(p => p.barcode === barcodeToUpdate && p.warehouseId === warehouseId);
-         if (updatedProduct) {
-            toast({ title: "Cantidad Modificada", description: `Cantidad de ${updatedProduct.description} (${getWarehouseName(warehouseId)}) cambiada a ${updatedProduct.count ?? 0}.` });
-         }
+    } else if (type === 'count' && !needsConfirmation && productIndex !== -1) {
+          // Show immediate toast if no confirmation was needed and state update happened
+          // Access the potentially updated item from the *new* list state (use effect or access directly if sync)
+          // Since setCountingList is async, we might need to derive the final value here or pass it
+           toast({ title: "Cantidad Modificada", description: `Cantidad de ${updatedProductDescription} (${getWarehouseName(warehouseId)}) cambiada a ${finalValue}.` });
+    } else if (type === 'stock' && productIndex !== -1) {
+        // Toast for LOCAL stock change
+        toast({ title: "Stock (Local) Actualizado", description: `Stock local de ${updatedProductDescription} (${getWarehouseName(warehouseId)}) actualizado a ${finalValue}. Guarde los cambios de stock en 'Base de Datos'.`, duration: 5000});
     }
-    // Toast for stock change is handled directly in the 'else' block above
 
  }, [countingList, currentWarehouseId, toast, getWarehouseName, setCountingList]);
 
 
  const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 'count' | 'stock', newValue: number, sumValue?: boolean) => {
+     if (!isMountedRef.current) return;
      if (newValue < 0 || isNaN(newValue)) {
          toast({ variant: "destructive", title: "Valor Inválido", description: "La cantidad o stock debe ser un número positivo." });
          return;
@@ -403,20 +419,22 @@ export default function Home() {
      let updatedProductDescription = '';
      let originalValue = -1;
      let finalValue = 0;
+     let productIndex = -1;
 
      setCountingList(prevList => {
-         const index = prevList.findIndex(p => p.barcode === barcodeToUpdate && p.warehouseId === warehouseId);
-         if (index === -1) return prevList;
+         productIndex = prevList.findIndex(p => p.barcode === barcodeToUpdate && p.warehouseId === warehouseId);
+         if (productIndex === -1) return prevList;
 
          const updatedList = [...prevList];
-         const product = updatedList[index];
+         const product = updatedList[productIndex];
          updatedProductDescription = product.description;
 
          if (type === 'count') {
              originalValue = product.count ?? 0;
              finalValue = sumValue ? (originalValue + newValue) : newValue;
-             finalValue = Math.max(0, finalValue);
+             finalValue = Math.max(0, finalValue); // Ensure non-negative
 
+             // Check for confirmation only when setting to match stock
              if (product.stock !== 0 && finalValue === product.stock && originalValue !== product.stock) {
                  needsConfirmation = true;
                  productToConfirm = { ...product };
@@ -424,44 +442,48 @@ export default function Home() {
 
              if (needsConfirmation) {
                   console.log(`Confirmation needed for 'set' ${product.barcode}. Final: ${finalValue}, Stock: ${product.stock}`);
-                 return prevList; // Don't update yet
+                  // Do not update state yet, let confirmation handle it
+                  return prevList;
              } else {
                  console.log(`Updating count directly for 'set' ${product.barcode} to ${finalValue}`);
-                  updatedList[index] = { ...product, count: finalValue, lastUpdated: new Date().toISOString() };
+                 updatedList[productIndex] = { ...product, count: finalValue, lastUpdated: new Date().toISOString() };
+                 return updatedList; // Return the updated list
              }
-         } else { // type === 'stock' - Update local list stock only
+         } else { // type === 'stock' - Update LOCAL list stock only
              originalValue = product.stock ?? 0;
              finalValue = sumValue ? (originalValue + newValue) : newValue;
-              finalValue = Math.max(0, finalValue);
-              // Update local list only. DB stock update happens via Edit Dialog.
-             updatedList[index] = { ...product, stock: finalValue, lastUpdated: new Date().toISOString() };
-              // Show toast immediately for local stock change
-             toast({ title: "Stock (Local) Actualizado", description: `Stock local de ${updatedProductDescription} (${getWarehouseName(warehouseId)}) actualizado a ${finalValue}. Guarde en 'Base de Datos' para persistir.` });
+             finalValue = Math.max(0, finalValue); // Ensure non-negative
+
+             updatedList[productIndex] = { ...product, stock: finalValue, lastUpdated: new Date().toISOString() };
+              // Do not show toast here, show it when the DB is updated.
+             // toast({ title: "Stock (Local) Actualizado", description: `Stock local de ${updatedProductDescription} (${getWarehouseName(warehouseId)}) actualizado a ${finalValue}. Guarde en 'Base de Datos' para persistir.` });
+             return updatedList; // Return the updated list
          }
-         return updatedList;
      });
 
-      // Trigger confirmation dialog if needed (only for 'count' changes)
+      // Trigger confirmation dialog AFTER state update attempt (if needed)
       if (needsConfirmation && productToConfirm && type === 'count') {
           setConfirmQuantityProductBarcode(productToConfirm.barcode);
           setConfirmQuantityAction('set');
           setConfirmQuantityNewValue(finalValue);
           setIsConfirmQuantityDialogOpen(true);
-      } else if (type === 'count' && !needsConfirmation) {
+      } else if (type === 'count' && !needsConfirmation && productIndex !== -1) {
+           // Show toast for count change if no confirmation was needed
            const actionText = sumValue ? "sumada a" : "establecida en";
-            const updatedProduct = countingList.find(p => p.barcode === barcodeToUpdate && p.warehouseId === warehouseId);
-             if (updatedProduct) {
-                toast({ title: "Cantidad Modificada", description: `Cantidad de ${updatedProduct.description} (${getWarehouseName(warehouseId)}) ${actionText} ${updatedProduct.count ?? 0}.` });
-            }
-      }
-      // Toast for stock change is handled directly in the 'else' block above
-
-      // Close the appropriate dialog and clear selection after any operation (unless confirmation pending)
-      if (!needsConfirmation) {
-           if (type === 'count') setOpenQuantityDialog(false);
-           if (type === 'stock') setOpenStockDialog(false);
+           toast({ title: "Cantidad Modificada", description: `Cantidad de ${updatedProductDescription} (${getWarehouseName(warehouseId)}) ${actionText} ${finalValue}.` });
+           // Close the quantity dialog only if no confirmation is pending
+           setOpenQuantityDialog(false);
            setSelectedProductForDialog(null);
-       }
+      } else if (type === 'stock' && productIndex !== -1) {
+           // Show toast for LOCAL stock change
+            const actionText = sumValue ? "sumado a" : "establecido en";
+           toast({ title: "Stock (Local) Actualizado", description: `Stock local de ${updatedProductDescription} (${getWarehouseName(warehouseId)}) ${actionText} ${finalValue}. Guarde los cambios de stock en 'Base de Datos'.`, duration: 5000});
+           // Close the stock dialog immediately after local update
+           setOpenStockDialog(false);
+           setSelectedProductForDialog(null);
+      }
+
+      // If confirmation was triggered, dialogs remain open until confirmation action
 
  }, [countingList, currentWarehouseId, toast, getWarehouseName, setCountingList]);
 
@@ -475,6 +497,7 @@ export default function Home() {
  }, [modifyProductValue]);
 
  const handleConfirmQuantityChange = useCallback(() => {
+    if (!isMountedRef.current) return;
     let descriptionForToast = '';
     let finalConfirmedCount = 0;
     const warehouseId = currentWarehouseId;
@@ -487,7 +510,7 @@ export default function Home() {
              const updatedList = [...prevList];
              const product = updatedList[index];
              descriptionForToast = product.description;
-             finalConfirmedCount = Math.max(0, confirmQuantityNewValue);
+             finalConfirmedCount = Math.max(0, confirmQuantityNewValue); // Ensure non-negative
 
              updatedList[index] = {
                  ...product,
@@ -504,6 +527,9 @@ export default function Home() {
      setConfirmQuantityProductBarcode(null);
      setConfirmQuantityAction(null);
      setConfirmQuantityNewValue(null);
+     // Close the quantity dialog after confirmation
+      setOpenQuantityDialog(false);
+      setSelectedProductForDialog(null);
 }, [currentWarehouseId, confirmQuantityProductBarcode, confirmQuantityAction, toast, getWarehouseName, confirmQuantityNewValue, setCountingList]);
 
 
@@ -513,17 +539,42 @@ export default function Home() {
         setIsDeleteDialogOpen(true);
  }, []);
 
- const confirmDelete = useCallback(() => {
+ const confirmDelete = useCallback(async () => {
+    if (!isMountedRef.current) return;
     if (productToDelete) {
         const descriptionForToast = productToDelete.description;
         const warehouseId = productToDelete.warehouseId;
-        // Remove only from the local counting list state
+
+        // 1. Remove from the local counting list state
         setCountingList(prevList => prevList.filter(p => !(p.barcode === productToDelete.barcode && p.warehouseId === warehouseId)));
-        toast({
-            title: "Producto eliminado (Lista Actual)",
-            description: `${descriptionForToast} ha sido eliminado del inventario actual (${getWarehouseName(warehouseId)}).`,
-            variant: "default"
-        });
+
+        // 2. Optionally: Delete the corresponding inventory item from Firestore
+        // Be careful: This permanently removes the item for this warehouse from the DB.
+        // Only do this if the intent is to fully remove the item record for this warehouse,
+        // not just clear it from the current counting session.
+        // Consider if you want a separate "clear count" vs "delete record" action.
+        // try {
+        //     await deleteInventoryItem(productToDelete.barcode, warehouseId);
+        //     toast({
+        //         title: "Producto eliminado",
+        //         description: `${descriptionForToast} ha sido eliminado del inventario actual (${getWarehouseName(warehouseId)}) y de la base de datos para este almacén.`,
+        //         variant: "default"
+        //     });
+        // } catch (error) {
+        //     console.error("Error deleting inventory item from Firestore:", error);
+        //     toast({
+        //         title: "Error al eliminar de DB",
+        //         description: `No se pudo eliminar ${descriptionForToast} de la base de datos.`,
+        //         variant: "destructive"
+        //     });
+        // }
+
+        // If only removing from the current list:
+         toast({
+             title: "Producto eliminado (Lista Actual)",
+             description: `${descriptionForToast} ha sido eliminado del inventario actual (${getWarehouseName(warehouseId)}).`,
+             variant: "default"
+         });
     }
     setIsDeleteDialogOpen(false);
     setProductToDelete(null);
@@ -538,21 +589,21 @@ export default function Home() {
     }
     try {
         const dataToExport = countingList.map(p => ({
-            Barcode: p.barcode,
-            Description: p.description,
-            Provider: p.provider,
-            WarehouseName: getWarehouseName(p.warehouseId),
-            Stock: p.stock ?? 0,
-            Count: p.count ?? 0,
-            LastUpdated: p.lastUpdated ? format(new Date(p.lastUpdated), 'yyyy-MM-dd HH:mm:ss') : 'N/A',
+            CodigoBarras: p.barcode,
+            Descripcion: p.description,
+            Proveedor: p.provider,
+            Almacen: getWarehouseName(p.warehouseId),
+            StockSistema: p.stock ?? 0,
+            CantidadContada: p.count ?? 0,
+            UltimaActualizacion: p.lastUpdated ? format(new Date(p.lastUpdated), 'yyyy-MM-dd HH:mm:ss') : 'N/A',
         }));
 
-        const csv = Papa.unparse(dataToExport);
+        const csv = Papa.unparse(dataToExport, { header: true });
         const blob = new Blob([`\uFEFF${csv}`], { type: "text/csv;charset=utf-8;" });
         const link = document.createElement("a");
         link.href = URL.createObjectURL(blob);
         const timestamp = format(new Date(), 'yyyyMMdd_HHmmss');
-        link.setAttribute("download", `inventory_count_${currentWarehouseId}_${timestamp}.csv`);
+        link.setAttribute("download", `conteo_inventario_${currentWarehouseId}_${timestamp}.csv`);
         document.body.appendChild(link);
         link.click();
         document.body.removeChild(link);
@@ -566,22 +617,25 @@ export default function Home() {
 
 
  const handleBackupToGoogleSheet = useCallback(async () => {
+    if (!isMountedRef.current) return;
     if (countingList.length === 0) {
         toast({ title: "Vacío", description: "No hay productos en el inventario actual para respaldar." });
         return;
     }
-     if (!backupScriptUrl.trim() || !backupScriptUrl.startsWith('https://script.google.com/macros/s/')) {
+     // Validate the backup URL (expecting full sheet URL)
+     if (!backupUrl.trim() || !backupUrl.startsWith('https://docs.google.com/spreadsheets/d/')) {
         toast({
             variant: "destructive",
-            title: "URL de Script Inválida",
-            description: "Introduce una URL válida de Google Apps Script para el respaldo.",
+            title: "URL de Hoja Inválida",
+            description: "Introduce una URL válida de Google Sheets para el respaldo.",
         });
         return;
     }
     setIsBackingUp(true);
     try {
         const currentWHName = getWarehouseName(currentWarehouseId);
-        const result = await backupToGoogleSheet(countingList, currentWHName, backupScriptUrl);
+        // Pass the full URL to the server action
+        const result = await backupToGoogleSheet(countingList, currentWHName, backupUrl);
 
         if (result.success) {
             toast({ title: "Respaldo Exitoso", description: result.message });
@@ -592,18 +646,19 @@ export default function Home() {
         console.error("Error calling backupToGoogleSheet Server Action:", error);
         toast({ variant: "destructive", title: "Error de Respaldo", description: error.message || "Ocurrió un error inesperado al intentar respaldar.", duration: 9000 });
     } finally {
-        setIsBackingUp(false);
+        if (isMountedRef.current) {
+             setIsBackingUp(false);
+        }
     }
- }, [countingList, currentWarehouseId, getWarehouseName, toast, backupScriptUrl]);
+ }, [countingList, currentWarehouseId, getWarehouseName, toast, backupUrl]); // Use backupUrl
 
 
  // --- Stock Refresh from Firestore ---
  const handleRefreshStock = useCallback(async () => {
-    if (!currentWarehouseId) return;
+    if (!currentWarehouseId || !isMountedRef.current) return;
     setIsRefreshingStock(true);
     console.log(`Refreshing stock and product details for warehouse ${currentWarehouseId} from Firestore...`);
     try {
-      // Fetch latest details and inventory from Firestore
       const [allDbDetails, warehouseDbInventory] = await Promise.all([
         getAllProductDetails(),
         getInventoryItemsForWarehouse(currentWarehouseId),
@@ -616,40 +671,36 @@ export default function Home() {
       warehouseDbInventory.forEach(item => inventoryMap.set(item.barcode, item));
 
       setCountingList(prevCountingList => {
-        // Create a new list based on the previous list, updating with DB data
         const updatedList = prevCountingList.map(countingProduct => {
           const dbDetail = detailsMap.get(countingProduct.barcode);
           const dbInventory = inventoryMap.get(countingProduct.barcode);
 
-          // Preserve the current count, update other details from DB
           return {
-            ...countingProduct, // Start with the existing counting product (preserves count)
-            description: dbDetail?.description ?? countingProduct.description, // Update description from DB if available
-            provider: dbDetail?.provider ?? countingProduct.provider,       // Update provider from DB if available
-            stock: dbInventory?.stock ?? countingProduct.stock ?? 0,        // Update stock from DB if available
-            // Keep the existing count: count: countingProduct.count,
-            lastUpdated: new Date().toISOString(), // Update timestamp
+            ...countingProduct,
+            description: dbDetail?.description ?? countingProduct.description,
+            provider: dbDetail?.provider ?? countingProduct.provider,
+            stock: dbInventory?.stock ?? countingProduct.stock ?? 0,
+            lastUpdated: new Date().toISOString(),
           };
         });
 
-         // Add items from DB that are NOT in the current counting list (optional, depends on desired behavior)
-         // This ensures the list reflects all items in the warehouse inventory from the DB.
-         // If you only want to update existing items, remove this part.
          warehouseDbInventory.forEach(dbItem => {
-             if (!updatedList.some(cp => cp.barcode === dbItem.barcode)) {
+             if (!updatedList.some(cp => cp.barcode === dbItem.barcode && cp.warehouseId === currentWarehouseId)) {
                  const dbDetail = detailsMap.get(dbItem.barcode);
                  if (dbDetail) {
                      updatedList.push({
                          ...dbDetail,
                          warehouseId: currentWarehouseId,
                          stock: dbItem.stock ?? 0,
-                         count: 0, // New items added from refresh start with count 0
+                         count: 0, // Items added during refresh start with 0 count
                          lastUpdated: dbItem.lastUpdated || new Date().toISOString(),
                      });
                  }
              }
          });
 
+        // Re-sort the list to potentially keep a specific order if needed, e.g., by lastUpdated descending
+        updatedList.sort((a, b) => new Date(b.lastUpdated!).getTime() - new Date(a.lastUpdated!).getTime());
 
         return updatedList;
       });
@@ -661,7 +712,9 @@ export default function Home() {
       console.error(`Error refreshing stock and details for warehouse ${currentWarehouseId}:`, error);
       toast({ variant: "destructive", title: "Error al Actualizar", description: `No se pudieron actualizar los datos desde Firestore para ${getWarehouseName(currentWarehouseId)}. ` });
     } finally {
-      setIsRefreshingStock(false);
+      if (isMountedRef.current) {
+          setIsRefreshingStock(false);
+      }
     }
  }, [currentWarehouseId, toast, getWarehouseName, setCountingList]);
 
@@ -685,8 +738,9 @@ export default function Home() {
     const handleWarehouseChange = (newWarehouseId: string) => {
         if (newWarehouseId !== currentWarehouseId) {
             console.log("Switching warehouse to:", newWarehouseId);
-            // The useEffect for currentWarehouseId will handle loading the list from localStorage
+            setIsDbLoading(true); // Set loading state while list is reloaded
             setCurrentWarehouseId(newWarehouseId);
+            // The useEffect for currentWarehouseId will handle loading/clearing the list
         }
     };
 
@@ -699,7 +753,7 @@ export default function Home() {
                 return prevWarehouses;
             }
              const updatedWarehouses = [...prevWarehouses, newWarehouse];
-             setCurrentWarehouseId(newWarehouse.id); // Switch to new warehouse
+             setCurrentWarehouseId(newWarehouse.id);
              toast({title: "Almacén Agregado", description: `Cambiado al nuevo almacén: ${newWarehouse.name}`});
             return updatedWarehouses;
         });
@@ -707,122 +761,131 @@ export default function Home() {
 
     const handleUpdateWarehouses = (updatedWarehouses: { id: string; name: string }[]) => {
         setWarehouses(updatedWarehouses);
+        // If the current warehouse was deleted, switch to the first available one
         if (!updatedWarehouses.some(w => w.id === currentWarehouseId)) {
             const newCurrentId = updatedWarehouses[0]?.id || 'main';
-            setCurrentWarehouseId(newCurrentId);
-            toast({title: "Almacén Actualizado", description: `Almacén actual cambiado a ${getWarehouseName(newCurrentId)}.`});
+            if (newCurrentId !== currentWarehouseId) {
+                handleWarehouseChange(newCurrentId); // Use the change handler
+                toast({title: "Almacén Actualizado", description: `Almacén actual cambiado a ${getWarehouseName(newCurrentId)}.`});
+            }
         }
     };
 
     const handleScanButtonClick = () => {
         console.log("Scan button clicked, requesting scanner start.");
         if (!isScanning) {
-            setIsScanning(true); // Enable scanner hook
+            setIsScanning(true);
         }
     };
 
     const handleStopScanning = () => {
         console.log("Stop scanning button clicked, requesting scanner stop.");
         if (isScanning) {
-            setIsScanning(false); // Disable scanner hook
+            setIsScanning(false);
         }
          requestAnimationFrame(() => barcodeInputRef.current?.focus());
     };
 
-   // Edit Product Detail Dialog Logic (triggered from Counting List)
+   // --- Edit Product Detail Dialog Logic (triggered from Counting List) ---
    const [isEditDetailDialogOpen, setIsEditDetailDialogOpen] = useState(false);
    const [productToEditDetail, setProductToEditDetail] = useState<ProductDetail | null>(null);
    const [initialStockForEdit, setInitialStockForEdit] = useState<number>(0);
 
    const handleOpenEditDetailDialog = useCallback(async (product: DisplayProduct) => {
-       if (!product || !product.barcode) return;
+       if (!product || !product.barcode || !isMountedRef.current) return;
        setIsDbLoading(true);
        try {
-           // Fetch the latest ProductDetail and InventoryItem for the *specific* warehouse
-           const detail = await getProductDetail(product.barcode); // Get base details
-           const inventoryItem = await getInventoryItem(product.barcode, currentWarehouseId); // Get stock for CURRENT warehouse
+           const detail = await getProductDetail(product.barcode);
+           const inventoryItem = await getInventoryItem(product.barcode, currentWarehouseId);
 
            if (detail) {
+                if (!isMountedRef.current) return; // Check again after async op
                setProductToEditDetail(detail);
-               // Use stock from the specific warehouse item, default to 0 if not found
-               setInitialStockForEdit(inventoryItem?.stock ?? 0);
+               setInitialStockForEdit(inventoryItem?.stock ?? 0); // Use stock from CURRENT warehouse inventory
                setIsEditDetailDialogOpen(true);
            } else {
+                 if (!isMountedRef.current) return;
                toast({ variant: "destructive", title: "Error", description: "Detalles del producto no encontrados en la base de datos." });
            }
        } catch (error) {
+            if (!isMountedRef.current) return;
            console.error("Error fetching product details/inventory for edit:", error);
            toast({ variant: "destructive", title: "Error DB", description: "No se pudieron obtener los datos del producto para editar." });
        } finally {
-           setIsDbLoading(false);
+            if (isMountedRef.current) {
+                 setIsDbLoading(false);
+            }
        }
    }, [toast, currentWarehouseId]);
 
 
    const handleEditDetailSubmit = useCallback(async (data: ProductDetail & { stock: number }) => {
-       // Called from EditProductDialog when saving changes FROM the counting list context
+       if (!isMountedRef.current) return;
        const detailData: ProductDetail = {
            barcode: data.barcode,
            description: data.description,
            provider: data.provider,
        };
-        // This stock value is specifically for the CURRENT warehouse being counted
-        const stockForCurrentWarehouse = data.stock;
+       const stockForCurrentWarehouse = data.stock;
 
-        setIsDbLoading(true); // Indicate processing
+       setIsDbLoading(true);
        try {
            // Update product details (globally)
            await addOrUpdateProductDetail(detailData);
 
-            // Update inventory item specifically for the CURRENT warehouse
+           // Update inventory item specifically for the CURRENT warehouse
            const currentInventoryItem = await getInventoryItem(data.barcode, currentWarehouseId);
            const updatedCurrentInventory: InventoryItem = {
                 barcode: data.barcode,
                 warehouseId: currentWarehouseId,
                 stock: stockForCurrentWarehouse,
-                count: currentInventoryItem?.count ?? 0, // Preserve existing count
+                count: currentInventoryItem?.count ?? 0, // Preserve existing count from DB if needed, otherwise use local list count?
                 lastUpdated: new Date().toISOString(),
            };
            await addOrUpdateInventoryItem(updatedCurrentInventory);
 
+            if (!isMountedRef.current) return; // Check after async
+
            // Refresh the local counting list state to reflect changes immediately
-           // Find the item in the current list and update its stock, description, provider
             setCountingList(prevList => prevList.map(item =>
                 item.barcode === data.barcode && item.warehouseId === currentWarehouseId
                     ? { ...item, ...detailData, stock: stockForCurrentWarehouse, lastUpdated: new Date().toISOString() }
                     : item
             ));
 
-
            toast({
                title: "Producto Actualizado",
                description: `${detailData.description} ha sido actualizado en ${getWarehouseName(currentWarehouseId)}.`,
            });
-           setIsEditDetailDialogOpen(false); // Close the dialog
+           setIsEditDetailDialogOpen(false);
        } catch (error: any) {
+            if (!isMountedRef.current) return;
            console.error("Failed to update product detail/stock:", error);
            toast({ variant: "destructive", title: "Error al Actualizar", description: `No se pudo actualizar: ${error.message}` });
        } finally {
-            setIsDbLoading(false); // Finish processing
-            setProductToEditDetail(null); // Clear selection
+            if (isMountedRef.current) {
+                setIsDbLoading(false);
+                setProductToEditDetail(null);
+            }
        }
-   }, [toast, currentWarehouseId, getWarehouseName, setCountingList]); // Depend on setCountingList
+   }, [toast, currentWarehouseId, getWarehouseName, setCountingList]);
 
 
  const handleStartCountByProvider = useCallback(async (productsToCount: DisplayProduct[]) => {
+    if (!isMountedRef.current) return;
     if (!productsToCount || productsToCount.length === 0) {
         toast({ title: "Vacío", description: "No hay productos para este proveedor en el almacén actual." });
         return;
     }
-    // Ensure correct warehouseId and reset count for the counting session
     const productsWithWarehouseId = productsToCount.map(p => ({
          ...p,
          warehouseId: currentWarehouseId,
-         count: 0, // Reset count
+         count: 0, // Reset count for the counting session
+         lastUpdated: new Date().toISOString(), // Set fresh timestamp
      }));
-    setCountingList(productsWithWarehouseId); // Replace current list with provider's products
-    setActiveSection("Contador"); // Switch to counting view
-    toast({ title: "Conteo por Proveedor Iniciado", description: `Cargados ${productsToCount.length} productos para ${getWarehouseName(currentWarehouseId)}.` });
+     setCountingList(productsWithWarehouseId); // Replace current list
+     setActiveSection("Contador");
+     toast({ title: "Conteo por Proveedor Iniciado", description: `Cargados ${productsToCount.length} productos para ${getWarehouseName(currentWarehouseId)}.` });
  }, [toast, setActiveSection, setCountingList, currentWarehouseId, getWarehouseName]);
 
   const filteredCountingList = React.useMemo(() => {
@@ -847,8 +910,9 @@ export default function Home() {
     }
   };
 
+  // Function to get the latest value for the Modify Dialog
   const getCurrentValueForDialog = (type: 'count' | 'stock') => {
-    if (!selectedProductForDialog) return 0;
+    if (!selectedProductForDialog || !isMountedRef.current) return 0;
     // Find the latest state from the countingList
     const currentItem = countingList.find(
       p => p.barcode === selectedProductForDialog.barcode && p.warehouseId === currentWarehouseId
@@ -904,7 +968,7 @@ export default function Home() {
          </div>
       </div>
 
-
+      {/* Main content area based on activeSection */}
       <div className="w-full md:w-[800px] lg:w-[1000px] mx-auto">
         {activeSection === 'Contador' && (
             <div id="contador-content">
@@ -914,8 +978,8 @@ export default function Home() {
                     onAddProduct={() => handleAddProduct()}
                     onScanClick={handleScanButtonClick}
                     onRefreshStock={handleRefreshStock}
-                    isLoading={isDbLoading || isRefreshingStock || isBackingUp}
-                    isScanning={isScannerInitializing || isScanning}
+                    isLoading={isDbLoading || isRefreshingStock || isBackingUp || isScannerInitializing}
+                    isScanning={isScanning}
                     isRefreshingStock={isRefreshingStock}
                     inputRef={barcodeInputRef}
                 />
@@ -936,29 +1000,29 @@ export default function Home() {
                     warehouseName={getWarehouseName(currentWarehouseId)}
                     isLoading={isDbLoading}
                     onDeleteRequest={handleDeleteRequest}
-                    onOpenStockDialog={handleOpenStockDialog} // Opens the +/- dialog for LOCAL stock adjustment
-                    onOpenQuantityDialog={handleOpenQuantityDialog} // Opens the +/- dialog for count adjustment
+                    onOpenStockDialog={handleOpenStockDialog}
+                    onOpenQuantityDialog={handleOpenQuantityDialog}
                     onDecrement={handleDecrement}
                     onIncrement={handleIncrement}
-                    onEditDetailRequest={handleOpenEditDetailDialog} // Opens the full edit dialog (updates DB stock)
+                    onEditDetailRequest={handleOpenEditDetailDialog}
                     tableHeightClass="h-[calc(100vh-360px)] md:h-[calc(100vh-330px)]"
                 />
 
               <div className="mt-4 flex flex-col sm:flex-row justify-end items-center gap-2">
                  <Input
                     type="url"
-                    placeholder="URL del Script de Google para Respaldo"
-                    value={backupScriptUrl}
-                    onChange={(e) => setBackupScriptUrl(e.target.value)}
+                    placeholder="URL de Hoja Google para Respaldo" // Changed placeholder
+                    value={backupUrl} // Use backupUrl state
+                    onChange={(e) => setBackupUrl(e.target.value)} // Update backupUrl state
                     className="w-full sm:w-auto flex-grow bg-white dark:bg-gray-800 border-gray-300 dark:border-gray-600"
-                    aria-label="URL del Google Apps Script para respaldo"
+                    aria-label="URL de la Hoja de Google para respaldo" // Updated label
                     disabled={isDbLoading || isBackingUp}
                  />
                  <Button
                       onClick={handleBackupToGoogleSheet}
                       className="bg-green-600 hover:bg-green-700 text-white rounded-md shadow-sm px-5 py-2 transition-colors duration-200 w-full sm:w-auto"
-                      disabled={countingList.length === 0 || isDbLoading || isBackingUp || !backupScriptUrl.trim()}
-                      aria-label="Respaldar inventario actual a Google Sheet via Apps Script"
+                      disabled={countingList.length === 0 || isDbLoading || isBackingUp || !backupUrl.trim()} // Check backupUrl
+                      aria-label="Respaldar inventario actual a Google Sheet" // Updated label
                  >
                       {isBackingUp ? (
                            <Loader2 className="mr-2 h-4 w-4 animate-spin" />
@@ -1012,7 +1076,6 @@ export default function Home() {
                  onSet={handleSetProductValue}
                  onClose={handleCloseDialogs}
              />
-              {/* This dialog now adjusts LOCAL list stock, NOT database stock */}
              <ModifyValueDialog
                  isOpen={openStockDialog}
                  setIsOpen={setOpenStockDialog}
@@ -1020,9 +1083,9 @@ export default function Home() {
                  product={selectedProductForDialog}
                  warehouseName={getWarehouseName(currentWarehouseId)}
                  currentValue={getCurrentValueForDialog('stock')}
-                 onIncrement={handleIncrement} // Modifies local stock via modifyProductValue
-                 onDecrement={handleDecrement} // Modifies local stock via modifyProductValue
-                 onSet={handleSetProductValue}   // Modifies local stock via handleSetProductValue
+                 onIncrement={handleIncrement}
+                 onDecrement={handleDecrement}
+                 onSet={handleSetProductValue}
                  onClose={handleCloseDialogs}
              />
 
@@ -1031,28 +1094,41 @@ export default function Home() {
                  isOpen={isConfirmQuantityDialogOpen}
                  onOpenChange={setIsConfirmQuantityDialogOpen}
                  title="Confirmar Modificación"
-                 description={ /* ... description logic ... */ }
+                 description={
+                    confirmQuantityNewValue !== null && selectedProductForDialog?.stock === confirmQuantityNewValue
+                        ? `La cantidad contada (${confirmQuantityNewValue}) ahora coincide con el stock del sistema para "${selectedProductForDialog?.description}". ¿Confirmar?`
+                        : `Está a punto de modificar la cantidad contada para "${selectedProductForDialog?.description}". ¿Continuar?`
+                 }
                  onConfirm={handleConfirmQuantityChange}
-                 onCancel={() => { setIsConfirmQuantityDialogOpen(false); setConfirmQuantityProductBarcode(null); setConfirmQuantityAction(null); setConfirmQuantityNewValue(null); }}
+                 onCancel={() => {
+                     setIsConfirmQuantityDialogOpen(false);
+                     setConfirmQuantityProductBarcode(null);
+                     setConfirmQuantityAction(null);
+                     setConfirmQuantityNewValue(null);
+                     // Important: Keep the main dialog open if confirmation is cancelled
+                     // Do not call handleCloseDialogs() here
+                 }}
              />
               {/* Confirmation for Deleting from Counting List */}
              <ConfirmationDialog
                 isOpen={isDeleteDialogOpen}
                 onOpenChange={setIsDeleteDialogOpen}
                 title="Confirmar Eliminación (Lista Actual)"
-                description={`¿Seguro que deseas eliminar "${productToDelete?.description}" del inventario actual (${getWarehouseName(productToDelete?.warehouseId)})?`}
+                description={`¿Seguro que deseas eliminar "${productToDelete?.description}" del inventario actual (${getWarehouseName(productToDelete?.warehouseId)})? Esta acción no se puede deshacer.`}
                 onConfirm={confirmDelete}
                 onCancel={() => setIsDeleteDialogOpen(false)}
                 isDestructive={true}
              />
 
-             <ScannerDialog
-                 isOpen={isScanning}
-                 onClose={handleStopScanning}
-                 videoRef={videoRef}
-                 isInitializing={isScannerInitializing}
-                 hasPermission={hasCameraPermission}
-             />
+             {/* Scanner Dialog (Modal) */}
+              <ScannerDialog
+                  isOpen={isScanning}
+                  onClose={handleStopScanning}
+                  videoRef={videoRef}
+                  isInitializing={isScannerInitializing}
+                  hasPermission={hasCameraPermission}
+              />
+
 
             {/* Dialog for Editing Product Details AND Database Stock */}
              <EditProductDialog
@@ -1060,28 +1136,21 @@ export default function Home() {
                 setIsOpen={setIsEditDetailDialogOpen}
                 selectedDetail={productToEditDetail}
                 setSelectedDetail={setProductToEditDetail}
-                onSubmit={handleEditDetailSubmit} // Updates DB detail AND inventory stock for current warehouse
-                onDelete={(barcode) => {
-                     console.warn("Delete action from counting list edit dialog not fully implemented yet.");
-                     toast({variant: "default", title: "Info", description: "Para eliminar, usa la sección Base de Datos."})
-                }}
-                isProcessing={isDbLoading} // Use isDbLoading for processing state
-                initialStock={initialStockForEdit} // Stock from DB for CURRENT warehouse
-                context="countingList"
+                onSubmit={handleEditDetailSubmit}
+                onDelete={ (barcode) => {
+                     console.warn("Delete action from counting list edit dialog needs review. Deleting from DB directly.");
+                     // Implement direct deletion from DB if needed, or guide user to DB section
+                     // For now, just show a message.
+                     toast({variant: "default", title: "Info", description: "Para eliminar permanentemente, usa la sección 'Base de Datos'."})
+                     setIsEditDetailDialogOpen(false); // Close dialog after info
+                     setSelectedDetail(null);
+                 }}
+                isProcessing={isDbLoading}
+                initialStock={initialStockForEdit}
+                context="countingList" // Indicate context
              />
 
 
     </div>
   );
-}
-
-// Helper function to safely parse JSON from localStorage
-function safeJsonParse<T>(jsonString: string | null, defaultValue: T): T {
-    if (!jsonString) return defaultValue;
-    try {
-        return JSON.parse(jsonString);
-    } catch (e) {
-        console.error("Failed to parse JSON from localStorage", e);
-        return defaultValue;
-    }
 }

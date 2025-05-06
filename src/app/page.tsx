@@ -21,6 +21,7 @@ import {
 } from "@/components/ui/table";
 import { WarehouseManagement } from "@/components/warehouse-management";
 import { format, isValid } from 'date-fns';
+import { es } from 'date-fns/locale'; // Import Spanish locale for date formatting
 import { Minus, Plus, Trash, RefreshCw, Warehouse as WarehouseIcon, Camera, AlertCircle, Search, Check, AppWindow, Database, Boxes, UploadCloud, Loader2, History as HistoryIcon, CalendarIcon, Save, Edit } from "lucide-react"; // Added HistoryIcon, CalendarIcon, Save, Edit
 import React, { useCallback, useEffect, useRef, useState, useMemo } from "react";
 import { backupToGoogleSheet } from './actions/backup-actions';
@@ -170,7 +171,7 @@ export default function Home() {
     const trimmedBarcode = rawBarcode.trim().replace(/\r?\n|\r$/g, '');
 
     if (!trimmedBarcode) {
-      toast({ variant: "destructive", title: "Error", description: "Por favor, introduce un código de barras válido." });
+      toast({ variant: "default", title: "Código vacío", description: "Por favor, introduce o escanea un código de barras." });
       setBarcode("");
       requestAnimationFrame(() => barcodeInputRef.current?.focus());
       return;
@@ -182,7 +183,7 @@ export default function Home() {
 
     // Debounce consecutive scans of the same barcode
     if (trimmedBarcode === lastScannedBarcode) {
-        console.log("Duplicate scan detected, ignoring:", trimmedBarcode);
+        console.log("Duplicate scan/entry detected, ignoring:", trimmedBarcode);
         setBarcode("");
         requestAnimationFrame(() => barcodeInputRef.current?.focus());
         return;
@@ -345,40 +346,40 @@ const modifyProductValue = useCallback(async (barcodeToUpdate: string, type: 'co
     });
 
     // If it was a stock change and no confirmation needed, update IndexedDB
-    if (type === 'stock' && updatedProduct && !needsConfirmation) {
-        try {
-            const dbProduct = await getProductFromDB(barcodeToUpdate);
-            if (dbProduct) {
-                // Update only the stock for the current warehouse in stockPerWarehouse
-                const updatedStockPerWarehouse = {
+     if (type === 'stock' && updatedProduct && !needsConfirmation) {
+         try {
+             const dbProduct = await getProductFromDB(barcodeToUpdate);
+             if (dbProduct) {
+                  // Update only the stock for the current warehouse in stockPerWarehouse
+                 const updatedStockPerWarehouse = {
                     ...(dbProduct.stockPerWarehouse || {}), // Preserve other warehouse stocks
                     [currentWarehouseId]: updatedProduct.stock // Use updated stock
-                };
-                const updatedDbProduct: ProductDetail = {
-                    ...dbProduct,
-                    stockPerWarehouse: updatedStockPerWarehouse,
-                };
-                await addOrUpdateProductToDB(updatedDbProduct);
-                 // Show toast ONLY after successful DB update for stock
-                 toast({
+                 };
+                 const updatedDbProduct: ProductDetail = {
+                     ...dbProduct,
+                     stockPerWarehouse: updatedStockPerWarehouse,
+                 };
+                 await addOrUpdateProductToDB(updatedDbProduct);
+                  // Show toast ONLY after successful DB update for stock
+                  toast({
                       title: `Stock (DB) Actualizado`,
                       description: `Stock de ${updatedProduct.description} en ${getWarehouseName(currentWarehouseId)} actualizado a ${updatedProduct.stock} en la base de datos.`
                   });
-                showToast = false; // Prevent the generic toast below
-            } else {
-                 console.warn(`Product ${barcodeToUpdate} not found in DB while trying to update stock.`);
-                 // Optionally, inform user that stock was only updated locally if the product isn't in the main DB
-            }
-        } catch (error) {
-            console.error("Error updating stock in IndexedDB:", error);
-            toast({
-                variant: "destructive",
-                title: "Error DB",
-                description: `No se pudo actualizar el stock en la base de datos para ${updatedProduct?.description}. El cambio solo se refleja localmente.`
-            });
-             showToast = false; // Prevent the generic toast
-        }
-    }
+                 showToast = false; // Prevent the generic toast below
+             } else {
+                  console.warn(`Product ${barcodeToUpdate} not found in DB while trying to update stock.`);
+                  // Optionally, inform user that stock was only updated locally if the product isn't in the main DB
+             }
+         } catch (error) {
+             console.error("Error updating stock in IndexedDB:", error);
+             toast({
+                 variant: "destructive",
+                 title: "Error DB",
+                 description: `No se pudo actualizar el stock en la base de datos para ${updatedProduct?.description}. El cambio solo se refleja localmente.`
+             });
+              showToast = false; // Prevent the generic toast
+         }
+     }
 
      // Show generic toast message immediately for count changes (or if stock DB update failed)
      if (showToast && updatedProduct) {
@@ -572,7 +573,6 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
 
  // Export current counting list to CSV
  const handleExport = useCallback(() => {
-     // Find products only for the current warehouse
      const currentWarehouseList = countingList.filter(p => p.warehouseId === currentWarehouseId);
 
      if (currentWarehouseList.length === 0) {
@@ -580,7 +580,6 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
         return;
     }
     try {
-        // Use the filtered list for export
         const dataToExport = currentWarehouseList.map(p => ({
             CodigoBarras: p.barcode,
             Descripcion: p.description,
@@ -595,18 +594,33 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
         const blob = new Blob([`\uFEFF${csv}`], { type: "text/csv;charset=utf-8;" });
         const link = document.createElement("a");
         link.href = URL.createObjectURL(blob);
-        const timestamp = format(new Date(), 'yyyyMMdd_HHmmss');
-        link.setAttribute("download", `conteo_inventario_${currentWarehouseId}_${timestamp}.csv`);
+
+        // Use provider and date for the filename if available
+        let fileName = '';
+        const firstProvider = currentWarehouseList.length > 0 ? currentWarehouseList[0].provider : 'Inventario';
+        const timestamp = format(new Date(), 'yyyyMMdd', { locale: es }); // Format date as YYYYMMDD using Spanish locale
+
+        if (firstProvider && firstProvider !== "Desconocido") {
+            const sanitizedProvider = firstProvider.replace(/[^a-zA-Z0-9]/g, '_'); // Sanitize provider name
+            fileName = `conteo_${sanitizedProvider}_${timestamp}.csv`;
+        } else {
+            const warehouseName = getWarehouseName(currentWarehouseId).replace(/[^a-zA-Z0-9]/g, '_'); // Sanitize warehouse name
+            fileName = `conteo_${warehouseName}_${timestamp}.csv`;
+        }
+
+
+        link.setAttribute("download", fileName);
         document.body.appendChild(link);
         link.click();
         document.body.removeChild(link);
         URL.revokeObjectURL(link.href);
-        toast({ title: "Exportado", description: `Inventario para ${getWarehouseName(currentWarehouseId)} exportado a CSV.` });
+        toast({ title: "Exportado", description: `Inventario para ${getWarehouseName(currentWarehouseId)} exportado a ${fileName}.` });
     } catch (error) {
         console.error("Error exporting inventory:", error);
         toast({ variant: "destructive", title: "Error de Exportación", description: "No se pudo generar el archivo CSV." });
     }
  }, [countingList, currentWarehouseId, toast, getWarehouseName]);
+
 
  // Backup counting list to Google Sheet via Apps Script
  const handleBackupToGoogleSheet = useCallback(async () => {
@@ -1035,6 +1049,7 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
                     onIncrement={handleIncrement}
                     onEditDetailRequest={handleOpenEditDetailDialog} // Still need this for full detail edit
                     tableHeightClass="h-[calc(100vh-360px)] md:h-[calc(100vh-330px)]" // Adjust height dynamically
+                    key={`${currentWarehouseId}-${countingList.length}`} // Add key to force re-render on list change or warehouse switch
                 />
 
               {/* Backup and Export Actions */}
@@ -1222,5 +1237,3 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
     </div>
   );
 }
-
-    

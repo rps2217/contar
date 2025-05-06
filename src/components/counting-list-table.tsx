@@ -1,6 +1,6 @@
 // src/components/counting-list-table.tsx
 import React from 'react';
-import { DisplayProduct } from '@/types/product';
+import type { DisplayProduct } from '@/types/product';
 import { Table, TableBody, TableCaption, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Button } from "@/components/ui/button";
@@ -40,10 +40,7 @@ export const CountingListTable: React.FC<CountingListTableProps> = ({
         <TableHeader className="bg-gray-50 dark:bg-gray-700 sticky top-0 z-10 shadow-sm">
           <TableRow>
             <TableHead className="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider w-[35%] sm:w-2/5">Descripción (Click para Borrar)</TableHead>
-            {/* <TableHead className="hidden sm:table-cell px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider w-1/5">
-              Proveedor
-            </TableHead> */}
-             <TableHead className="px-4 py-3 text-center text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider w-[15%] sm:w-[15%]">Stock (Click para Editar)</TableHead>
+            <TableHead className="px-4 py-3 text-center text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider w-[15%] sm:w-[15%]">Stock (Click para Editar)</TableHead>
             <TableHead className="px-4 py-3 text-center text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider w-[15%] sm:w-[15%]">Cantidad (Click para Editar)</TableHead>
             <TableHead className="hidden md:table-cell px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider w-1/5">Última Actualización</TableHead>
             <TableHead className="hidden md:table-cell px-4 py-3 text-center text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider w-[5%]">Validación</TableHead>
@@ -55,12 +52,12 @@ export const CountingListTable: React.FC<CountingListTableProps> = ({
              // Attempt to parse the date and check validity
              const lastUpdatedDate = product.lastUpdated ? new Date(product.lastUpdated) : null;
              const isValidDate = lastUpdatedDate && isValid(lastUpdatedDate);
-             // Ensure a unique key, combining barcode and warehouseId
-             const uniqueKey = `${product.barcode}-${product.warehouseId || 'unknown'}`;
+             // Ensure a unique key, combining barcode, warehouseId, and index
+             const uniqueKey = `${product.barcode}-${product.warehouseId || 'unknown'}-${index}`;
             return (
                 <TableRow
                 key={uniqueKey} // Use the generated unique key
-                className={cn(
+                  className={cn(
                     "hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors duration-150",
                     product.count === product.stock && product.stock !== 0 ? "bg-green-50 dark:bg-green-900/30" : ""
                 )}
@@ -75,9 +72,6 @@ export const CountingListTable: React.FC<CountingListTableProps> = ({
                     {product.description}
                      <Trash className="inline-block h-4 w-4 ml-2 text-red-500 md:hidden" /> {/* Inline delete icon for mobile */}
                 </TableCell>
-                {/* <TableCell className="hidden sm:table-cell px-4 py-3 text-gray-600 dark:text-gray-300">
-                    {product.provider || 'N/A'}
-                </TableCell> */}
                 <TableCell
                     className="px-4 py-3 text-center text-gray-600 dark:text-gray-300 cursor-pointer hover:text-teal-700 dark:hover:text-teal-400 hover:font-semibold tabular-nums"
                     onClick={() => onOpenStockDialog(product)} // Use dialog for stock edit
@@ -95,7 +89,7 @@ export const CountingListTable: React.FC<CountingListTableProps> = ({
                     {product.count ?? 0}
                 </TableCell>
                  <TableCell className="hidden md:table-cell px-4 py-3 text-gray-500 dark:text-gray-400 text-xs">
-                     {isValidDate ? format(lastUpdatedDate!, 'PPpp', { timeZone: 'auto' }) : product.lastUpdated || 'N/A'}
+                      {isValidDate ? format(lastUpdatedDate!, 'PPpp', { timeZone: 'auto' }) : product.lastUpdated || 'N/A'}
                   </TableCell>
                 <TableCell className="hidden md:table-cell px-4 py-3 text-center">
                     {product.count === product.stock && product.stock !== 0 ? (
@@ -140,7 +134,7 @@ export const CountingListTable: React.FC<CountingListTableProps> = ({
                     </div>
                 </TableCell>
                 </TableRow>
-            )})}
+            );})}
           {countingList.length === 0 && !isLoading && (
             <TableRow>
               <TableCell colSpan={7} className="text-center px-4 py-10 text-gray-500 dark:text-gray-400">

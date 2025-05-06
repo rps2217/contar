@@ -21,7 +21,7 @@ import {
 } from "@/components/ui/table";
 import { WarehouseManagement } from "@/components/warehouse-management";
 import { format, isValid } from 'date-fns';
-import { Minus, Plus, Trash, RefreshCw, Warehouse as WarehouseIcon, Camera, AlertCircle, Search, Check, AppWindow, Database, Boxes, UploadCloud, Loader2, History as HistoryIcon } from "lucide-react"; // Added HistoryIcon
+import { Minus, Plus, Trash, RefreshCw, Warehouse as WarehouseIcon, Camera, AlertCircle, Search, Check, AppWindow, Database, Boxes, UploadCloud, Loader2, History as HistoryIcon, CalendarIcon } from "lucide-react"; // Added HistoryIcon and CalendarIcon
 import React, { useCallback, useEffect, useRef, useState, useMemo } from "react";
 import { backupToGoogleSheet } from './actions/backup-actions';
 import { playBeep } from '@/lib/helpers';
@@ -43,7 +43,6 @@ import {
     getCountingHistory,
     clearCountingHistory,
 } from '@/lib/database'; // Import IndexedDB helpers
-import Papa from 'papaparse'; // Import PapaParse for export
 import { CountingHistoryViewer } from '@/components/counting-history-viewer'; // Import History Viewer
 
 // --- Constants ---
@@ -131,7 +130,8 @@ export default function Home() {
                 lastUpdated: item.lastUpdated || new Date().toISOString(),
             }));
         console.log(`Loaded ${loadedList.length} items for warehouse ${currentWarehouseId} from localStorage.`);
-        setCountingList(loadedList.filter(item => item.warehouseId === currentWarehouseId)); // Filter after loading
+        // Filter after loading to ensure only items for the current warehouse are in the state
+        setCountingList(loadedList.filter(item => item.warehouseId === currentWarehouseId));
     } else {
         console.warn(`Invalid data structure in localStorage for warehouse ${currentWarehouseId}. Clearing.`);
         localStorage.removeItem(savedListKey); // Remove invalid data
@@ -145,6 +145,7 @@ export default function Home() {
   useEffect(() => {
     if (!isDbLoading && currentWarehouseId && isMounted) {
         const key = `${LOCAL_STORAGE_COUNTING_LIST_KEY_PREFIX}${currentWarehouseId}`;
+        // Ensure we save only items related to the current warehouse
         const listToSave = countingList.filter(item => item.warehouseId === currentWarehouseId);
         setLocalStorageItem(key, listToSave);
     }
@@ -256,6 +257,7 @@ export default function Home() {
                             description: `Producto ${trimmedBarcode} no encontrado en la base de datos. Agregado temporalmente al inventario. Edita los detalles en la sección 'Base de Datos'.`,
                             duration: 7000,
                         });
+                        playBeep(440, 300); // Play sound for unknown product
                         // Optionally add the placeholder to IndexedDB immediately
                         // await addOrUpdateProductToDB({
                         //      barcode: newPlaceholderProduct.barcode,
@@ -573,13 +575,16 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
 
  // Export current counting list to CSV
  const handleExport = useCallback(() => {
-     // Implementation remains the same, using PapaParse which is now correctly imported
-     if (countingList.length === 0) {
+     // Find products only for the current warehouse
+     const currentWarehouseList = countingList.filter(p => p.warehouseId === currentWarehouseId);
+
+     if (currentWarehouseList.length === 0) {
         toast({ title: "Vacío", description: "No hay productos en el inventario actual para exportar." });
         return;
     }
     try {
-        const dataToExport = countingList.map(p => ({
+        // Use the filtered list for export
+        const dataToExport = currentWarehouseList.map(p => ({
             CodigoBarras: p.barcode,
             Descripcion: p.description,
             Proveedor: p.provider,
@@ -1220,4 +1225,3 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
     </div>
   );
 }
-

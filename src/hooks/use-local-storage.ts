@@ -9,15 +9,28 @@ import { getLocalStorageItem, setLocalStorageItem } from '@/lib/utils';
  * @returns A stateful value, and a function to update it.
  */
 export function useLocalStorage<T>(key: string, initialValue: T): [T, (value: T | ((val: T) => T)) => void] {
-  // Initialize state from localStorage or use initialValue
-  const [storedValue, setStoredValue] = useState<T>(() => {
-    return getLocalStorageItem<T>(key, initialValue);
-  });
+  const [storedValue, setStoredValue] = useState<T>(initialValue); // Initialize with default value
+  const [isMounted, setIsMounted] = useState(false); // Track mount status
 
-  // Update localStorage whenever the state changes
+  // Effect to read from localStorage only after the component has mounted on the client
   useEffect(() => {
-    setLocalStorageItem<T>(key, storedValue);
-  }, [key, storedValue]);
+    setIsMounted(true); // Mark component as mounted
+    try {
+      const item = getLocalStorageItem<T>(key, initialValue);
+      setStoredValue(item);
+    } catch (error) {
+      console.error(`Error reading localStorage key “${key}” on mount:`, error);
+      setStoredValue(initialValue); // Fallback to initial value on error
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [key]); // Only run once on mount based on key
+
+  // Update localStorage whenever the state changes (only if mounted)
+  useEffect(() => {
+    if (isMounted) {
+       setLocalStorageItem<T>(key, storedValue);
+    }
+  }, [key, storedValue, isMounted]);
 
   // Define a setter function that updates both state and localStorage
   const setValue = useCallback((value: T | ((val: T) => T)) => {

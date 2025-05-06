@@ -34,7 +34,7 @@ import {
     DialogHeader,
     DialogTitle,
 } from "@/components/ui/dialog"; // Import Dialog components
-import { Trash, Edit, Plus, Warehouse as WarehouseIcon } from "lucide-react"; // Ensure you have these icons
+import { Trash, Edit, Plus, Warehouse as WarehouseIcon, AlertTriangle } from "lucide-react"; // Ensure you have these icons
 import { cn } from "@/lib/utils";
 import { format } from 'date-fns'; // Import format function
 
@@ -47,12 +47,14 @@ interface WarehouseManagementProps {
   warehouses: Warehouse[];
   onAddWarehouse: (newWarehouse: Warehouse) => void;
   onUpdateWarehouses: (updatedWarehouses: Warehouse[]) => void;
+  onClearDatabaseRequest: () => void; // Add prop for clearing all data
 }
 
 export const WarehouseManagement: React.FC<WarehouseManagementProps> = ({
   warehouses,
   onAddWarehouse,
   onUpdateWarehouses,
+  onClearDatabaseRequest, // Destructure the new prop
 }) => {
   const { toast } = useToast();
   const [newWarehouseId, setNewWarehouseId] = useState("");
@@ -117,6 +119,9 @@ export const WarehouseManagement: React.FC<WarehouseManagementProps> = ({
         description: `${warehouseToDelete.name} ha sido eliminado de la lista de almacenes.`,
         variant: "default"
       });
+       // TODO: Consider deleting associated inventory items from IndexedDB here as well
+       // This would require importing the delete functions and calling them
+       // e.g., clearInventoryForWarehouse(warehouseToDelete.id);
     } else {
         console.warn("Attempted to delete main warehouse or no warehouse selected.");
     }
@@ -166,6 +171,7 @@ export const WarehouseManagement: React.FC<WarehouseManagementProps> = ({
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        {/* Add Warehouse Form */}
         <div className="space-y-2 p-4 border rounded-lg bg-card dark:bg-gray-800 shadow-sm">
           <h3 className="text-lg font-semibold">Agregar Nuevo Almacén</h3>
           <div className="grid grid-cols-1 gap-2">
@@ -195,6 +201,7 @@ export const WarehouseManagement: React.FC<WarehouseManagementProps> = ({
           </Button>
         </div>
 
+        {/* Existing Warehouses List */}
         <div className="space-y-2">
           <h3 className="text-lg font-semibold">Almacenes Existentes</h3>
           <ScrollArea className="max-h-[300px] border rounded-md shadow-sm bg-white dark:bg-gray-800">
@@ -252,7 +259,24 @@ export const WarehouseManagement: React.FC<WarehouseManagementProps> = ({
         </div>
       </div>
 
-      {/* Confirmation Dialog */}
+       {/* Clear Database Button */}
+        <div className="mt-6 pt-4 border-t border-destructive/30">
+          <h3 className="text-lg font-semibold text-destructive mb-2">Zona de Peligro</h3>
+          <Button
+              variant="destructive"
+              onClick={onClearDatabaseRequest} // Call the passed handler
+              className="flex items-center gap-2"
+          >
+              <AlertTriangle className="h-4 w-4" />
+              Borrar Toda la Base de Datos (Productos e Historial)
+          </Button>
+          <p className="text-xs text-destructive/80 mt-1">
+              Esta acción eliminará permanentemente todos los productos y el historial de conteos de la base de datos local. ¡Úsela con precaución!
+          </p>
+      </div>
+
+
+      {/* Delete Warehouse Confirmation Dialog */}
       <AlertDialog open={isDeleteDialogOpen} onOpenChange={setIsDeleteDialogOpen}>
         <AlertDialogContent>
           <AlertDialogHeader>
@@ -272,7 +296,7 @@ export const WarehouseManagement: React.FC<WarehouseManagementProps> = ({
         </AlertDialogContent>
       </AlertDialog>
 
-      {/* Edit Dialog */}
+      {/* Edit Warehouse Dialog */}
       <Dialog open={isEditDialogOpen} onOpenChange={setIsEditDialogOpen}>
         <DialogContent className="sm:max-w-[425px] bg-white dark:bg-gray-900 text-black dark:text-white border-teal-500 rounded-lg shadow-xl p-6">
           <DialogHeader>

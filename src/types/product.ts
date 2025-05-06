@@ -19,6 +19,15 @@ export interface DisplayProduct extends ProductDetail, Omit<InventoryItem, 'barc
     warehouseId: string; // Keep warehouseId for context if needed, otherwise could be omitted if context is clear
 }
 
+// Structure for storing a snapshot of a counting session
+export interface CountingHistoryEntry {
+  id: string; // Unique identifier for the history entry (e.g., timestamp-based)
+  timestamp: string; // ISO 8601 timestamp when the history was saved
+  warehouseId: string;
+  warehouseName: string; // Store the name for easier display
+  products: DisplayProduct[]; // A snapshot of the counting list at the time of saving
+}
+
 // Keep original Product type for compatibility or specific use cases if needed,
 // but prefer ProductDetail and InventoryItem for the multi-warehouse structure.
 // If keeping, decide how 'stock' and 'count' are represented (e.g., total across warehouses?)

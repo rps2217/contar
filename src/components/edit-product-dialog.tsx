@@ -19,7 +19,7 @@ import React, { useEffect } from "react";
 import { useForm } from "react-hook-form";
 import * as z from "zod";
 
-// --- Zod Schema for the Edit Dialog (includes stock) ---
+// --- Zod Schema for the Edit Dialog (includes stock for the specific warehouse) ---
 const editProductSchema = z.object({
   barcode: z.string().min(1, { message: "El código de barras es requerido." }),
   description: z.string().min(1, { message: "La descripción es requerida." }),
@@ -37,13 +37,14 @@ type EditProductValues = z.infer<typeof editProductSchema>;
 interface EditProductDialogProps {
   isOpen: boolean;
   setIsOpen: (open: boolean) => void;
-  selectedDetail: ProductDetail | null;
+  selectedDetail: ProductDetail | null; // Accepts ProductDetail (which might not have full stockPerWarehouse)
   setSelectedDetail: (detail: ProductDetail | null) => void; // Add this prop
   onSubmit: (data: EditProductValues) => Promise<void>; // Expects a Promise now
   onDelete?: (barcode: string) => void; // Optional delete handler
   isProcessing?: boolean; // Optional processing state
-  initialStock?: number; // Optional initial stock value
+  initialStock?: number; // Initial stock value FOR THE CURRENT WAREHOUSE
   context?: 'database' | 'countingList'; // Optional context prop
+  warehouseName?: string; // Add warehouse name for context
 }
 
 // --- React Component ---
@@ -57,6 +58,7 @@ export const EditProductDialog: React.FC<EditProductDialogProps> = ({
   isProcessing = false,
   initialStock = 0,
   context = 'database', // Default context is database
+  warehouseName = 'Almacén Principal', // Default warehouse name
 }) => {
   const { toast } = useToast();
 
@@ -78,7 +80,7 @@ export const EditProductDialog: React.FC<EditProductDialogProps> = ({
         barcode: selectedDetail.barcode,
         description: selectedDetail.description,
         provider: selectedDetail.provider || "",
-        stock: initialStock, // Use initialStock prop for stock
+        stock: initialStock, // Use initialStock prop for stock of the current warehouse
       });
     } else {
       form.reset({ // Reset to empty values when adding new
@@ -110,13 +112,20 @@ export const EditProductDialog: React.FC<EditProductDialogProps> = ({
   };
 
   // --- Render ---
+  const isAddingNew = !selectedDetail?.barcode; // Check if adding a new product
+  const dialogTitle = isAddingNew ? "Agregar Nuevo Producto" : `Editar Producto (${warehouseName})`;
+  const dialogDescription = isAddingNew ?
+      "Completa la información para agregar un nuevo producto y su stock inicial." :
+      `Modifica los detalles del producto y el stock para el almacén "${warehouseName}".`;
+  const stockLabel = `Stock (${warehouseName})`;
+
   return (
     <Dialog open={isOpen} onOpenChange={(open) => { if (!open) handleClose(); else setIsOpen(true); }}>
       <DialogContent className="sm:max-w-[425px]">
         <DialogHeader>
-          <DialogTitle>{selectedDetail ? "Editar Producto" : "Agregar Nuevo Producto"}</DialogTitle>
+          <DialogTitle>{dialogTitle}</DialogTitle>
           <DialogDescription>
-            {selectedDetail ? "Modifica los detalles del producto y el stock del almacén principal." : "Completa la información para agregar un nuevo producto."}
+            {dialogDescription}
           </DialogDescription>
         </DialogHeader>
         <Form {...form}>
@@ -128,7 +137,7 @@ export const EditProductDialog: React.FC<EditProductDialogProps> = ({
                 <FormItem>
                   <FormLabel>Código de Barras</FormLabel>
                   <FormControl>
-                    <Input placeholder="Código de Barras" {...field} disabled={!!selectedDetail} />
+                    <Input placeholder="Código de Barras" {...field} disabled={!isAddingNew} /> {/* Disable if editing */}
                   </FormControl>
                   <FormMessage />
                 </FormItem>
@@ -165,29 +174,32 @@ export const EditProductDialog: React.FC<EditProductDialogProps> = ({
               name="stock"
               render={({ field }) => (
                 <FormItem>
-                  <FormLabel>Stock (Almacén Principal)</FormLabel>
+                  <FormLabel>{stockLabel}</FormLabel>
                   <FormControl>
-                    <Input type="number" inputMode="numeric" placeholder="Stock Inicial" {...field} onChange={e => field.onChange(parseInt(e.target.value) || 0)} />
+                    <Input type="number" inputMode="numeric" placeholder="Stock" {...field} onChange={e => field.onChange(parseInt(e.target.value) || 0)} />
                   </FormControl>
                   <FormMessage />
                 </FormItem>
               )}
             />
             <DialogFooter className="flex flex-col sm:flex-row sm:justify-between gap-2 mt-4">
-               {/* Conditionally render Delete button only if selectedDetail exists and context is database */}
-               {selectedDetail && onDelete && context === 'database' && (
+               {/* Delete button available only if editing an existing product */}
+               {!isAddingNew && onDelete && (
                   <Button
                     type="button"
                     variant="destructive"
-                    onClick={() => onDelete(selectedDetail.barcode)}
+                    onClick={() => onDelete(selectedDetail!.barcode)} // Use selectedDetail barcode
                     disabled={isProcessing}
                     className="w-full sm:w-auto"
                   >
                     <Trash className="mr-2 h-4 w-4" />
-                    Eliminar
+                    Eliminar de DB
                   </Button>
                 )}
-                <div className="flex flex-col sm:flex-row sm:justify-end gap-2 w-full">
+                 {/* Spacer to push buttons to the right if delete is not shown */}
+                 {isAddingNew && <div className="flex-grow"></div>}
+
+                <div className="flex flex-col sm:flex-row sm:justify-end gap-2 w-full sm:w-auto">
                    <DialogClose asChild>
                       <Button type="button" variant="outline" onClick={handleClose} className="w-full sm:w-auto">
                          Cancelar

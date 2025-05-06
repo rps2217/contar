@@ -16,11 +16,12 @@ import { format } from 'date-fns';
  *    - Click Deploy > New deployment.
  *    - Select Type: "Web app".
  *    - Configure:
+ *        - Description: StockCounter Pro Backup Receiver (or similar)
  *        - Execute as: "Me (your_email@example.com)"
- *        - Who has access: "Anyone" (Be aware of security implications)
+ *        - Who has access: "Anyone" (Be aware of security implications. For stricter control, consider "Anyone within [Your Organization]" or using OAuth, which is more complex.)
  *    - Click Deploy.
- *    - Authorize the script if prompted.
- *    - Copy the generated Web app URL.
+ *    - Authorize the script if prompted (Review permissions carefully).
+ *    - Copy the generated Web app URL (ends in /exec).
  * 5. Paste the Web app URL into the input field in the StockCounter Pro app.
  *
  * @param countingListData The array of products currently in the counting list.
@@ -51,15 +52,17 @@ export const backupToGoogleSheet = async (
 
   try {
     // Prepare the data payload to send to the Apps Script
+    // Ensure only necessary and serializable fields are sent
     const payload = {
       warehouseName: warehouseName,
-      countingListData: countingListData.map(product => ({ // Send only necessary fields if needed
+      countingListData: countingListData.map(product => ({
          barcode: product.barcode || 'N/A',
          description: product.description || 'N/A',
          provider: product.provider || 'N/A',
          stock: product.stock ?? 0,
          count: product.count ?? 0,
-         lastUpdated: product.lastUpdated || null, // Send as ISO string or null
+         // Convert date to ISO string or handle potential non-serializable date objects
+         lastUpdated: product.lastUpdated ? new Date(product.lastUpdated).toISOString() : null,
        })),
     };
 
@@ -67,75 +70,61 @@ export const backupToGoogleSheet = async (
 
     const response = await fetch(appsScriptUrl, {
       method: 'POST',
-      // Apps Script doPost expects a specific content type for parameters by default,
-      // but sending JSON and parsing it in the script is more robust.
-      // Option 1: Send as JSON (requires JSON.parse in Apps Script doPost)
       headers: {
-        'Content-Type': 'application/json',
+        // Sending as text/plain and parsing JSON in Apps Script is often more reliable
+        // than application/json for simple doPost triggers.
+         'Content-Type': 'text/plain;charset=utf-8',
       },
-      body: JSON.stringify(payload),
-      // Option 2: Send as form data (simpler Apps Script, harder JS)
-      // headers: {
-      //   'Content-Type': 'application/x-www-form-urlencoded',
-      // },
-      // body: new URLSearchParams({ data: JSON.stringify(payload) }) // Send JSON string as a parameter
-      mode: 'no-cors', // Important: Added no-cors to allow the request despite potential CORS issues with Apps Script directly
+      body: JSON.stringify(payload), // Send the JSON string as the body
+      // IMPORTANT: Remove 'no-cors' mode. Apps Script Web Apps deployed to run as "Anyone"
+      // should handle CORS correctly by default for simple POST requests with text/plain.
+      // If you encounter CORS issues, ensure the deployment setting "Who has access" is correct.
+      // Using 'no-cors' prevents reading the response.
+      // mode: 'no-cors',
       redirect: 'follow', // Follow redirects if any occur
     });
 
-    console.log("Apps Script response status (note: 'no-cors' mode means status might be 0 and body unreadable):", response.status);
+     console.log("Apps Script response status:", response.status);
 
-    // Because of 'no-cors', we cannot reliably check response.ok or read the response body.
-    // We will assume success if the fetch request itself doesn't throw an error.
-    // A more robust solution would involve a proper backend or a different Apps Script setup
-    // that explicitly handles CORS preflight requests (OPTIONS method) and sets appropriate headers.
+     // Check if the request was successful
+     if (!response.ok) {
+       let errorBody = `HTTP error ${response.status}`;
+       try {
+         // Try to read the error response from Apps Script (might be HTML or JSON)
+         errorBody = await response.text();
+       } catch (e) {
+         console.error("Could not read error response body.");
+       }
+       console.error("Apps Script request failed:", errorBody);
+       // Provide a more user-friendly message based on common statuses
+       if (response.status === 401 || response.status === 403) {
+           return { success: false, message: "Error de autorización. Verifique los permisos de la hoja o del script." };
+       } else if (response.status === 404) {
+           return { success: false, message: "Error: Script no encontrado. Verifique la URL." };
+       } else if (response.status === 429) {
+            return { success: false, message: "Demasiadas solicitudes. Inténtelo de nuevo más tarde." };
+       }
+       return { success: false, message: `Error al contactar el script de respaldo: ${response.status} ${response.statusText}. Detalles: ${errorBody.substring(0,100)}` };
+     }
 
-    console.log("Backup request sent (no-cors mode). Assuming success if no network error occurred.");
-    return { success: true, message: "Solicitud de respaldo enviada. Verifica la hoja de Google manualmente." };
+     // Parse the JSON response from the Apps Script
+     const result = await response.json();
+     console.log("Apps Script response data:", result);
 
-
-    // --- Original code block (commented out due to 'no-cors') ---
-    /*
-    if (!response.ok) {
-      // Try to get more specific error from response body if possible
-      let errorBody = `HTTP error ${response.status}`;
-      try {
-        const errorJson = await response.json();
-        errorBody = errorJson.message || errorJson.error || JSON.stringify(errorJson);
-      } catch (e) {
-        // If response is not JSON, try text
-        try {
-          errorBody = await response.text();
-        } catch (textError) {
-          console.error("Could not read error response body.");
-        }
-      }
-      console.error("Apps Script request failed:", errorBody);
-      return { success: false, message: `Error al contactar el script de respaldo: ${errorBody}` };
-    }
-
-    // Parse the JSON response from the Apps Script
-    const result = await response.json();
-    console.log("Apps Script response data:", result);
-
-    if (result.success) {
-      console.log("Backup successful via Apps Script.");
-      return { success: true, message: result.message || "Respaldo exitoso." };
-    } else {
-      console.error("Apps Script reported an error:", result.message);
-      return { success: false, message: `Error en el script de respaldo: ${result.message || 'Error desconocido.'}` };
-    }
-    */
-    // --- End of original code block ---
+     if (result.success) {
+       console.log("Backup successful via Apps Script.");
+       return { success: true, message: result.message || "Respaldo exitoso." };
+     } else {
+       console.error("Apps Script reported an error:", result.message);
+       return { success: false, message: `Error en el script de respaldo: ${result.message || 'Error desconocido.'}` };
+     }
 
   } catch (error: any) {
     console.error('Error during backupToGoogleSheet (Apps Script) Server Action:', error.name, error.message, error.stack);
-    // Network errors or other fetch-related issues
     let errorMessage = `Error inesperado: ${error.message || 'Error de red o desconocido.'}`;
-     if (error.cause) { // Fetch often includes more details in error.cause
-        errorMessage += ` Causa: ${error.cause}`;
+     if (error.cause) {
+        errorMessage += ` Causa: ${String(error.cause).substring(0,100)}`; // Limit cause length
      }
-
     return { success: false, message: errorMessage };
   }
 };
@@ -144,12 +133,21 @@ export const backupToGoogleSheet = async (
 // Paste this code into the Google Apps Script editor bound to your target Google Sheet:
 /*
 function doPost(e) {
+  // --- Configuration ---
+  var sheetName = "Backup"; // CHANGE THIS to your desired sheet name
+  var lockTimeout = 30000; // Wait up to 30 seconds for lock
+
   var lock = LockService.getScriptLock();
-  lock.waitLock(30000); // Wait up to 30 seconds for lock
+  var lockAcquired = lock.waitLock(lockTimeout);
+
+  if (!lockAcquired) {
+    Logger.log("Could not acquire lock after " + lockTimeout + "ms.");
+    return ContentService
+          .createTextOutput(JSON.stringify({ success: false, message: "No se pudo adquirir el bloqueo para escribir en la hoja. Inténtelo de nuevo." }))
+          .setMimeType(ContentService.MimeType.JSON);
+  }
 
   try {
-    // --- Configuration ---
-    var sheetName = "Backup"; // CHANGE THIS to your desired sheet name
     var ss = SpreadsheetApp.getActiveSpreadsheet();
     var sheet = ss.getSheetByName(sheetName);
 
@@ -158,37 +156,38 @@ function doPost(e) {
       sheet = ss.insertSheet(sheetName);
       // Set headers for the new sheet
       sheet.appendRow([
-        "Fecha Respaldo",
-        "Almacén",
-        "Código Barras",
-        "Descripción",
-        "Proveedor",
-        "Stock Sistema",
-        "Cantidad Contada",
-        "Última Actualización Producto" // Corrected Header
+        "Fecha Respaldo", // A
+        "Almacén",        // B
+        "Código Barras",  // C
+        "Descripción",    // D
+        "Proveedor",      // E
+        "Stock Sistema",  // F
+        "Cantidad Contada", // G
+        "Última Actualización Producto" // H
       ]);
-       SpreadsheetApp.flush(); // Ensure sheet creation is committed
-       sheet = ss.getSheetByName(sheetName); // Get the reference again
+      // Optional: Freeze header row
+      sheet.setFrozenRows(1);
+       SpreadsheetApp.flush(); // Ensure sheet creation and header writing is committed
+       sheet = ss.getSheetByName(sheetName); // Get the reference again just in case
        if (!sheet) {
-            throw new Error("Failed to create backup sheet: " + sheetName);
+            throw new Error("Failed to create or find backup sheet: " + sheetName);
        }
+       Logger.log("Created new sheet: " + sheetName);
     }
 
     // --- Parse Request Data ---
     var requestData;
     try {
-       // Check if data is sent as JSON in the body
-       if (e.postData && e.postData.type === "application/json") {
-            requestData = JSON.parse(e.postData.contents);
-       } else if (e.parameter && e.parameter.data) {
-           // Fallback: Check if data is sent as a 'data' parameter (e.g., from x-www-form-urlencoded)
-            requestData = JSON.parse(e.parameter.data);
-       } else {
-           throw new Error("No valid POST data found. Send JSON body or 'data' parameter.");
-       }
-
+      // Check if data is sent as text/plain JSON in the POST body
+      if (e && e.postData && e.postData.contents) {
+         requestData = JSON.parse(e.postData.contents);
+         Logger.log("Parsed JSON data from request body.");
+      } else {
+         Logger.log("No valid POST data found in e.postData.contents.");
+         throw new Error("No se encontraron datos válidos en la solicitud.");
+      }
     } catch (parseError) {
-      Logger.log("Error parsing request data: " + parseError + "\\nRaw data: " + (e.postData ? e.postData.contents : "N/A"));
+      Logger.log("Error parsing request data: " + parseError + "\nRaw data: " + (e && e.postData ? e.postData.contents : "N/A"));
       return ContentService
             .createTextOutput(JSON.stringify({ success: false, message: "Error al analizar los datos de la solicitud: " + parseError }))
             .setMimeType(ContentService.MimeType.JSON);
@@ -199,24 +198,42 @@ function doPost(e) {
     var countingListData = requestData.countingListData || [];
 
     if (countingListData.length === 0) {
+       Logger.log("No product data received in countingListData array.");
       return ContentService
             .createTextOutput(JSON.stringify({ success: false, message: "No se recibieron datos de productos para respaldar." }))
             .setMimeType(ContentService.MimeType.JSON);
     }
 
+    Logger.log("Received " + countingListData.length + " products for warehouse: " + warehouseName);
+
     // --- Prepare Data for Sheet ---
     var backupTimestamp = new Date();
     var valuesToAppend = countingListData.map(function(product) {
+       var lastUpdatedDate = 'N/A';
+        try {
+          if (product.lastUpdated) {
+            // Attempt to parse the ISO string
+            var parsedDate = new Date(product.lastUpdated);
+            // Check if the parsed date is valid before formatting
+            if (!isNaN(parsedDate.getTime())) {
+               lastUpdatedDate = parsedDate; // Keep as Date object for direct sheet insertion
+            }
+          }
+        } catch(dateError){
+            Logger.log("Error parsing lastUpdated date for barcode " + product.barcode + ": " + dateError);
+            // Keep lastUpdatedDate as 'N/A'
+        }
+
       // Ensure correct order matching the headers
       return [
-        backupTimestamp, // Column A: Fecha Respaldo
-        warehouseName,    // Column B: Almacén
-        product.barcode || 'N/A',      // Column C: Código Barras
-        product.description || 'N/A', // Column D: Descripción
-        product.provider || 'N/A',    // Column E: Proveedor
-        product.stock !== undefined ? product.stock : 0,       // Column F: Stock Sistema
-        product.count !== undefined ? product.count : 0,       // Column G: Cantidad Contada
-        product.lastUpdated ? new Date(product.lastUpdated) : 'N/A' // Column H: Última Actualización
+        backupTimestamp,                        // Column A: Fecha Respaldo
+        warehouseName,                          // Column B: Almacén
+        product.barcode || 'N/A',               // Column C: Código Barras
+        product.description || 'N/A',           // Column D: Descripción
+        product.provider || 'N/A',              // Column E: Proveedor
+        product.stock !== undefined ? product.stock : 0, // Column F: Stock Sistema
+        product.count !== undefined ? product.count : 0, // Column G: Cantidad Contada
+        lastUpdatedDate                         // Column H: Última Actualización (as Date object or 'N/A')
       ];
     });
 
@@ -236,19 +253,24 @@ function doPost(e) {
           .setMimeType(ContentService.MimeType.JSON);
 
   } catch (error) {
-    Logger.log("Error in doPost: " + error + "\\nStack: " + error.stack);
+    Logger.log("Error in doPost: " + error + "\nStack: " + (error.stack ? error.stack : 'No stack available'));
     // --- Return Error Response ---
     return ContentService
           .createTextOutput(JSON.stringify({ success: false, message: "Error interno del script: " + error }))
           .setMimeType(ContentService.MimeType.JSON);
   } finally {
-    lock.releaseLock(); // Release the lock
+    if (lockAcquired) {
+      lock.releaseLock(); // Release the lock
+      Logger.log("Script lock released.");
+    }
   }
 }
 
 // Optional: Add a simple doGet function for testing the deployment
 function doGet(e) {
-  return HtmlService.createHtmlOutput("Apps Script for StockCounter Backup is running.");
+  Logger.log("doGet function executed.");
+  return HtmlService.createHtmlOutput("<html><body><h1>StockCounter Pro Backup Script</h1><p>This script receives POST requests to back up data.</p></body></html>");
 }
+
 */
 // Ensure no characters exist after the closing comment marker

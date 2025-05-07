@@ -24,9 +24,10 @@ import {
   AccordionItem,
   AccordionTrigger,
 } from "@/components/ui/accordion";
-import { Trash, Loader2, CalendarIcon } from "lucide-react"; // Import CalendarIcon
+import { Trash, Loader2, CalendarIcon, Download } from "lucide-react"; // Import CalendarIcon and Download
 import { ConfirmationDialog } from '@/components/confirmation-dialog';
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import Papa from 'papaparse'; // Ensure PapaParse is imported
 
 interface CountingHistoryViewerProps {
   getWarehouseName: (warehouseId: string | null | undefined) => string;
@@ -82,18 +83,84 @@ export const CountingHistoryViewer: React.FC<CountingHistoryViewerProps> = ({ ge
     }
   };
 
+  // Function to handle exporting history to CSV
+  const handleExportHistory = useCallback(() => {
+    if (historyEntries.length === 0) {
+      toast({ title: "Vacío", description: "No hay historial para exportar." });
+      return;
+    }
+
+    try {
+      const dataToExport: any[] = [];
+      historyEntries.forEach(entry => {
+        const historyTimestamp = format(new Date(entry.timestamp), 'yyyy-MM-dd HH:mm:ss');
+        const warehouseName = getWarehouseName(entry.warehouseId);
+
+        entry.products.forEach(product => {
+          dataToExport.push({
+            "Fecha Historial": historyTimestamp,
+            "Almacén": warehouseName,
+            "Código Barras": product.barcode,
+            "Descripción": product.description,
+            "Proveedor": product.provider || 'N/A',
+            "Stock Sistema": product.stock ?? 0,
+            "Cantidad Contada": product.count ?? 0,
+            "Diferencia": (product.count ?? 0) - (product.stock ?? 0),
+            "Última Actualización Producto": product.lastUpdated ? format(new Date(product.lastUpdated), 'yyyy-MM-dd HH:mm:ss') : 'N/A',
+          });
+        });
+      });
+
+      if (dataToExport.length === 0) {
+          toast({ title: "Vacío", description: "No hay datos de productos en el historial para exportar." });
+          return;
+      }
+
+      const csv = Papa.unparse(dataToExport, { header: true });
+      const blob = new Blob([`\uFEFF${csv}`], { type: "text/csv;charset=utf-8;" });
+      const link = document.createElement("a");
+      link.href = URL.createObjectURL(blob);
+      const timestamp = format(new Date(), 'yyyyMMdd', { locale: es });
+      const fileName = `historial_conteos_${timestamp}.csv`;
+
+      link.setAttribute("download", fileName);
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(link.href);
+      toast({ title: "Exportado", description: `Historial de conteos exportado a ${fileName}.` });
+
+    } catch (error) {
+      console.error("Error exporting history:", error);
+      toast({ variant: "destructive", title: "Error de Exportación", description: "No se pudo generar el archivo CSV del historial." });
+    }
+  }, [historyEntries, getWarehouseName, toast]);
+
+
   return (
     <div className="p-4 md:p-6 space-y-6">
-      <div className="flex justify-between items-center">
+      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
         <h2 className="text-2xl font-bold">Historial de Conteos</h2>
-        <Button
-          variant="destructive"
-          onClick={() => setIsClearConfirmOpen(true)}
-          disabled={isLoading || isClearing || historyEntries.length === 0}
-        >
-          {isClearing ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Trash className="mr-2 h-4 w-4" />}
-          Borrar Historial
-        </Button>
+        <div className="flex flex-col sm:flex-row gap-2 w-full sm:w-auto">
+           <Button
+            variant="outline"
+            onClick={handleExportHistory}
+            disabled={isLoading || isClearing || historyEntries.length === 0}
+            className="w-full sm:w-auto"
+          >
+            <Download className="mr-2 h-4 w-4" />
+            Descargar Historial
+          </Button>
+          <Button
+            variant="destructive"
+            onClick={() => setIsClearConfirmOpen(true)}
+            disabled={isLoading || isClearing || historyEntries.length === 0}
+            className="w-full sm:w-auto"
+          >
+            {isClearing ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Trash className="mr-2 h-4 w-4" />}
+            Borrar Historial
+          </Button>
+        </div>
       </div>
 
       {isLoading && (

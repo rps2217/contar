@@ -720,10 +720,10 @@ const ProductTable: React.FC<ProductTableProps> = ({
         <TableCaption className="dark:text-gray-400">Productos en la base de datos.</TableCaption>
         <TableHeader className="sticky top-0 bg-gray-50 dark:bg-gray-700 z-10 shadow-sm">
           <TableRow>
-            <TableHead className="w-[15%] md:w-[15%] px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">Código Barras</TableHead>
-            <TableHead className="w-[40%] md:w-[45%] px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">Descripción (Click para Editar)</TableHead>
+            <TableHead className="w-[15%] md:w-[20%] px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">Código Barras</TableHead>
+            <TableHead className="w-[40%] md:w-[50%] px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">Descripción (Click para Editar)</TableHead>
              <TableHead className="hidden md:table-cell w-[20%] px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">Proveedor</TableHead>
-            <TableHead className="w-[15%] md:w-[15%] px-4 py-3 text-center text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">Stock</TableHead>
+            <TableHead className="w-[15%] md:w-[10%] px-4 py-3 text-center text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">Stock</TableHead>
             {/* Actions column removed as editing is triggered by clicking description */}
           </TableRow>
         </TableHeader>

@@ -343,14 +343,6 @@ const modifyProductValue = useCallback(async (barcodeToUpdate: string, type: 'co
         }
     });
 
-     if (type === 'stock' && updatedProduct && !showToast) { // This logic might be redundant if confirmation only applies to 'count'
-         // If type is 'stock', and confirmation was *not* needed (showToast is true),
-         // then we proceed to update the DB.
-         // However, the `needsConfirmation` logic currently only targets `type === 'count'`.
-         // If stock changes also need DB updates, this needs to be outside the `!showToast` block.
-         // Assuming DB update for stock should happen if no count confirmation is blocking it:
-     }
-
      if (type === 'stock' && updatedProduct && showToast) { // if showToast is true, it means no confirmation dialog was triggered for count.
          try {
              const dbProduct = await getProductFromDB(barcodeToUpdate);

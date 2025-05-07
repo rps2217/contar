@@ -51,26 +51,49 @@ export function useBarcodeScanner({
         permissionTimeoutRef.current = null;
     }
     if (readerRef.current) {
-      readerRef.current.reset();
-      console.log("ZXing reader reset.");
+      try {
+        readerRef.current.reset();
+        console.log("ZXing reader reset.");
+      } catch (resetError) {
+        // It's possible reset() might throw if the reader is in a bad state
+        console.warn("Error resetting ZXing reader:", resetError);
+      }
       // Consider not nullifying readerRef.current to reuse the instance if performance allows
     }
     if (streamRef.current) {
-      streamRef.current.getTracks().forEach(track => track.stop());
+      streamRef.current.getTracks().forEach(track => {
+          try {
+             track.stop();
+          } catch (trackStopError){
+             console.warn("Error stopping media track:", trackStopError);
+          }
+      });
       streamRef.current = null;
       console.log("Camera stream stopped.");
     }
     if (localVideoElementRef.current) {
       localVideoElementRef.current.srcObject = null;
-      if (localVideoElementRef.current.parentNode) { // Check if still in DOM
-        localVideoElementRef.current.load(); // Ensure video stops loading data
-      }
-      console.log("Video source cleared.");
+       // Check if video element still exists and is attached to DOM
+       if (localVideoElementRef.current && document.body.contains(localVideoElementRef.current)) {
+          try {
+               localVideoElementRef.current.load(); // Ensure video stops loading data
+               console.log("Video source cleared and load() called.");
+          } catch (loadError) {
+               // The video element might have been removed from the DOM causing load() to fail
+               console.warn("Error calling load() on video element:", loadError);
+          }
+       } else {
+         console.log("Video element not found in DOM or already null, skipping load().");
+       }
       // localVideoElementRef.current = null; // Don't nullify if videoRef from parent is persistent
     }
-    setIsInitializing(false);
+     // Only update state if the component is still mounted
+     if (isMountedRef.current) {
+        setIsInitializing(false);
+     }
     console.log("stopStreamAndReader completed.");
   }, []);
+
 
   // Public function to signal the start of scanning intent
   const startScanning = useCallback(() => {
@@ -88,7 +111,8 @@ export function useBarcodeScanner({
     // This also relies on isEnabled becoming false to trigger cleanup via useEffect.
     // If immediate stop is needed regardless of isEnabled prop, then call stopStreamAndReader directly here.
     // However, the current design ties scanner activity to 'isEnabled'.
-  }, []);
+     stopStreamAndReader(); // Explicitly stop here as well for immediate effect if needed
+  }, [stopStreamAndReader]);
 
 
   useEffect(() => {
@@ -104,18 +128,14 @@ export function useBarcodeScanner({
         return;
       }
 
-      if (!videoRef.current) {
-        console.warn("initializeAndStartScanner: Video element ref not available yet. Will retry shortly if still enabled.");
-        // Set a brief timeout to allow the ref to become available
-        // This is a common pattern if the ref is populated slightly after the effect runs
-        const retryTimeout = setTimeout(() => {
-            if (isEnabled && isMountedRef.current && !cancelled) {
-                initializeAndStartScanner(); // Retry
-            }
-        }, 100); // Short delay
-        return () => clearTimeout(retryTimeout); // Cleanup timeout
-      }
-      localVideoElementRef.current = videoRef.current; // Store the video element once available
+      // Ensure videoRef is available before proceeding
+       if (!videoRef.current) {
+         console.error("Video element ref not available during initialization attempt.");
+         if(isMountedRef.current) setIsInitializing(false);
+         // No automatic retry here, parent component needs to ensure ref is ready
+         return;
+       }
+       localVideoElementRef.current = videoRef.current; // Store the video element once available
 
       if (typeof window !== 'undefined' && window.location.protocol !== 'https:' && !['localhost', '127.0.0.1'].includes(window.location.hostname)) {
         console.warn("Camera access requires a secure context (HTTPS).");
@@ -131,8 +151,15 @@ export function useBarcodeScanner({
        if (permissionTimeoutRef.current) clearTimeout(permissionTimeoutRef.current);
 
       if (!readerRef.current) {
-        readerRef.current = new BrowserMultiFormatReader();
-        console.log("ZXing BrowserMultiFormatReader instance created.");
+        try {
+            readerRef.current = new BrowserMultiFormatReader();
+            console.log("ZXing BrowserMultiFormatReader instance created.");
+        } catch (readerInitError: any) {
+            console.error("Error creating BrowserMultiFormatReader:", readerInitError);
+             toast({ variant: 'destructive', title: 'Error Inicializando Escáner', description: `No se pudo crear el lector de códigos: ${readerInitError.message}`, duration: 9000 });
+             if(isMountedRef.current) setIsInitializing(false);
+             return;
+        }
       }
       const reader = readerRef.current;
       const currentVideoEl = localVideoElementRef.current; // Use the locally stored ref
@@ -170,9 +197,21 @@ export function useBarcodeScanner({
         if(isMountedRef.current) setHasPermission(true);
         streamRef.current = stream;
 
-          currentVideoEl.srcObject = stream;
-          await currentVideoEl.play();
-          console.log("Video stream playing.");
+        if (currentVideoEl) {
+            currentVideoEl.srcObject = stream;
+             // Added event listener for potential errors during video playback setup
+             currentVideoEl.onerror = (err) => {
+                 console.error("Video element error:", err);
+                 toast({ variant: 'destructive', title: 'Error de Video', description: 'Hubo un problema al mostrar el video de la cámara.', duration: 9000 });
+                 stopStreamAndReader();
+             };
+            await currentVideoEl.play();
+            console.log("Video stream playing.");
+        } else {
+             console.error("Video element became null before play could be called.");
+             stopStreamAndReader();
+             return;
+        }
           if(isMountedRef.current) setIsInitializing(false);
 
             if (cancelled || !isMountedRef.current || !isEnabled) {
@@ -188,48 +227,57 @@ export function useBarcodeScanner({
                   console.log("Stopping decodeContinuously loop due to cancellation or invalid state.");
                   return;
                 }
-                readerRef.current.decodeFromVideoElement(localVideoElementRef.current).then(result => {
-                    if (!cancelled && isMountedRef.current && isEnabled) {
-                        const detectedBarcode = result.getText().trim().replace(/\r?\n|\r/g, '');
-                        console.log('Barcode detected:', detectedBarcode);
-                        playBeep(900, 80);
-                        debouncedOnScanSuccess(detectedBarcode);
-                        // To stop after one scan, one would typically call stopStreamAndReader() here
-                        // and ensure the parent component controls re-enabling.
-                        // For continuous scanning, we'll call decodeContinuously again.
-                        // However, ZXing's decodeFromVideoElement often handles continuous scanning internally if not reset.
-                        // Let's rely on ZXing's internal loop or a manual restart if needed.
-                        // For this implementation, let's assume a single successful scan might be enough
-                        // and the parent re-enables if more scans are needed.
-                        // If continuous is desired, call decodeContinuously() in a setTimeout or requestAnimationFrame
-                        // setTimeout(decodeContinuously, 100); // Example of restarting after a delay
-                    }
-                }).catch(err => {
-                     if (!cancelled && isMountedRef.current && isEnabled) {
-                         if (err instanceof NotFoundException) {
-                              // No barcode found, continue scanning by restarting the process
-                              // console.log("No barcode found, continuing scan via timeout...");
-                              setTimeout(() => {
-                                  if (!cancelled && isMountedRef.current && isEnabled) {
-                                       decodeContinuously(); // Recursively call to continue
-                                  }
-                              }, 100); // Adjust delay as needed
-                         } else {
-                             console.error("Error during barcode decoding:", err.name, err.message);
-                              if (err.name !== "ChecksumException" && err.name !== "FormatException") { // Ignore common scan errors
-                                 toast({ variant: "destructive", title: "Error de Escaneo", description: `Error al decodificar: ${err.message}` });
-                                 stopStreamAndReader(); // Stop on significant errors
-                              } else {
-                                 // For minor scan errors, just try again
+                 try {
+                     readerRef.current.decodeFromVideoElement(localVideoElementRef.current).then(result => {
+                        if (!cancelled && isMountedRef.current && isEnabled) {
+                            const detectedBarcode = result.getText().trim().replace(/\r?\n|\r/g, '');
+                            console.log('Barcode detected:', detectedBarcode);
+                            playBeep(900, 80);
+                            debouncedOnScanSuccess(detectedBarcode);
+                            // To stop after one scan, one would typically call stopStreamAndReader() here
+                            // and ensure the parent component controls re-enabling.
+                            // For continuous scanning, we'll call decodeContinuously again.
+                            // However, ZXing's decodeFromVideoElement often handles continuous scanning internally if not reset.
+                            // Let's rely on ZXing's internal loop or a manual restart if needed.
+                            // For this implementation, let's assume a single successful scan might be enough
+                            // and the parent re-enables if more scans are needed.
+                            // If continuous is desired, call decodeContinuously() in a setTimeout or requestAnimationFrame
+                            // setTimeout(decodeContinuously, 100); // Example of restarting after a delay
+                        }
+                    }).catch(err => {
+                         if (!cancelled && isMountedRef.current && isEnabled) {
+                             if (err instanceof NotFoundException) {
+                                  // No barcode found, continue scanning by restarting the process
+                                  // console.log("No barcode found, continuing scan via timeout...");
                                   setTimeout(() => {
                                       if (!cancelled && isMountedRef.current && isEnabled) {
-                                          decodeContinuously();
+                                           decodeContinuously(); // Recursively call to continue
                                       }
-                                  }, 100);
-                              }
+                                  }, 100); // Adjust delay as needed
+                             } else {
+                                 console.error("Error during barcode decoding:", err.name, err.message);
+                                  if (err.name !== "ChecksumException" && err.name !== "FormatException") { // Ignore common scan errors
+                                     toast({ variant: "destructive", title: "Error de Escaneo", description: `Error al decodificar: ${err.message}` });
+                                     stopStreamAndReader(); // Stop on significant errors
+                                  } else {
+                                     // For minor scan errors, just try again
+                                      setTimeout(() => {
+                                          if (!cancelled && isMountedRef.current && isEnabled) {
+                                              decodeContinuously();
+                                          }
+                                      }, 100);
+                                  }
+                             }
                          }
+                    });
+                 } catch (decodeError: any) {
+                    // Catch potential synchronous errors from decodeFromVideoElement (less common but possible)
+                     console.error("Synchronous error during barcode decoding attempt:", decodeError);
+                     if (!cancelled && isMountedRef.current) {
+                         toast({ variant: "destructive", title: "Error de Escaneo Inesperado", description: `Error al iniciar decodificación: ${decodeError.message}`, duration: 9000 });
+                         stopStreamAndReader();
                      }
-                });
+                 }
               };
               decodeContinuously(); // Start the decoding loop
              console.log("decodeContinuously loop initiated.");
@@ -244,7 +292,7 @@ export function useBarcodeScanner({
             return;
         };
 
-        console.error('Error accessing camera or starting scanner:', error.name, error.message);
+        console.error('Error accessing camera or starting scanner:', error.name, error.message, error.stack); // Log stack trace
         if(isMountedRef.current) setHasPermission(false);
         if(isMountedRef.current) setIsInitializing(false);
 
@@ -265,7 +313,11 @@ export function useBarcodeScanner({
             description = `Error desconocido: ${error.name || error.message}`;
         }
 
-        toast({ variant: 'destructive', title: 'Acceso a Cámara Fallido', description: description, duration: 10000 });
+         try {
+            toast({ variant: 'destructive', title: 'Acceso a Cámara Fallido', description: description, duration: 10000 });
+         } catch (toastError) {
+            console.error("Error displaying toast notification:", toastError);
+         }
         stopStreamAndReader();
       }
     };
@@ -283,8 +335,7 @@ export function useBarcodeScanner({
       if (permissionTimeoutRef.current) clearTimeout(permissionTimeoutRef.current);
       stopStreamAndReader();
     };
-  }, [isEnabled, videoRef, debouncedOnScanSuccess, stopStreamAndReader, toast, isInitializing, hasPermission]); // Added isInitializing and hasPermission to dependencies
+  }, [isEnabled, videoRef, debouncedOnScanSuccess, stopStreamAndReader, toast]); // Removed isInitializing and hasPermission from deps
 
   return { isInitializing, hasPermission, startScanning, stopScanning };
 }
-

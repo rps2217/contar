@@ -101,7 +101,7 @@ export default function Home() {
   // --- Refs ---
   const { toast } = useToast();
   const barcodeInputRef = useRef<HTMLInputElement>(null);
-  const videoRef = useRef<HTMLVideoElement>(null);
+  const videoRef = useRef<HTMLVideoElement>(null); // Ref for the video element
 
   // --- Effects ---
 
@@ -132,6 +132,8 @@ export default function Home() {
                 stock: item.stock ?? 0,
                 count: item.count ?? 0,
                 lastUpdated: item.lastUpdated || new Date().toISOString(),
+                 // Ensure warehouseId is present; default if missing (though it should be set on save)
+                warehouseId: item.warehouseId || currentWarehouseId
             }));
         console.log(`Loaded ${loadedList.length} items for warehouse ${currentWarehouseId} from localStorage.`);
         // Filter after loading to ensure only items for the current warehouse are in the state
@@ -200,26 +202,34 @@ export default function Home() {
     let descriptionForToast = '';
     let updatedList: DisplayProduct[] = [];
 
-    const existingProductIndex = countingList.findIndex((p) => p.barcode === trimmedBarcode && p.warehouseId === currentWarehouseId);
+    setCountingList(currentList => {
+        const existingProductIndex = currentList.findIndex((p) => p.barcode === trimmedBarcode && p.warehouseId === currentWarehouseId);
 
-    if (existingProductIndex !== -1) {
-        const productToUpdate = countingList[existingProductIndex];
-        descriptionForToast = productToUpdate.description;
-        const newCount = (productToUpdate.count ?? 0) + 1;
-        const updatedProductData: DisplayProduct = {
-            ...productToUpdate,
-            count: newCount,
-            lastUpdated: new Date().toISOString(),
-        };
+        if (existingProductIndex !== -1) {
+            const productToUpdate = currentList[existingProductIndex];
+            descriptionForToast = productToUpdate.description;
+            const newCount = (productToUpdate.count ?? 0) + 1;
+            const updatedProductData: DisplayProduct = {
+                ...productToUpdate,
+                count: newCount,
+                lastUpdated: new Date().toISOString(),
+            };
 
-        updatedList = [updatedProductData, ...countingList.filter((_, index) => index !== existingProductIndex)];
-        setCountingList(updatedList);
-        toast({ title: "Cantidad aumentada", description: `${descriptionForToast} cantidad aumentada a ${newCount}.` });
-        playBeep(880, 100);
+            updatedList = [updatedProductData, ...currentList.filter((_, index) => index !== existingProductIndex)];
+            toast({ title: "Cantidad aumentada", description: `${descriptionForToast} cantidad aumentada a ${newCount}.` });
+            playBeep(880, 100);
+             return updatedList; // Return updated list for state update
 
-    } else {
+        } else {
+            // Handle unknown product asynchronously outside the state setter
+            // We return the current list here, and update asynchronously if needed
+            return currentList;
+        }
+    });
+
+    // If the product was NOT found in the current counting list state, check the DB
+    if (!updatedList.length) { // updatedList will be empty if product wasn't in countingList
         setIsDbLoading(true);
-
         try {
             const dbProduct = await getProductFromDB(trimmedBarcode);
             let newProductForList: DisplayProduct;
@@ -255,18 +265,18 @@ export default function Home() {
                 });
                 playBeep(440, 300); // Play sound for unknown product
             }
+            // Update state asynchronously after DB check
             if (isMountedRef.current) {
-                 setCountingList(currentList => [newProductForList, ...currentList.filter(item => item.barcode !== trimmedBarcode || item.warehouseId !== currentWarehouseId)]);
+                setCountingList(currentList => [newProductForList, ...currentList.filter(item => item.barcode !== trimmedBarcode || item.warehouseId !== currentWarehouseId)]);
             }
-
         } catch (error) {
             console.error("Error fetching or adding product from IndexedDB:", error);
             toast({ variant: "destructive", title: "Error de Base de Datos", description: "No se pudo verificar o agregar el producto." });
             playBeep(440, 300);
         } finally {
-             if (isMountedRef.current) {
-                 setIsDbLoading(false);
-             }
+            if (isMountedRef.current) {
+                setIsDbLoading(false);
+            }
         }
     }
 
@@ -276,7 +286,7 @@ export default function Home() {
     // Cleanup timeout for last scanned barcode debounce
     return () => clearTimeout(clearLastScannedTimeout);
 
-  }, [barcode, currentWarehouseId, getWarehouseName, lastScannedBarcode, toast, countingList]); // Added countingList
+  }, [barcode, currentWarehouseId, getWarehouseName, lastScannedBarcode, toast]); // Removed countingList dependency
 
 
   // Handle successful barcode scan from the hook
@@ -301,7 +311,7 @@ export default function Home() {
     stopScanning, // Keep public start/stop if needed
   } = useBarcodeScanner({
     onScanSuccess: handleScanSuccessCallback,
-    videoRef: videoRef,
+    videoRef: videoRef, // Pass the ref here
     isEnabled: isScannerActive, // Control the hook's activity
   });
 
@@ -312,15 +322,21 @@ const modifyProductValue = useCallback(async (barcodeToUpdate: string, type: 'co
 
     let updatedProduct: DisplayProduct | undefined;
     let showToast = true;
+    let needsConfirmation = false;
 
     setCountingList(prevList => {
         const productIndex = prevList.findIndex(p => p.barcode === barcodeToUpdate && p.warehouseId === currentWarehouseId);
-        if (productIndex === -1) return prevList;
+        if (productIndex === -1) {
+             console.warn(`Product ${barcodeToUpdate} not found in list for warehouse ${currentWarehouseId}. Cannot modify.`);
+             return prevList;
+        }
 
         const product = prevList[productIndex];
         const originalValue = type === 'count' ? product.count ?? 0 : product.stock ?? 0;
         const finalValue = Math.max(0, originalValue + change);
-        const needsConfirmation = type === 'count' && product.stock !== 0 && (finalValue === product.stock || originalValue === product.stock) && finalValue !== originalValue;
+        // Reset confirmation flag at the start of each modification attempt
+        needsConfirmation = type === 'count' && product.stock !== 0 && (finalValue === product.stock || originalValue === product.stock) && finalValue !== originalValue;
+
 
         updatedProduct = {
              ...product,
@@ -328,7 +344,7 @@ const modifyProductValue = useCallback(async (barcodeToUpdate: string, type: 'co
              lastUpdated: new Date().toISOString()
         };
 
-        if (needsConfirmation && type === 'count') { // only for count
+        if (needsConfirmation) {
             setConfirmQuantityProductBarcode(product.barcode);
             setConfirmQuantityAction(change > 0 ? 'increment' : 'decrement');
             setConfirmQuantityNewValue(finalValue);
@@ -343,46 +359,48 @@ const modifyProductValue = useCallback(async (barcodeToUpdate: string, type: 'co
         }
     });
 
-     if (type === 'stock' && updatedProduct && showToast) { // if showToast is true, it means no confirmation dialog was triggered for count.
-         try {
-             const dbProduct = await getProductFromDB(barcodeToUpdate);
-             if (dbProduct) {
-                 const updatedDbProduct: ProductDetail = {
-                     ...dbProduct,
-                     stock: updatedProduct.stock // Update stock in DB
-                 };
-                 await addOrUpdateProductToDB(updatedDbProduct);
-                  toast({
-                      title: `Stock (DB) Actualizado`,
-                      description: `Stock de ${updatedProduct.description} actualizado a ${updatedProduct.stock} en la base de datos.`
-                  });
-                 showToast = false; // Prevent generic toast if DB toast was shown
-             } else {
-                  console.warn(`Product ${barcodeToUpdate} not found in DB while trying to update stock.`);
-             }
-         } catch (error) {
-             console.error("Error updating stock in IndexedDB:", error);
+    // If no confirmation was needed (i.e., needsConfirmation remained false) or type is 'stock', proceed with DB update and toasts
+    if (!needsConfirmation) {
+        if (type === 'stock' && updatedProduct) {
+            try {
+                const dbProduct = await getProductFromDB(barcodeToUpdate);
+                if (dbProduct) {
+                    const updatedDbProduct: ProductDetail = {
+                        ...dbProduct,
+                        stock: updatedProduct.stock // Update stock in DB
+                    };
+                    await addOrUpdateProductToDB(updatedDbProduct);
+                     toast({
+                         title: `Stock (DB) Actualizado`,
+                         description: `Stock de ${updatedProduct.description} actualizado a ${updatedProduct.stock} en la base de datos.`
+                     });
+                    showToast = false; // Prevent generic toast if DB toast was shown
+                } else {
+                     console.warn(`Product ${barcodeToUpdate} not found in DB while trying to update stock.`);
+                }
+            } catch (error) {
+                console.error("Error updating stock in IndexedDB:", error);
+                toast({
+                    variant: "destructive",
+                    title: "Error DB",
+                    description: `No se pudo actualizar el stock en la base de datos para ${updatedProduct?.description}.`
+                });
+                 showToast = false; // Prevent generic toast if DB error toast was shown
+            }
+        }
+
+
+        if (showToast && updatedProduct) {
+             const valueTypeText = type === 'count' ? 'Cantidad' : 'Stock';
+             const warehouseNameText = getWarehouseName(currentWarehouseId);
+             const descriptionText = updatedProduct.description;
              toast({
-                 variant: "destructive",
-                 title: "Error DB",
-                 description: `No se pudo actualizar el stock en la base de datos para ${updatedProduct?.description}.`
+                 title: `${valueTypeText} Modificada`,
+                 description: `${valueTypeText} de ${descriptionText} (${warehouseNameText}) cambiada a ${type === 'count' ? updatedProduct.count : updatedProduct.stock}.`,
+                 duration: 3000
              });
-              showToast = false; // Prevent generic toast if DB error toast was shown
          }
-     }
-
-
-     if (showToast && updatedProduct) {
-          const valueTypeText = type === 'count' ? 'Cantidad' : 'Stock';
-          const warehouseNameText = getWarehouseName(currentWarehouseId);
-          const descriptionText = updatedProduct.description;
-          toast({
-              title: `${valueTypeText} Modificada`,
-              description: `${valueTypeText} de ${descriptionText} (${warehouseNameText}) cambiada a ${type === 'count' ? updatedProduct.count : updatedProduct.stock}.`,
-              duration: 3000
-          });
-      }
-
+    }
 
   }, [currentWarehouseId, getWarehouseName, toast]);
 
@@ -397,6 +415,8 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
 
     let updatedProduct: DisplayProduct | undefined;
     let showToast = true;
+    let needsConfirmation = false;
+
 
     setCountingList(prevList => {
         const productIndex = prevList.findIndex(p => p.barcode === barcodeToUpdate && p.warehouseId === currentWarehouseId);
@@ -406,7 +426,8 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
         const originalValue = type === 'count' ? product.count ?? 0 : product.stock ?? 0;
         let finalValue = sumValue ? (originalValue + newValue) : newValue;
         finalValue = Math.max(0, finalValue);
-        const needsConfirmation = type === 'count' && product.stock !== 0 && finalValue === product.stock && originalValue !== product.stock;
+        needsConfirmation = type === 'count' && product.stock !== 0 && finalValue === product.stock && originalValue !== product.stock;
+
 
         updatedProduct = {
             ...product,
@@ -414,7 +435,7 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
             lastUpdated: new Date().toISOString()
         };
 
-        if (needsConfirmation && type === 'count') { // Only for count changes
+        if (needsConfirmation) { // Only for count changes
             setConfirmQuantityProductBarcode(product.barcode);
             setConfirmQuantityAction('set');
             setConfirmQuantityNewValue(finalValue);
@@ -429,45 +450,48 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
         }
     });
 
-     if (type === 'stock' && updatedProduct && showToast) {
-         try {
-             const dbProduct = await getProductFromDB(barcodeToUpdate);
-             if (dbProduct) {
-                 const updatedDbProduct: ProductDetail = {
-                     ...dbProduct,
-                     stock: updatedProduct.stock
-                 };
-                 await addOrUpdateProductToDB(updatedDbProduct);
-                  toast({
-                      title: `Stock (DB) Actualizado`,
-                      description: `Stock de ${updatedProduct.description} actualizado a ${updatedProduct.stock} en la base de datos.`
-                  });
-                 showToast = false;
-             } else {
-                 console.warn(`Product ${barcodeToUpdate} not found in DB while trying to update stock from dialog.`);
+    // If no confirmation was needed or type is 'stock', proceed with DB update and toasts
+     if (!needsConfirmation) {
+         if (type === 'stock' && updatedProduct) {
+             try {
+                 const dbProduct = await getProductFromDB(barcodeToUpdate);
+                 if (dbProduct) {
+                     const updatedDbProduct: ProductDetail = {
+                         ...dbProduct,
+                         stock: updatedProduct.stock
+                     };
+                     await addOrUpdateProductToDB(updatedDbProduct);
+                      toast({
+                          title: `Stock (DB) Actualizado`,
+                          description: `Stock de ${updatedProduct.description} actualizado a ${updatedProduct.stock} en la base de datos.`
+                      });
+                     showToast = false;
+                 } else {
+                     console.warn(`Product ${barcodeToUpdate} not found in DB while trying to update stock from dialog.`);
+                 }
+             } catch (error) {
+                 console.error("Error updating stock in IndexedDB from dialog:", error);
+                 toast({
+                     variant: "destructive",
+                     title: "Error DB",
+                     description: `No se pudo actualizar el stock en la base de datos para ${updatedProduct?.description}.`
+                 });
+                  showToast = false;
              }
-         } catch (error) {
-             console.error("Error updating stock in IndexedDB from dialog:", error);
-             toast({
-                 variant: "destructive",
-                 title: "Error DB",
-                 description: `No se pudo actualizar el stock en la base de datos para ${updatedProduct?.description}.`
-             });
-              showToast = false;
          }
-     }
 
-    if (showToast && updatedProduct) {
-        const valueTypeText = type === 'count' ? 'Cantidad' : 'Stock';
-        const actionText = sumValue ? "sumada a" : "establecida en";
-        const warehouseNameText = getWarehouseName(currentWarehouseId);
-        const descriptionText = updatedProduct.description;
-        toast({
-            title: `${valueTypeText} Modificada`,
-            description: `${valueTypeText} de ${descriptionText} (${warehouseNameText}) ${actionText} ${type === 'count' ? updatedProduct.count : updatedProduct.stock}.`,
-            duration: 3000
-        });
-    }
+        if (showToast && updatedProduct) {
+            const valueTypeText = type === 'count' ? 'Cantidad' : 'Stock';
+            const actionText = sumValue ? "sumada a" : "establecida en";
+            const warehouseNameText = getWarehouseName(currentWarehouseId);
+            const descriptionText = updatedProduct.description;
+            toast({
+                title: `${valueTypeText} Modificada`,
+                description: `${valueTypeText} de ${descriptionText} (${warehouseNameText}) ${actionText} ${type === 'count' ? updatedProduct.count : updatedProduct.stock}.`,
+                duration: 3000
+            });
+        }
+     }
 
 
 }, [currentWarehouseId, getWarehouseName, toast]);
@@ -939,12 +963,12 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
   return (
     <div className="container mx-auto p-4">
       {/* Header: Title and Section/Warehouse Selectors */}
-      <div className="flex flex-col md:flex-row justify-between items-center mb-4 gap-4">
+       <div className="flex flex-col md:flex-row justify-between items-center mb-4 gap-4">
          <h1 className="text-2xl font-bold text-gray-700 dark:text-gray-200">StockCounter Pro</h1>
-         <div className="flex flex-wrap justify-center md:justify-end items-center gap-2 w-full md:w-auto">
+         <div className="flex flex-col sm:flex-row items-center gap-2 w-full md:w-auto">
             {/* Section Selector */}
             <Select value={activeSection} onValueChange={handleSectionChange}>
-                <SelectTrigger className="w-auto min-w-[150px] max-w-[200px] bg-white dark:bg-gray-800 border-gray-300 dark:border-gray-600">
+                <SelectTrigger className="w-full sm:w-auto min-w-[180px] max-w-[250px] bg-white dark:bg-gray-800 border-gray-300 dark:border-gray-600">
                     <SelectValue placeholder="Seleccionar Sección" />
                 </SelectTrigger>
                 <SelectContent>
@@ -972,10 +996,10 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
             </Select>
             {/* Warehouse Selector */}
             {warehouses.length > 0 && (
-               <div className="flex items-center gap-2">
+               <div className="flex items-center gap-2 w-full sm:w-auto">
                    <WarehouseIcon className="h-5 w-5 text-gray-600 dark:text-gray-400"/>
                     <Select value={currentWarehouseId} onValueChange={handleWarehouseChange}>
-                        <SelectTrigger className="w-auto min-w-[150px] max-w-[200px] bg-white dark:bg-gray-800 border-gray-300 dark:border-gray-600">
+                        <SelectTrigger className="w-full sm:w-auto min-w-[180px] max-w-[250px] bg-white dark:bg-gray-800 border-gray-300 dark:border-gray-600">
                             <SelectValue placeholder="Seleccionar Almacén" />
                         </SelectTrigger>
                         <SelectContent>
@@ -990,6 +1014,10 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
             )}
          </div>
       </div>
+
+       {/* Always render the video element but hide it when not needed */}
+       <video ref={videoRef} className="absolute w-0 h-0 -z-10" autoPlay muted playsInline></video>
+
 
       {/* Main Content Area based on activeSection */}
       <div className="w-full md:w-[800px] lg:w-[1000px] mx-auto">
@@ -1016,7 +1044,7 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
                         placeholder="Buscar en inventario actual..."
                         value={searchTerm}
                         onChange={(e) => setSearchTerm(e.target.value)}
-                        className="pl-8 w-full bg-blue-50 dark:bg-blue-900/30 border-blue-300 dark:border-blue-600"
+                         className="pl-8 w-full bg-blue-50 dark:bg-blue-900/30 border-blue-300 dark:border-blue-600" // Celeste claro
                         aria-label="Buscar en lista de conteo"
                         disabled={isDbLoading || isRefreshingStock}
                     />
@@ -1188,7 +1216,7 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
        <ScannerDialog
           isOpen={isScannerDialogOpen}
           onClose={handleStopScanning} // Use dedicated stop handler
-          videoRef={videoRef}
+          videoRef={videoRef} // Pass the actual ref
           isInitializing={isScannerInitializing}
           hasPermission={hasCameraPermission}
        />

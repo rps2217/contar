@@ -9,7 +9,7 @@ import { cn } from "@/lib/utils";
 interface ScannerDialogProps {
   isOpen: boolean;
   onClose: () => void;
-  videoRef: React.RefObject<HTMLVideoElement>;
+  videoRef: React.RefObject<HTMLVideoElement>; // Receive the ref
   isInitializing: boolean;
   hasPermission: boolean | null;
 }
@@ -17,12 +17,11 @@ interface ScannerDialogProps {
 export const ScannerDialog: React.FC<ScannerDialogProps> = ({
   isOpen,
   onClose,
-  videoRef,
+  videoRef, // Use the received ref
   isInitializing,
   hasPermission
 }) => {
   return (
-    // Use Radix Dialog primitive directly if needed, or keep ShadCN wrapper
     <Dialog open={isOpen} onOpenChange={(open) => { if (!open) onClose(); }}>
       <DialogContent className="max-w-md w-full p-4 bg-white dark:bg-gray-800 rounded-lg shadow-xl">
         <DialogHeader>
@@ -31,24 +30,28 @@ export const ScannerDialog: React.FC<ScannerDialogProps> = ({
             Apunta la cámara al código de barras.
           </DialogDescription>
         </DialogHeader>
-        <div className="my-4 relative aspect-video overflow-hidden rounded-md"> {/* Added overflow-hidden */}
-          {/* Video element is always rendered */}
-          <video
-            ref={videoRef}
-            className={cn(
-              "w-full h-full object-cover", // Use object-cover for better fit
-              "transition-opacity duration-300",
-              (isInitializing || hasPermission === false) ? "opacity-0" : "opacity-100" // Fade in/out video
-            )}
-            autoPlay
-            muted
-            playsInline // Important for mobile
-          />
+         <div className="my-4 relative aspect-video overflow-hidden rounded-md">
+          {/* Video element is passed via ref, but overlay/indicators are here */}
 
           {/* Centered Red Finder Box Overlay */}
           <div className={cn("absolute inset-0 flex items-center justify-center pointer-events-none")}>
-            <div className="w-3/4 h-1/2 border-2 border-red-500 rounded-md opacity-75 animate-pulse"></div> {/* Optional pulse animation */}
+            <div className="w-3/4 h-1/2 border-2 border-red-500 rounded-md opacity-75 animate-pulse"></div>
           </div>
+
+           {/* Video element needs to be present in the DOM for the ref to work */}
+           {/* Ensure this video element is correctly passed the ref from the parent */}
+           <video
+            ref={videoRef} // Use the passed ref
+            className={cn(
+              "w-full h-full object-cover",
+              "transition-opacity duration-300",
+              (isInitializing || hasPermission === false) ? "opacity-0" : "opacity-100"
+            )}
+            autoPlay
+            muted
+            playsInline
+           />
+
 
           {/* Loading/Initializing Indicator */}
           {isInitializing && (

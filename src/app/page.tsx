@@ -328,7 +328,7 @@ const modifyProductValue = useCallback(async (barcodeToUpdate: string, type: 'co
              lastUpdated: new Date().toISOString()
         };
 
-        if (needsConfirmation) {
+        if (needsConfirmation && type === 'count') { // only for count
             setConfirmQuantityProductBarcode(product.barcode);
             setConfirmQuantityAction(change > 0 ? 'increment' : 'decrement');
             setConfirmQuantityNewValue(finalValue);
@@ -414,7 +414,7 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
             lastUpdated: new Date().toISOString()
         };
 
-        if (needsConfirmation) {
+        if (needsConfirmation && type === 'count') { // Only for count changes
             setConfirmQuantityProductBarcode(product.barcode);
             setConfirmQuantityAction('set');
             setConfirmQuantityNewValue(finalValue);
@@ -429,7 +429,7 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
         }
     });
 
-     if (type === 'stock' && updatedProduct && showToast) { // if showToast is true, it means no confirmation dialog was triggered for count.
+     if (type === 'stock' && updatedProduct && showToast) {
          try {
              const dbProduct = await getProductFromDB(barcodeToUpdate);
              if (dbProduct) {
@@ -942,52 +942,52 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
       <div className="flex flex-col md:flex-row justify-between items-center mb-4 gap-4">
          <h1 className="text-2xl font-bold text-gray-700 dark:text-gray-200">StockCounter Pro</h1>
          <div className="flex flex-wrap justify-center md:justify-end items-center gap-2 w-full md:w-auto">
-              {/* Warehouse Selector */}
-              {warehouses.length > 0 && (
-                 <div className="flex items-center gap-2">
-                     <WarehouseIcon className="h-5 w-5 text-gray-600 dark:text-gray-400"/>
-                      <Select value={currentWarehouseId} onValueChange={handleWarehouseChange}>
-                          <SelectTrigger className="w-auto min-w-[150px] max-w-[200px] bg-white dark:bg-gray-800 border-gray-300 dark:border-gray-600">
-                              <SelectValue placeholder="Seleccionar Almacén" />
-                          </SelectTrigger>
-                          <SelectContent>
-                              {warehouses.map((warehouse) => (
-                              <SelectItem key={warehouse.id} value={warehouse.id}>
-                                  {warehouse.name}
-                              </SelectItem>
-                              ))}
-                          </SelectContent>
-                      </Select>
-                 </div>
-              )}
-              {/* Section Selector */}
-               <Select value={activeSection} onValueChange={handleSectionChange}>
-                    <SelectTrigger className="w-auto min-w-[150px] max-w-[200px] bg-white dark:bg-gray-800 border-gray-300 dark:border-gray-600">
-                        <SelectValue placeholder="Seleccionar Sección" />
-                    </SelectTrigger>
-                    <SelectContent>
-                         <SelectItem value="Contador">
-                            <div className="flex items-center gap-2">
-                                <AppWindow className="h-4 w-4"/> Contador ({getWarehouseName(currentWarehouseId)})
-                             </div>
-                         </SelectItem>
-                         <SelectItem value="Base de Datos">
-                             <div className="flex items-center gap-2">
-                                <Database className="h-4 w-4"/> Base de Datos
-                            </div>
-                        </SelectItem>
-                         <SelectItem value="Almacenes">
-                              <div className="flex items-center gap-2">
-                                <Boxes className="h-4 w-4"/> Almacenes
-                             </div>
-                         </SelectItem>
-                         <SelectItem value="Historial">
-                              <div className="flex items-center gap-2">
-                                <HistoryIcon className="h-4 w-4"/> Historial
-                             </div>
-                         </SelectItem>
-                    </SelectContent>
-                </Select>
+            {/* Section Selector */}
+            <Select value={activeSection} onValueChange={handleSectionChange}>
+                <SelectTrigger className="w-auto min-w-[150px] max-w-[200px] bg-white dark:bg-gray-800 border-gray-300 dark:border-gray-600">
+                    <SelectValue placeholder="Seleccionar Sección" />
+                </SelectTrigger>
+                <SelectContent>
+                    <SelectItem value="Contador">
+                        <div className="flex items-center gap-2">
+                            <AppWindow className="h-4 w-4"/> Contador ({getWarehouseName(currentWarehouseId)})
+                         </div>
+                    </SelectItem>
+                    <SelectItem value="Base de Datos">
+                         <div className="flex items-center gap-2">
+                            <Database className="h-4 w-4"/> Base de Datos
+                        </div>
+                    </SelectItem>
+                    <SelectItem value="Almacenes">
+                          <div className="flex items-center gap-2">
+                            <Boxes className="h-4 w-4"/> Almacenes
+                         </div>
+                    </SelectItem>
+                    <SelectItem value="Historial">
+                          <div className="flex items-center gap-2">
+                            <HistoryIcon className="h-4 w-4"/> Historial
+                         </div>
+                    </SelectItem>
+                </SelectContent>
+            </Select>
+            {/* Warehouse Selector */}
+            {warehouses.length > 0 && (
+               <div className="flex items-center gap-2">
+                   <WarehouseIcon className="h-5 w-5 text-gray-600 dark:text-gray-400"/>
+                    <Select value={currentWarehouseId} onValueChange={handleWarehouseChange}>
+                        <SelectTrigger className="w-auto min-w-[150px] max-w-[200px] bg-white dark:bg-gray-800 border-gray-300 dark:border-gray-600">
+                            <SelectValue placeholder="Seleccionar Almacén" />
+                        </SelectTrigger>
+                        <SelectContent>
+                            {warehouses.map((warehouse) => (
+                            <SelectItem key={warehouse.id} value={warehouse.id}>
+                                {warehouse.name}
+                            </SelectItem>
+                            ))}
+                        </SelectContent>
+                    </Select>
+               </div>
+            )}
          </div>
       </div>
 

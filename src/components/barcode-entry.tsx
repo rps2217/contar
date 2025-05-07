@@ -11,9 +11,9 @@ interface BarcodeEntryProps {
   onAddProduct: () => void;
   onScanClick: () => void;
   onRefreshStock: () => void;
-  isLoading: boolean;
-  isScanning: boolean;
-  isRefreshingStock: boolean;
+  isLoading: boolean; // General loading (DB, initial list)
+  isScanning: boolean; // Camera scanning active
+  isRefreshingStock: boolean; // Refresh stock action active
   inputRef: React.RefObject<HTMLInputElement>;
 }
 
@@ -23,7 +23,7 @@ export const BarcodeEntry: React.FC<BarcodeEntryProps> = ({
   onAddProduct,
   onScanClick,
   onRefreshStock,
-  isLoading,
+  isLoading, // This prop now covers general DB loading, backup, history saving
   isScanning,
   isRefreshingStock,
   inputRef
@@ -34,6 +34,10 @@ export const BarcodeEntry: React.FC<BarcodeEntryProps> = ({
       onAddProduct();
     }
   };
+
+  // isLoading prop now also indicates if backing up or saving to history
+  const isAnyLoadingActive = isLoading || isScanning || isRefreshingStock;
+
 
   return (
     <div className="flex items-center mb-4 gap-2">
@@ -52,7 +56,7 @@ export const BarcodeEntry: React.FC<BarcodeEntryProps> = ({
         ref={inputRef}
         onKeyDown={handleKeyDown}
         aria-label="Código de barras"
-        disabled={isLoading || isScanning || isRefreshingStock} // Disable if any loading state is active
+        disabled={isAnyLoadingActive}
       />
       <Button
         onClick={onScanClick}
@@ -63,7 +67,7 @@ export const BarcodeEntry: React.FC<BarcodeEntryProps> = ({
         )}
         aria-label="Escanear código de barras con la cámara"
         title="Escanear con Cámara"
-        disabled={isLoading || isScanning}
+        disabled={isAnyLoadingActive}
       >
         <Camera className="h-5 w-5" />
       </Button>
@@ -71,7 +75,7 @@ export const BarcodeEntry: React.FC<BarcodeEntryProps> = ({
         onClick={onAddProduct}
         className="bg-teal-600 hover:bg-teal-700 text-white rounded-md shadow-sm px-5 py-2 transition-colors duration-200"
         aria-label="Agregar producto al almacén actual"
-        disabled={isLoading || !barcode.trim()} // Disable if loading or barcode is empty
+        disabled={isAnyLoadingActive || !barcode.trim()}
       >
         Agregar
       </Button>
@@ -80,7 +84,7 @@ export const BarcodeEntry: React.FC<BarcodeEntryProps> = ({
         variant="outline"
         size="icon"
         className="text-blue-600 dark:text-blue-400 border-blue-300 dark:border-blue-600 hover:bg-blue-50 dark:hover:bg-blue-900 hover:text-blue-700 dark:hover:text-blue-300"
-        disabled={isRefreshingStock || isLoading}
+        disabled={isAnyLoadingActive} // Also disable if saving to history or backing up
         aria-label="Actualizar stocks desde la base de datos para este almacén"
         title="Actualizar Stocks"
       >

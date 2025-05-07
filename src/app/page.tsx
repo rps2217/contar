@@ -1,7 +1,7 @@
 // src/app/page.tsx
 "use client";
 
-import type { DisplayProduct, InventoryItem, ProductDetail, CountingHistoryEntry } from '@/types/product'; // Import CountingHistoryEntry
+import type { DisplayProduct, ProductDetail, CountingHistoryEntry } from '@/types/product'; // Import CountingHistoryEntry
 import { useToast } from "@/hooks/use-toast";
 import { cn, getLocalStorageItem, setLocalStorageItem, debounce } from "@/lib/utils";
 import {
@@ -91,6 +91,7 @@ export default function Home() {
   const [isScannerDialogOpen, setIsScannerDialogOpen] = useState(false); // Separate state for dialog visibility
   const [isScannerActive, setIsScannerActive] = useState(false); // Separate state to enable/disable the hook
   const [isBackingUp, setIsBackingUp] = useState(false);
+  const [isSavingToHistory, setIsSavingToHistory] = useState(false); // State for saving to history
   const [lastScannedBarcode, setLastScannedBarcode] = useState<string | null>(null);
   const [isEditDetailDialogOpen, setIsEditDetailDialogOpen] = useState(false);
   const [productToEditDetail, setProductToEditDetail] = useState<ProductDetail | null>(null); // Detail only for edit dialog
@@ -255,7 +256,7 @@ export default function Home() {
                 playBeep(440, 300); // Play sound for unknown product
             }
             if (isMountedRef.current) {
-                 setCountingList(currentList => [newProductForList, ...currentList]);
+                 setCountingList(currentList => [newProductForList, ...currentList.filter(item => item.barcode !== trimmedBarcode || item.warehouseId !== currentWarehouseId)]);
             }
 
         } catch (error) {
@@ -332,16 +333,25 @@ const modifyProductValue = useCallback(async (barcodeToUpdate: string, type: 'co
             setConfirmQuantityAction(change > 0 ? 'increment' : 'decrement');
             setConfirmQuantityNewValue(finalValue);
             setIsConfirmQuantityDialogOpen(true);
-            showToast = false;
-            return prevList;
+            showToast = false; // Toast will be shown after confirmation or cancellation
+            return prevList; // Return previous list as confirmation is pending
         } else {
+            // No confirmation needed, update directly
             const updatedList = [...prevList];
             updatedList[productIndex] = updatedProduct;
             return updatedList;
         }
     });
 
-     if (type === 'stock' && updatedProduct && !needsConfirmation) {
+     if (type === 'stock' && updatedProduct && !showToast) { // This logic might be redundant if confirmation only applies to 'count'
+         // If type is 'stock', and confirmation was *not* needed (showToast is true),
+         // then we proceed to update the DB.
+         // However, the `needsConfirmation` logic currently only targets `type === 'count'`.
+         // If stock changes also need DB updates, this needs to be outside the `!showToast` block.
+         // Assuming DB update for stock should happen if no count confirmation is blocking it:
+     }
+
+     if (type === 'stock' && updatedProduct && showToast) { // if showToast is true, it means no confirmation dialog was triggered for count.
          try {
              const dbProduct = await getProductFromDB(barcodeToUpdate);
              if (dbProduct) {
@@ -354,7 +364,7 @@ const modifyProductValue = useCallback(async (barcodeToUpdate: string, type: 'co
                       title: `Stock (DB) Actualizado`,
                       description: `Stock de ${updatedProduct.description} actualizado a ${updatedProduct.stock} en la base de datos.`
                   });
-                 showToast = false;
+                 showToast = false; // Prevent generic toast if DB toast was shown
              } else {
                   console.warn(`Product ${barcodeToUpdate} not found in DB while trying to update stock.`);
              }
@@ -365,12 +375,13 @@ const modifyProductValue = useCallback(async (barcodeToUpdate: string, type: 'co
                  title: "Error DB",
                  description: `No se pudo actualizar el stock en la base de datos para ${updatedProduct?.description}.`
              });
-              showToast = false;
+              showToast = false; // Prevent generic toast if DB error toast was shown
          }
      }
 
+
      if (showToast && updatedProduct) {
-          const valueTypeText = type === 'count' ? 'Cantidad' : 'Stock'; // Simplified
+          const valueTypeText = type === 'count' ? 'Cantidad' : 'Stock';
           const warehouseNameText = getWarehouseName(currentWarehouseId);
           const descriptionText = updatedProduct.description;
           toast({
@@ -426,7 +437,7 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
         }
     });
 
-     if (type === 'stock' && updatedProduct && !needsConfirmation) {
+     if (type === 'stock' && updatedProduct && showToast) { // if showToast is true, it means no confirmation dialog was triggered for count.
          try {
              const dbProduct = await getProductFromDB(barcodeToUpdate);
              if (dbProduct) {
@@ -616,20 +627,12 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
 
         if (result.success) {
             toast({ title: "Respaldo Exitoso", description: result.message });
-            const historyEntry: CountingHistoryEntry = {
-                id: new Date().toISOString(),
-                timestamp: new Date().toISOString(),
-                warehouseId: currentWarehouseId,
-                warehouseName: currentWHName,
-                products: [...currentListForWarehouse]
-            };
-            await saveCountingHistory(historyEntry);
-            console.log("Counting history saved locally after successful backup.");
+            // History saving is now manual via handleSaveToHistory
         } else {
             toast({ variant: "destructive", title: "Error de Respaldo", description: result.message, duration: 10000 });
         }
     } catch (error: any) {
-        console.error("Error calling backupToGoogleSheet Server Action or saving history:", error);
+        console.error("Error calling backupToGoogleSheet Server Action:", error);
         toast({ variant: "destructive", title: "Error de Respaldo", description: error.message || "Ocurrió un error inesperado al intentar respaldar.", duration: 10000 });
     } finally {
         if (isMountedRef.current) {
@@ -637,6 +640,39 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
         }
     }
  }, [countingList, currentWarehouseId, getWarehouseName, toast, backupUrl]);
+
+  // Save current counting list to local history
+  const handleSaveToHistory = useCallback(async () => {
+    if (!isMountedRef.current) return;
+    const currentListForWarehouse = countingList.filter(p => p.warehouseId === currentWarehouseId);
+
+    if (currentListForWarehouse.length === 0) {
+        toast({ title: "Vacío", description: "No hay productos en el inventario actual para guardar en el historial." });
+        return;
+    }
+
+    setIsSavingToHistory(true);
+    try {
+        const currentWHName = getWarehouseName(currentWarehouseId);
+        const historyEntry: CountingHistoryEntry = {
+            id: new Date().toISOString(), // Unique ID for the entry
+            timestamp: new Date().toISOString(),
+            warehouseId: currentWarehouseId,
+            warehouseName: currentWHName,
+            products: [...currentListForWarehouse] // Create a copy
+        };
+
+        await saveCountingHistory(historyEntry);
+        toast({ title: "Historial Guardado", description: `Conteo para ${currentWHName} guardado en el historial local.` });
+    } catch (error: any) {
+        console.error("Error saving counting history:", error);
+        toast({ variant: "destructive", title: "Error al Guardar Historial", description: error.message || "Ocurrió un error inesperado." });
+    } finally {
+        if (isMountedRef.current) {
+            setIsSavingToHistory(false);
+        }
+    }
+}, [countingList, currentWarehouseId, getWarehouseName, toast]);
 
 
  // Refresh stock and details from IndexedDB
@@ -735,8 +771,8 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
          console.error("Error fetching product details for edit:", error);
          toast({ variant: "destructive", title: "Error DB", description: "No se pudieron obtener los datos del producto para editar." });
      } finally {
-         if (!isMountedRef.current) {
-              setIsDbLoading(false);
+         if (isMountedRef.current) { // Check moved inside finally
+            setIsDbLoading(false);
          }
      }
  }, [toast]);
@@ -975,7 +1011,7 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
                     onAddProduct={() => handleAddProduct()}
                     onScanClick={handleScanButtonClick}
                     onRefreshStock={handleRefreshStock}
-                    isLoading={isDbLoading || isRefreshingStock || isBackingUp || isScannerInitializing}
+                    isLoading={isDbLoading || isRefreshingStock || isBackingUp || isScannerInitializing || isSavingToHistory}
                     isScanning={isScannerActive || isScannerDialogOpen} // Consider dialog open as scanning active for UI
                     isRefreshingStock={isRefreshingStock}
                     inputRef={barcodeInputRef}
@@ -1018,13 +1054,27 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
                     onChange={(e) => setBackupUrl(e.target.value)}
                     className="w-full sm:w-auto flex-grow bg-white dark:bg-gray-800 border-gray-300 dark:border-gray-600"
                     aria-label="URL de Google Apps Script para respaldo"
-                    disabled={isDbLoading || isBackingUp}
+                    disabled={isDbLoading || isBackingUp || isSavingToHistory}
                  />
+                  {/* Save to History Button */}
+                  <Button
+                        onClick={handleSaveToHistory}
+                        className="bg-blue-600 hover:bg-blue-700 text-white rounded-md shadow-sm px-5 py-2 transition-colors duration-200 w-full sm:w-auto"
+                        disabled={countingList.filter(p => p.warehouseId === currentWarehouseId).length === 0 || isDbLoading || isSavingToHistory}
+                        aria-label="Guardar conteo actual en el historial local"
+                    >
+                        {isSavingToHistory ? (
+                            <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                        ) : (
+                            <Save className="mr-2 h-4 w-4" />
+                        )}
+                        {isSavingToHistory ? "Guardando..." : "Guardar en Historial"}
+                    </Button>
                  {/* Backup Button */}
                  <Button
                       onClick={handleBackupToGoogleSheet}
                       className="bg-green-600 hover:bg-green-700 text-white rounded-md shadow-sm px-5 py-2 transition-colors duration-200 w-full sm:w-auto"
-                      disabled={countingList.filter(p => p.warehouseId === currentWarehouseId).length === 0 || isDbLoading || isBackingUp || !backupUrl.trim()}
+                      disabled={countingList.filter(p => p.warehouseId === currentWarehouseId).length === 0 || isDbLoading || isBackingUp || !backupUrl.trim() || isSavingToHistory}
                       aria-label="Respaldar inventario actual a Google Sheet vía Apps Script"
                       title="Asegúrate que la URL es correcta y el script está desplegado."
                  >
@@ -1038,7 +1088,7 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
                  {/* Export Button */}
                  <Button
                     onClick={handleExport}
-                     className="bg-blue-600 hover:bg-blue-700 text-white rounded-md shadow-sm px-5 py-2 transition-colors duration-200 w-full sm:w-auto"
+                     className="bg-indigo-600 hover:bg-indigo-700 text-white rounded-md shadow-sm px-5 py-2 transition-colors duration-200 w-full sm:w-auto"
                      disabled={countingList.filter(p => p.warehouseId === currentWarehouseId).length === 0 || isDbLoading}
                      aria-label="Exportar inventario actual a CSV"
                  >
@@ -1173,10 +1223,11 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
                    console.error("Failed to delete product from DB via edit dialog:", error);
                    toast({ variant: "destructive", title: "Error al Eliminar", description: `No se pudo eliminar: ${error.message}` });
                } finally {
-                    if (!isMountedRef.current) return;
-                    setIsDbLoading(false);
-                    setIsDeleteDialogOpen(false);
-                    setProductToDelete(null);
+                    if (!isMountedRef.current) { // Check moved inside finally
+                        setIsDbLoading(false);
+                    }
+                    setIsDeleteDialogOpen(false); // Ensure delete dialog is also closed
+                    setProductToDelete(null); // Clear product to delete from main state
                }
            }}
          isProcessing={isDbLoading}
@@ -1188,4 +1239,3 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
     </div>
   );
 }
-

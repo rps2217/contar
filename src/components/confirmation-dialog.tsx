@@ -12,7 +12,7 @@ interface ConfirmationDialogProps {
   isOpen: boolean;
   onOpenChange: (open: boolean) => void;
   title: string;
-  description: React.ReactNode; // Allow complex descriptions
+  description: React.ReactNode; // Allow complex descriptions, logic moved to parent
   confirmText?: string;
   cancelText?: string;
   onConfirm: () => void;
@@ -25,7 +25,7 @@ export const ConfirmationDialog: React.FC<ConfirmationDialogProps> = ({
   isOpen,
   onOpenChange,
   title,
-  description,
+  description, // Keep description prop, but the specific text generation is moved to the parent component (Home.tsx)
   confirmText = "Confirmar",
   cancelText = "Cancelar",
   onConfirm,
@@ -53,7 +53,7 @@ export const ConfirmationDialog: React.FC<ConfirmationDialogProps> = ({
         <AlertDialogHeader>
           <AlertDialogTitle>{title}</AlertDialogTitle>
           <AlertDialogDescription>
-            {description}
+            {description} {/* Render the description passed from the parent */}
           </AlertDialogDescription>
         </AlertDialogHeader>
         <AlertDialogFooter>
@@ -71,3 +71,4 @@ export const ConfirmationDialog: React.FC<ConfirmationDialogProps> = ({
     </AlertDialog>
   );
 };
+

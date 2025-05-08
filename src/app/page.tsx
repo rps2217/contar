@@ -326,9 +326,11 @@ const modifyProductValue = useCallback(async (barcodeToUpdate: string, type: 'co
         productDescription = product.description; // Capture description for potential toast later
         const originalValue = type === 'count' ? product.count ?? 0 : product.stock ?? 0;
         finalValue = Math.max(0, originalValue + change); // Calculate final value first
+        const productStock = product.stock ?? 0;
 
-        // Check for confirmation only for 'count' type when reaching stock level
-        needsConfirmation = type === 'count' && product.stock !== 0 && finalValue === product.stock && originalValue !== product.stock && finalValue !== originalValue;
+        // Check for confirmation only for 'count' type when EXCEEDING stock level
+        needsConfirmation = type === 'count' && productStock > 0 && finalValue > productStock && originalValue <= productStock;
+
 
         if (needsConfirmation) {
             setConfirmQuantityProductBarcode(product.barcode);
@@ -449,9 +451,11 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
         const originalValue = type === 'count' ? product.count ?? 0 : product.stock ?? 0;
         let calculatedValue = sumValue ? (originalValue + newValue) : newValue;
         finalValue = Math.max(0, calculatedValue); // Ensure value is not negative
+        const productStock = product.stock ?? 0;
 
-        // Check for confirmation only for 'count' changes when reaching stock level
-        needsConfirmation = type === 'count' && product.stock !== 0 && finalValue === product.stock && originalValue !== product.stock;
+        // Check for confirmation only for 'count' changes when EXCEEDING stock level
+        needsConfirmation = type === 'count' && productStock > 0 && finalValue > productStock && originalValue <= productStock;
+
 
         if (needsConfirmation) {
             setConfirmQuantityProductBarcode(product.barcode);
@@ -1235,11 +1239,12 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
           onOpenChange={setIsConfirmQuantityDialogOpen}
           title="Confirmar Modificación"
           description={
-             confirmQuantityNewValue !== null &&
-             countingList.find(p => p.barcode === confirmQuantityProductBarcode)?.stock === confirmQuantityNewValue
-                 ? `La cantidad contada (${confirmQuantityNewValue}) ahora coincide con el stock del sistema para "${countingList.find(p => p.barcode === confirmQuantityProductBarcode)?.description}". ¿Confirmar?`
-                 : `Está a punto de modificar la cantidad contada para "${countingList.find(p => p.barcode === confirmQuantityProductBarcode)?.description}". ¿Continuar?`
-          }
+            confirmQuantityNewValue !== null &&
+            countingList.find(p => p.barcode === confirmQuantityProductBarcode)?.stock !== null &&
+            confirmQuantityNewValue > countingList.find(p => p.barcode === confirmQuantityProductBarcode)!.stock!
+                ? `La cantidad contada (${confirmQuantityNewValue}) ahora supera el stock del sistema para "${countingList.find(p => p.barcode === confirmQuantityProductBarcode)?.description}". ¿Confirmar?`
+                : `Está a punto de modificar la cantidad contada para "${countingList.find(p => p.barcode === confirmQuantityProductBarcode)?.description}". ¿Continuar?`
+        }
           onConfirm={handleConfirmQuantityChange}
           onCancel={() => {
               setIsConfirmQuantityDialogOpen(false);
@@ -1298,3 +1303,4 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
     </div>
   );
 }
+

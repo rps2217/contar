@@ -11,22 +11,28 @@ export const getLocalStorageItem = <T>(key: string, defaultValue: T): T => {
   if (typeof window === 'undefined') {
     return defaultValue;
   }
+  let item: string | null = null;
   try {
-    const item = window.localStorage.getItem(key);
-    if (item === null || item === 'undefined') { // Check for null or 'undefined' string
-        return defaultValue;
-    }
-    // Attempt to parse the item only if it's not null and not the string 'undefined'
+    item = window.localStorage.getItem(key);
+  } catch (storageError) {
+      console.error(`Error reading localStorage key “${key}” from storage:`, storageError);
+      return defaultValue; // Return default if storage access fails
+  }
+
+  // Check if item is null, undefined, or an empty string before attempting to parse
+  if (item === null || item === 'undefined' || item === '') {
+    return defaultValue;
+  }
+
+  try {
+    // Attempt to parse the item only if it's not null/empty/undefined string
     return JSON.parse(item);
-  } catch (error) {
-    console.error(`Error reading and parsing localStorage key “${key}”:`, error);
-    // Don't warn if the item was actually 'undefined' or null, just return default
-    const item = window.localStorage.getItem(key); // Re-get item for logging if needed
-    if (item !== null && item !== 'undefined') {
-        console.warn(`Invalid JSON data found for key "${key}", returning default value. Data was:`, item?.substring(0, 100)); // Log only first 100 chars
-    }
-    // Optionally, remove the invalid item
-    // window.localStorage.removeItem(key);
+  } catch (parseError) {
+    console.error(`Error parsing JSON for localStorage key “${key}”:`, parseError);
+    // Log the problematic data (first 100 chars) for debugging
+    console.warn(`Invalid JSON data found for key "${key}", returning default value. Data was:`, item?.substring(0, 100));
+    // Optionally, remove the invalid item to prevent future errors
+    // try { window.localStorage.removeItem(key); } catch (removeError) { console.error(`Error removing invalid item for key "${key}":`, removeError); }
     return defaultValue;
   }
 };

@@ -22,7 +22,7 @@ import {
 import { WarehouseManagement } from "@/components/warehouse-management";
 import { format, isValid } from 'date-fns';
 import { es } from 'date-fns/locale'; // Import Spanish locale for date formatting
-import { Minus, Plus, Trash, RefreshCw, Warehouse as WarehouseIcon, AlertCircle, Search, Check, AppWindow, Database, Boxes, Loader2, History as HistoryIcon, CalendarIcon, Save, Edit, Download, BarChart } from "lucide-react";
+import { Minus, Plus, Trash, RefreshCw, Warehouse as WarehouseIcon, AlertCircle, Search, Check, AppWindow, Database, Boxes, Loader2, History as HistoryIcon, CalendarIcon, Save, Edit, Download, BarChart, Settings } from "lucide-react";
 import React, { useCallback, useEffect, useRef, useState, useMemo } from "react";
 import { playBeep } from '@/lib/helpers';
 import { BarcodeEntry } from '@/components/barcode-entry';
@@ -83,6 +83,7 @@ export default function Home() {
   const [confirmQuantityProductBarcode, setConfirmQuantityProductBarcode] = useState<string | null>(null);
   const [confirmQuantityNewValue, setConfirmQuantityNewValue] = useState<number | null>(null);
   const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false);
+  const [isDeleteListDialogOpen, setIsDeleteListDialogOpen] = useState(false); // State for deleting entire list
   const [productToDelete, setProductToDelete] = useState<DisplayProduct | null>(null);
   const [isDbLoading, setIsDbLoading] = useState(true); // Tracks loading for IndexedDB operations or initial list load
   const [isRefreshingStock, setIsRefreshingStock] = useState(false); // For the refresh button action specifically
@@ -328,13 +329,12 @@ const modifyProductValue = useCallback(async (barcodeToUpdate: string, type: 'co
         finalValue = Math.max(0, originalValue + change); // Calculate final value first
         const productStock = product.stock ?? 0;
 
-        // Check for confirmation only for 'count' type when EXCEEDING stock level
-        needsConfirmation = type === 'count' && productStock > 0 && finalValue > productStock && originalValue <= productStock;
-
+        // Check for confirmation only for 'count' type when INCREASING count ABOVE stock level
+        needsConfirmation = type === 'count' && productStock > 0 && change > 0 && finalValue > productStock && originalValue <= productStock;
 
         if (needsConfirmation) {
             setConfirmQuantityProductBarcode(product.barcode);
-            setConfirmQuantityAction(change > 0 ? 'increment' : 'decrement');
+            setConfirmQuantityAction(change > 0 ? 'increment' : 'decrement'); // Still using increment/decrement here based on 'change'
             setConfirmQuantityNewValue(finalValue);
             setIsConfirmQuantityDialogOpen(true);
             showToast = false; // Defer toast until after confirmation
@@ -419,7 +419,7 @@ const modifyProductValue = useCallback(async (barcodeToUpdate: string, type: 'co
                  duration: 3000
              });
          }
-    }
+     }
 
   }, [currentWarehouseId, getWarehouseName, toast, countingList]); // Added countingList dependency
 
@@ -643,6 +643,22 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
      setIsDeleteDialogOpen(false);
      setProductToDelete(null);
  }, [productToDelete, toast, getWarehouseName]);
+
+  // Function to clear the current counting list
+ const handleClearCurrentList = useCallback(() => {
+     if (!isMountedRef.current || !currentWarehouseId) return;
+
+     // Filter out items belonging to the current warehouse
+     setCountingList(prevList => prevList.filter(p => p.warehouseId !== currentWarehouseId));
+
+     toast({
+         title: "Lista Actual Borrada",
+         description: `Se han eliminado todos los productos del inventario para ${getWarehouseName(currentWarehouseId)}.`,
+         variant: "default"
+     });
+
+     setIsDeleteListDialogOpen(false); // Close the confirmation dialog
+ }, [currentWarehouseId, getWarehouseName, toast]);
 
  // Export current counting list to CSV
  const handleExport = useCallback(() => {
@@ -1028,6 +1044,28 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
         return type === 'stock' ? (currentItem?.stock ?? 0) : (currentItem?.count ?? 0);
    };
 
+    // Handle action from the Select dropdown
+    const handleActionSelect = (value: string) => {
+        switch (value) {
+            case 'saveHistory':
+                handleSaveToHistory();
+                break;
+            case 'export':
+                handleExport();
+                break;
+            case 'clearList':
+                if (countingList.filter(p => p.warehouseId === currentWarehouseId).length > 0) {
+                    setIsDeleteListDialogOpen(true); // Open confirmation dialog
+                } else {
+                    toast({ title: "Vacío", description: "La lista actual ya está vacía." });
+                }
+                break;
+            default:
+                console.warn("Unknown action selected:", value);
+        }
+    };
+
+
   // --- Main Component Render ---
   return (
     <div className="container mx-auto p-4">
@@ -1132,32 +1170,37 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
                     key={`${currentWarehouseId}-${countingList.length}`} // Add key to force re-render on list change or warehouse switch
                 />
 
-              {/* Save and Export Actions */}
-              <div className="mt-4 flex flex-col sm:flex-row justify-end items-center gap-2">
-                  {/* Save to History Button */}
-                  <Button
-                        onClick={() => handleSaveToHistory()}
-                        className="bg-blue-600 hover:bg-blue-700 text-white rounded-md shadow-sm px-5 py-2 transition-colors duration-200 w-full sm:w-auto"
+              {/* Actions Dropdown */}
+               <div className="mt-4 flex justify-end">
+                    <Select
+                        onValueChange={handleActionSelect}
                         disabled={countingList.filter(p => p.warehouseId === currentWarehouseId).length === 0 || isDbLoading || isSavingToHistory}
-                        aria-label="Guardar conteo actual en el historial local"
                     >
-                        {isSavingToHistory ? (
-                            <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                        ) : (
-                            <Save className="mr-2 h-4 w-4" />
-                        )}
-                        {isSavingToHistory ? "Guardando..." : "Guardar en Historial"}
-                    </Button>
-                 {/* Export Button */}
-                 <Button
-                    onClick={handleExport}
-                     className="bg-indigo-600 hover:bg-indigo-700 text-white rounded-md shadow-sm px-5 py-2 transition-colors duration-200 w-full sm:w-auto"
-                     disabled={countingList.filter(p => p.warehouseId === currentWarehouseId).length === 0 || isDbLoading}
-                     aria-label="Exportar inventario actual a CSV"
-                 >
-                      <Download className="mr-2 h-4 w-4"/> Exportar Inventario ({getWarehouseName(currentWarehouseId)})
-                 </Button>
-              </div>
+                        <SelectTrigger className="w-full sm:w-auto min-w-[180px] max-w-[250px] bg-white dark:bg-gray-800 border-gray-300 dark:border-gray-600">
+                            <Settings className="mr-2 h-4 w-4" />
+                            <SelectValue placeholder="Acciones..." />
+                        </SelectTrigger>
+                        <SelectContent>
+                            <SelectItem value="saveHistory">
+                                <div className="flex items-center gap-2">
+                                    {isSavingToHistory ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
+                                    {isSavingToHistory ? "Guardando..." : "Guardar en Historial"}
+                                </div>
+                            </SelectItem>
+                            <SelectItem value="export">
+                                <div className="flex items-center gap-2">
+                                    <Download className="h-4 w-4" /> Exportar Inventario
+                                </div>
+                            </SelectItem>
+                            <SelectItem value="clearList">
+                                <div className="flex items-center gap-2 text-red-600 dark:text-red-400">
+                                    <Trash className="h-4 w-4" /> Borrar Lista Actual
+                                </div>
+                             </SelectItem>
+                        </SelectContent>
+                    </Select>
+                </div>
+
             </div>
         )}
 
@@ -1265,6 +1308,17 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
          isDestructive={true}
       />
 
+      {/* Confirmation for Clearing Current Counting List */}
+      <ConfirmationDialog
+          isOpen={isDeleteListDialogOpen}
+          onOpenChange={setIsDeleteListDialogOpen}
+          title="Confirmar Borrado de Lista"
+          description={`¿Estás seguro de que deseas borrar todos los productos del inventario actual (${getWarehouseName(currentWarehouseId)})? Esta acción no se puede deshacer.`}
+          onConfirm={handleClearCurrentList}
+          onCancel={() => setIsDeleteListDialogOpen(false)}
+          isDestructive={true}
+      />
+
       {/* Dialog for Editing Product Details */}
       <EditProductDialog
          isOpen={isEditDetailDialogOpen}
@@ -1303,4 +1357,3 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
     </div>
   );
 }
-

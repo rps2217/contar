@@ -11,21 +11,26 @@ export const getLocalStorageItem = <T>(key: string, defaultValue: T): T => {
   if (typeof window === 'undefined') {
     return defaultValue;
   }
-  const item = window.localStorage.getItem(key);
-  if (item === null) {
-    return defaultValue;
-  }
   try {
-    // Attempt to parse the item only if it's not null
+    const item = window.localStorage.getItem(key);
+    if (item === null || item === 'undefined') { // Check for null or 'undefined' string
+        return defaultValue;
+    }
+    // Attempt to parse the item only if it's not null and not the string 'undefined'
     return JSON.parse(item);
   } catch (error) {
     console.error(`Error reading and parsing localStorage key “${key}”:`, error);
-    console.warn(`Invalid data found for key "${key}", returning default value. Data was:`, item);
+    // Don't warn if the item was actually 'undefined' or null, just return default
+    const item = window.localStorage.getItem(key); // Re-get item for logging if needed
+    if (item !== null && item !== 'undefined') {
+        console.warn(`Invalid JSON data found for key "${key}", returning default value. Data was:`, item?.substring(0, 100)); // Log only first 100 chars
+    }
     // Optionally, remove the invalid item
     // window.localStorage.removeItem(key);
     return defaultValue;
   }
 };
+
 
 // Helper function to safely set item in localStorage
 export const setLocalStorageItem = <T>(key: string, value: T): void => {
@@ -59,5 +64,3 @@ export const debounce = <F extends (...args: any[]) => any>(func: F, waitFor: nu
     });
   };
 };
-
-    

@@ -1,3 +1,4 @@
+// src/hooks/use-toast.ts
 "use client"
 
 // Inspired by react-hot-toast library
@@ -9,7 +10,7 @@ import type {
 } from "@/components/ui/toast"
 
 const TOAST_LIMIT = 1
-const TOAST_REMOVE_DELAY = 1000000
+const TOAST_REMOVE_DELAY = 5000 // Reduced delay for faster removal
 
 type ToasterToast = ToastProps & {
   id: string
@@ -58,6 +59,11 @@ interface State {
 
 const toastTimeouts = new Map<string, ReturnType<typeof setTimeout>>()
 
+// We use a queue to prevent calling listeners directly,
+// thus avoiding state updates during render.
+let isDispatching = false;
+const actionQueue: Action[] = [];
+
 const addToRemoveQueue = (toastId: string) => {
   if (toastTimeouts.has(toastId)) {
     return
@@ -65,7 +71,8 @@ const addToRemoveQueue = (toastId: string) => {
 
   const timeout = setTimeout(() => {
     toastTimeouts.delete(toastId)
-    dispatch({
+    // Queue the REMOVE_TOAST action instead of dispatching directly
+    enqueueAction({
       type: "REMOVE_TOAST",
       toastId: toastId,
     })
@@ -93,8 +100,7 @@ export const reducer = (state: State, action: Action): State => {
     case "DISMISS_TOAST": {
       const { toastId } = action
 
-      // ! Side effects ! - This could be extracted into a dismissToast() action,
-      // but I'll keep it here for simplicity
+      // Side effects - Adding to remove queue
       if (toastId) {
         addToRemoveQueue(toastId)
       } else {
@@ -133,12 +139,29 @@ const listeners: Array<(state: State) => void> = []
 
 let memoryState: State = { toasts: [] }
 
-function dispatch(action: Action) {
-  memoryState = reducer(memoryState, action)
-  listeners.forEach((listener) => {
-    listener(memoryState)
-  })
+// Enqueue action instead of direct dispatch
+function enqueueAction(action: Action) {
+  actionQueue.push(action);
+  if (!isDispatching) {
+    processQueue();
+  }
 }
+
+// Process the queue using setTimeout to defer execution
+function processQueue() {
+  isDispatching = true;
+  setTimeout(() => {
+    let action;
+    while ((action = actionQueue.shift())) {
+      memoryState = reducer(memoryState, action);
+      listeners.forEach((listener) => {
+        listener(memoryState);
+      });
+    }
+    isDispatching = false;
+  }, 0); // Use setTimeout with 0ms delay to yield to the browser event loop
+}
+
 
 type Toast = Omit<ToasterToast, "id">
 
@@ -146,13 +169,16 @@ function toast({ ...props }: Toast) {
   const id = genId()
 
   const update = (props: ToasterToast) =>
-    dispatch({
+    // Enqueue update action
+    enqueueAction({
       type: "UPDATE_TOAST",
       toast: { ...props, id },
     })
-  const dismiss = () => dispatch({ type: "DISMISS_TOAST", toastId: id })
+  // Enqueue dismiss action
+  const dismiss = () => enqueueAction({ type: "DISMISS_TOAST", toastId: id })
 
-  dispatch({
+  // Enqueue add action
+  enqueueAction({
     type: "ADD_TOAST",
     toast: {
       ...props,
@@ -187,7 +213,8 @@ function useToast() {
   return {
     ...state,
     toast,
-    dismiss: (toastId?: string) => dispatch({ type: "DISMISS_TOAST", toastId }),
+    // Enqueue dismiss action from the hook as well
+    dismiss: (toastId?: string) => enqueueAction({ type: "DISMISS_TOAST", toastId }),
   }
 }
 

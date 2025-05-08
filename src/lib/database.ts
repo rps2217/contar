@@ -141,10 +141,19 @@ async function performWriteTransaction<T>(
     }
 }
 
-
+// Optimized add/update function
 export async function addOrUpdateProductToDB(product: ProductDetail): Promise<void> {
-  await performWriteTransaction(PRODUCT_STORE, store => store.put(product));
-  console.log(`Product ${product.barcode} added/updated.`);
+    const productToSave: ProductDetail = {
+        ...product,
+        // Ensure stock is a number, default to 0 if invalid or missing
+        stock: Number.isFinite(Number(product.stock)) ? Number(product.stock) : 0,
+        // Clean up description and provider
+        description: product.description?.trim() || `Producto ${product.barcode}`,
+        provider: product.provider?.trim() || "Desconocido",
+    };
+    console.log("Attempting to add/update product in DB:", productToSave);
+    await performWriteTransaction(PRODUCT_STORE, store => store.put(productToSave));
+    console.log(`Product ${productToSave.barcode} added/updated.`);
 }
 
 export async function getProductFromDB(barcode: string): Promise<ProductDetail | undefined> {
@@ -167,10 +176,17 @@ export async function getAllProductsFromDB(): Promise<ProductDetail[]> {
   }
 }
 
+// Optimized delete function
 export async function deleteProductFromDB(barcode: string): Promise<void> {
-  await performWriteTransaction(PRODUCT_STORE, store => store.delete(barcode));
-  console.log(`Product ${barcode} deleted.`);
+    if (!barcode) {
+        console.error("Attempted to delete product with empty barcode.");
+        return;
+    }
+    console.log(`Attempting to delete product ${barcode} from DB.`);
+    await performWriteTransaction(PRODUCT_STORE, store => store.delete(barcode));
+    console.log(`Product ${barcode} deleted.`);
 }
+
 
 // Bulk add/update products (Optimized with single transaction)
 export async function addProductsToDB(products: ProductDetail[]): Promise<void> {

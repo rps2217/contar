@@ -1,4 +1,4 @@
-
+// src/lib/utils.ts
 import { clsx, type ClassValue } from "clsx"
 import { twMerge } from "tailwind-merge"
 
@@ -26,7 +26,21 @@ export const getLocalStorageItem = <T>(key: string, defaultValue: T): T => {
 
   try {
     // Attempt to parse the item only if it's not null/empty/undefined string
-    return JSON.parse(item);
+    const parsedItem = JSON.parse(item);
+    // Basic type check: Ensure the parsed item is not null or undefined,
+    // and if defaultValue is an array, check if parsedItem is also an array.
+    // Add more checks here if needed based on expected T types.
+    if (parsedItem === null || typeof parsedItem === 'undefined') {
+        console.warn(`Parsed item for key "${key}" is null or undefined, returning default value.`);
+        return defaultValue;
+    }
+    if (Array.isArray(defaultValue) && !Array.isArray(parsedItem)) {
+        console.warn(`Expected array for key "${key}" but received different type, returning default value.`);
+        return defaultValue;
+    }
+    // Consider adding more specific type checks based on T if possible/necessary
+
+    return parsedItem;
   } catch (parseError) {
     console.error(`Error parsing JSON for localStorage key “${key}”:`, parseError);
     // Log the problematic data (first 100 chars) for debugging
@@ -45,9 +59,19 @@ export const setLocalStorageItem = <T>(key: string, value: T): void => {
     return;
   }
   try {
+    // Ensure the value being stored is not undefined, as JSON.stringify(undefined) is undefined
+    if (typeof value === 'undefined') {
+        console.warn(`Attempted to store undefined for key "${key}". Removing item instead.`);
+        window.localStorage.removeItem(key);
+        return;
+    }
     window.localStorage.setItem(key, JSON.stringify(value));
   } catch (error) {
     console.error(`Error setting localStorage key “${key}”:`, error);
+     // Consider more specific error handling, e.g., QuotaExceededError
+     if (error instanceof DOMException && error.name === 'QuotaExceededError') {
+        alert(`Error: Local storage quota exceeded. Cannot save data for key "${key}". Please clear some storage space.`);
+     }
   }
 };
 

@@ -2,7 +2,7 @@
 
 import * as React from "react"
 import * as LabelPrimitive from "@radix-ui/react-label"
-import { Slot } from "@radix-ui/react-slot"
+// Removed Slot import: import { Slot } from "@radix-ui/react-slot"
 import {
   Controller,
   FormProvider,
@@ -103,14 +103,15 @@ const FormLabel = React.forwardRef<
 })
 FormLabel.displayName = "FormLabel"
 
+// Changed FormControl to use div instead of Slot
 const FormControl = React.forwardRef<
-  React.ElementRef<typeof Slot>,
-  React.ComponentPropsWithoutRef<typeof Slot>
->(({ ...props }, ref) => {
+  HTMLDivElement, // Changed ElementRef type
+  React.HTMLAttributes<HTMLDivElement> // Changed props type
+>(({ className, ...props }, ref) => { // Explicitly accept className
   const { error, formItemId, formDescriptionId, formMessageId } = useFormField()
 
   return (
-    <Slot
+    <div // Changed from Slot to div
       ref={ref}
       id={formItemId}
       aria-describedby={
@@ -119,11 +120,13 @@ const FormControl = React.forwardRef<
           : `${formDescriptionId} ${formMessageId}`
       }
       aria-invalid={!!error}
-      {...props}
+      className={className} // Pass className to the div
+      {...props} // Pass remaining props (mostly children)
     />
   )
 })
 FormControl.displayName = "FormControl"
+
 
 const FormDescription = React.forwardRef<
   HTMLParagraphElement,

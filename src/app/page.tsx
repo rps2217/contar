@@ -22,15 +22,14 @@ import {
 import { WarehouseManagement } from "@/components/warehouse-management";
 import { format, isValid } from 'date-fns';
 import { es } from 'date-fns/locale'; // Import Spanish locale for date formatting
-import { Minus, Plus, Trash, RefreshCw, Warehouse as WarehouseIcon, AlertCircle, Search, Check, AppWindow, Database, Boxes, UploadCloud, Loader2, History as HistoryIcon, CalendarIcon, Save, Edit, Download } from "lucide-react"; // Removed Camera icon
+import { Minus, Plus, Trash, RefreshCw, Warehouse as WarehouseIcon, AlertCircle, Search, Check, AppWindow, Database, Boxes, Loader2, History as HistoryIcon, CalendarIcon, Save, Edit, Download } from "lucide-react";
 import React, { useCallback, useEffect, useRef, useState, useMemo } from "react";
-import { backupToGoogleSheet } from './actions/backup-actions';
+// Removed backupToGoogleSheet import
 import { playBeep } from '@/lib/helpers';
 import { BarcodeEntry } from '@/components/barcode-entry';
 import { CountingListTable } from '@/components/counting-list-table';
 import { ModifyValueDialog } from '@/components/modify-value-dialog';
 import { ConfirmationDialog } from '@/components/confirmation-dialog';
-// Removed ScannerDialog import
 import { useLocalStorage } from '@/hooks/use-local-storage';
 import { EditProductDialog } from '@/components/edit-product-dialog';
 import {
@@ -51,7 +50,7 @@ const LOCAL_STORAGE_COUNTING_LIST_KEY_PREFIX = 'stockCounterPro_countingList_';
 const LOCAL_STORAGE_WAREHOUSE_KEY = 'stockCounterPro_currentWarehouse';
 const LOCAL_STORAGE_WAREHOUSES_KEY = 'stockCounterPro_warehouses';
 const LOCAL_STORAGE_ACTIVE_SECTION_KEY = 'stockCounterPro_activeSection';
-const LOCAL_STORAGE_BACKUP_URL_KEY = 'stockCounterPro_backupUrl'; // Now stores Apps Script URL
+// Removed LOCAL_STORAGE_BACKUP_URL_KEY
 
 // --- Main Component ---
 
@@ -59,7 +58,6 @@ export default function Home() {
   // --- Refs ---
   const { toast } = useToast();
   const barcodeInputRef = useRef<HTMLInputElement>(null);
-  // Removed videoRef
   const isMountedRef = useRef(false); // Track component mount status with ref
 
   // --- LocalStorage Hooks ---
@@ -75,10 +73,7 @@ export default function Home() {
       LOCAL_STORAGE_ACTIVE_SECTION_KEY,
       'Contador'
   );
-  const [backupUrl, setBackupUrl] = useLocalStorage<string>(
-      LOCAL_STORAGE_BACKUP_URL_KEY,
-      '' // Initialize empty
-  );
+  // Removed backupUrl state
 
   // --- Component State ---
   const [barcode, setBarcode] = useState("");
@@ -93,8 +88,7 @@ export default function Home() {
   const [productToDelete, setProductToDelete] = useState<DisplayProduct | null>(null);
   const [isDbLoading, setIsDbLoading] = useState(true); // Tracks loading for IndexedDB operations or initial list load
   const [isRefreshingStock, setIsRefreshingStock] = useState(false); // For the refresh button action specifically
-  // Removed scanner-related state: isScannerDialogOpen, isScannerActive, isScannerInitializing, hasCameraPermission
-  const [isBackingUp, setIsBackingUp] = useState(false);
+  // Removed isBackingUp state
   const [isSavingToHistory, setIsSavingToHistory] = useState(false); // State for saving to history
   const [lastScannedBarcode, setLastScannedBarcode] = useState<string | null>(null); // Keep for debouncing manual input
   const [isEditDetailDialogOpen, setIsEditDetailDialogOpen] = useState(false);
@@ -288,9 +282,6 @@ export default function Home() {
 
   }, [barcode, currentWarehouseId, getWarehouseName, lastScannedBarcode, toast]); // Dependencies
 
-  // Removed handleScanSuccessCallback and useBarcodeScanner hook initialization
-
-
 // Modify product value (count or stock) in the counting list and potentially DB
 const modifyProductValue = useCallback(async (barcodeToUpdate: string, type: 'count' | 'stock', change: number) => {
     if (!isMountedRef.current) return;
@@ -311,7 +302,6 @@ const modifyProductValue = useCallback(async (barcodeToUpdate: string, type: 'co
         const finalValue = Math.max(0, originalValue + change);
         // Reset confirmation flag at the start of each modification attempt
         needsConfirmation = type === 'count' && product.stock !== 0 && (finalValue === product.stock || originalValue === product.stock) && finalValue !== originalValue;
-
 
         updatedProduct = {
              ...product,
@@ -334,7 +324,7 @@ const modifyProductValue = useCallback(async (barcodeToUpdate: string, type: 'co
         }
     });
 
-    // If no confirmation was needed or type is 'stock', proceed with DB update and toasts
+    // If no confirmation was needed, proceed with DB update (if type is 'stock') and toasts
     if (!needsConfirmation) {
         if (type === 'stock' && updatedProduct) {
             try {
@@ -352,7 +342,6 @@ const modifyProductValue = useCallback(async (barcodeToUpdate: string, type: 'co
                     showToast = false; // Prevent generic toast if DB toast was shown
                 } else {
                      console.warn(`Product ${barcodeToUpdate} not found in DB while trying to update stock.`);
-                     // If product not in DB, add it
                       const listProduct = countingList.find(p => p.barcode === barcodeToUpdate && p.warehouseId === currentWarehouseId);
                       if(listProduct) {
                            const newDbProduct: ProductDetail = {
@@ -408,7 +397,6 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
     let showToast = true;
     let needsConfirmation = false;
 
-
     setCountingList(prevList => {
         const productIndex = prevList.findIndex(p => p.barcode === barcodeToUpdate && p.warehouseId === currentWarehouseId);
         if (productIndex === -1) return prevList;
@@ -418,7 +406,6 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
         let finalValue = sumValue ? (originalValue + newValue) : newValue;
         finalValue = Math.max(0, finalValue); // Ensure value is not negative
         needsConfirmation = type === 'count' && product.stock !== 0 && finalValue === product.stock && originalValue !== product.stock;
-
 
         updatedProduct = {
             ...product,
@@ -441,7 +428,7 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
         }
     });
 
-    // If no confirmation was needed or type is 'stock', proceed with DB update and toasts
+    // If no confirmation was needed, proceed with DB update (if type is 'stock') and toasts
      if (!needsConfirmation) {
          if (type === 'stock' && updatedProduct) {
              try {
@@ -459,7 +446,6 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
                      showToast = false;
                  } else {
                      console.warn(`Product ${barcodeToUpdate} not found in DB while trying to update stock from dialog.`);
-                     // If product not in DB, add it
                        const listProduct = countingList.find(p => p.barcode === barcodeToUpdate && p.warehouseId === currentWarehouseId);
                        if(listProduct) {
                             const newDbProduct: ProductDetail = {
@@ -500,7 +486,6 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
              });
          }
      }
-
 
 }, [currentWarehouseId, getWarehouseName, toast, countingList]); // Added countingList dependency
 
@@ -630,43 +615,7 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
     }
  }, [countingList, currentWarehouseId, toast, getWarehouseName]);
 
-
- // Backup counting list to Google Sheet via Apps Script
- const handleBackupToGoogleSheet = useCallback(async () => {
-    if (!isMountedRef.current) return;
-    const currentListForWarehouse = countingList.filter(p => p.warehouseId === currentWarehouseId);
-
-    if (currentListForWarehouse.length === 0) {
-        toast({ title: "Vacío", description: "No hay productos en el inventario actual para respaldar." });
-        return;
-    }
-    if (!backupUrl.trim() || !backupUrl.startsWith('https://script.google.com/macros/s/')) {
-        toast({ variant: "destructive", title: "URL de Script Inválida", description: "Introduce una URL válida de Google Apps Script para el respaldo (comienza con 'https://script.google.com/macros/s/...').", duration: 9000 });
-        return;
-    }
-
-    setIsBackingUp(true);
-    try {
-        const currentWHName = getWarehouseName(currentWarehouseId);
-        const result = await backupToGoogleSheet(currentListForWarehouse, currentWHName, backupUrl);
-
-        if (result.success) {
-            toast({ title: "Respaldo Exitoso", description: result.message });
-            // History saving is now manual via handleSaveToHistory
-            // Optionally trigger history save here if desired after successful backup
-            // await handleSaveToHistory(true); // Pass flag to avoid redundant toasts
-        } else {
-            toast({ variant: "destructive", title: "Error de Respaldo", description: result.message, duration: 10000 });
-        }
-    } catch (error: any) {
-        console.error("Error calling backupToGoogleSheet Server Action:", error);
-        toast({ variant: "destructive", title: "Error de Respaldo", description: error.message || "Ocurrió un error inesperado al intentar respaldar.", duration: 10000 });
-    } finally {
-        if (isMountedRef.current) {
-            setIsBackingUp(false);
-        }
-    }
- }, [countingList, currentWarehouseId, getWarehouseName, toast, backupUrl]);
+ // Removed handleBackupToGoogleSheet function
 
   // Save current counting list to local history
   const handleSaveToHistory = useCallback(async (hideToast = false) => { // Add flag to optionally hide toast
@@ -926,7 +875,6 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
     if (newSection === 'Contador') {
        requestAnimationFrame(() => barcodeInputRef.current?.focus());
     }
-    // Removed scanner stop logic
   };
 
    // Handle warehouse change
@@ -975,8 +923,6 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
              }
          }
    };
-
-   // Removed handleScanButtonClick and handleStopScanning
 
    // Get the current value for the ModifyValueDialog
    const getCurrentValueForDialog = (type: 'count' | 'stock') => {
@@ -1043,8 +989,6 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
          </div>
       </div>
 
-      {/* Removed video element */}
-
       {/* Main Content Area based on activeSection */}
       <div className="w-full md:w-[800px] lg:w-[1000px] mx-auto">
         {/* Contador Section */}
@@ -1056,10 +1000,9 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
                     setBarcode={setBarcode}
                     onAddProduct={() => handleAddProduct()}
                     onRefreshStock={handleRefreshStock}
-                    isLoading={isDbLoading || isRefreshingStock || isBackingUp || isSavingToHistory} // Removed isScannerInitializing
+                    isLoading={isDbLoading || isRefreshingStock || isSavingToHistory}
                     isRefreshingStock={isRefreshingStock}
                     inputRef={barcodeInputRef}
-                    // Removed onScanClick and isScanning props
                 />
                 {/* Search Input for Counting List */}
                  <div className="relative mb-4">
@@ -1089,18 +1032,9 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
                     key={`${currentWarehouseId}-${countingList.length}`} // Add key to force re-render on list change or warehouse switch
                 />
 
-              {/* Backup and Export Actions */}
+              {/* Save and Export Actions */}
               <div className="mt-4 flex flex-col sm:flex-row justify-end items-center gap-2">
-                 {/* Google Apps Script Backup URL Input */}
-                 <Input
-                    type="url"
-                    placeholder="URL de Google Apps Script para Respaldo"
-                    value={backupUrl}
-                    onChange={(e) => setBackupUrl(e.target.value)}
-                    className="w-full sm:w-auto flex-grow bg-white dark:bg-gray-800 border-gray-300 dark:border-gray-600"
-                    aria-label="URL de Google Apps Script para respaldo"
-                    disabled={isDbLoading || isBackingUp || isSavingToHistory}
-                 />
+                 {/* Removed Google Apps Script Backup URL Input and Backup Button */}
                   {/* Save to History Button */}
                   <Button
                         onClick={() => handleSaveToHistory()}
@@ -1115,21 +1049,6 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
                         )}
                         {isSavingToHistory ? "Guardando..." : "Guardar en Historial"}
                     </Button>
-                 {/* Backup Button */}
-                 <Button
-                      onClick={handleBackupToGoogleSheet}
-                      className="bg-green-600 hover:bg-green-700 text-white rounded-md shadow-sm px-5 py-2 transition-colors duration-200 w-full sm:w-auto"
-                      disabled={countingList.filter(p => p.warehouseId === currentWarehouseId).length === 0 || isDbLoading || isBackingUp || !backupUrl.trim() || isSavingToHistory}
-                      aria-label="Respaldar inventario actual a Google Sheet vía Apps Script"
-                      title="Asegúrate que la URL es correcta y el script está desplegado."
-                 >
-                      {isBackingUp ? (
-                           <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                      ) : (
-                           <UploadCloud className="mr-2 h-4 w-4" />
-                      )}
-                      {isBackingUp ? "Respaldando..." : "Respaldar a Google Sheet"}
-                 </Button>
                  {/* Export Button */}
                  <Button
                     onClick={handleExport}
@@ -1236,8 +1155,6 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
          onCancel={() => setIsDeleteDialogOpen(false)}
          isDestructive={true}
       />
-
-      {/* Removed Scanner Dialog */}
 
       {/* Dialog for Editing Product Details */}
       <EditProductDialog

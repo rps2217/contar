@@ -2,7 +2,7 @@
 import React from 'react';
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
-import { RefreshCw } from "lucide-react"; // Removed Camera icon
+import { RefreshCw } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 interface BarcodeEntryProps {
@@ -10,7 +10,7 @@ interface BarcodeEntryProps {
   setBarcode: (value: string) => void;
   onAddProduct: () => void;
   onRefreshStock: () => void;
-  isLoading: boolean; // General loading (DB, initial list, backup, history)
+  isLoading: boolean; // General loading (DB, initial list, history saving)
   isRefreshingStock: boolean; // Refresh stock action active
   inputRef: React.RefObject<HTMLInputElement>;
 }
@@ -20,7 +20,7 @@ export const BarcodeEntry: React.FC<BarcodeEntryProps> = ({
   setBarcode,
   onAddProduct,
   onRefreshStock,
-  isLoading, // This prop covers general loading, backup, history saving
+  isLoading, // This prop covers general loading and history saving
   isRefreshingStock,
   inputRef
 }) => {
@@ -31,7 +31,7 @@ export const BarcodeEntry: React.FC<BarcodeEntryProps> = ({
     }
   };
 
-  // isLoading prop now also indicates if backing up or saving to history
+  // isLoading prop now also indicates if saving to history
   const isAnyLoadingActive = isLoading || isRefreshingStock;
 
 
@@ -54,7 +54,6 @@ export const BarcodeEntry: React.FC<BarcodeEntryProps> = ({
         aria-label="Código de barras"
         disabled={isAnyLoadingActive}
       />
-      {/* Removed Scan Button */}
       <Button
         onClick={onAddProduct}
         className="bg-teal-600 hover:bg-teal-700 text-white rounded-md shadow-sm px-5 py-2 transition-colors duration-200"
@@ -68,7 +67,7 @@ export const BarcodeEntry: React.FC<BarcodeEntryProps> = ({
         variant="outline"
         size="icon"
         className="text-blue-600 dark:text-blue-400 border-blue-300 dark:border-blue-600 hover:bg-blue-50 dark:hover:bg-blue-900 hover:text-blue-700 dark:hover:text-blue-300"
-        disabled={isAnyLoadingActive} // Also disable if saving to history or backing up
+        disabled={isAnyLoadingActive} // Also disable if saving to history
         aria-label="Actualizar stocks desde la base de datos para este almacén"
         title="Actualizar Stocks"
       >

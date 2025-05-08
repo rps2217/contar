@@ -22,7 +22,7 @@ import {
 import { WarehouseManagement } from "@/components/warehouse-management";
 import { format, isValid } from 'date-fns';
 import { es } from 'date-fns/locale'; // Import Spanish locale for date formatting
-import { Minus, Plus, Trash, RefreshCw, Warehouse as WarehouseIcon, AlertCircle, Search, Check, AppWindow, Database, Boxes, Loader2, History as HistoryIcon, CalendarIcon, Save, Edit, Download } from "lucide-react";
+import { Minus, Plus, Trash, RefreshCw, Warehouse as WarehouseIcon, AlertCircle, Search, Check, AppWindow, Database, Boxes, Loader2, History as HistoryIcon, CalendarIcon, Save, Edit, Download, BarChart } from "lucide-react";
 import React, { useCallback, useEffect, useRef, useState, useMemo } from "react";
 import { playBeep } from '@/lib/helpers';
 import { BarcodeEntry } from '@/components/barcode-entry';
@@ -42,6 +42,7 @@ import {
     clearCountingHistory,
 } from '@/lib/database'; // Import IndexedDB helpers
 import { CountingHistoryViewer } from '@/components/counting-history-viewer'; // Import History Viewer
+import { DiscrepancyReportViewer } from '@/components/discrepancy-report-viewer'; // Import Discrepancy Report Viewer
 import Papa from 'papaparse'; // Ensure PapaParse is imported
 
 // --- Constants ---
@@ -959,7 +960,7 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
     );
   }, [countingList, searchTerm, currentWarehouseId]);
 
-  // Handle section change (Contador, Base de Datos, Almacenes, Historial)
+  // Handle section change (Contador, Base de Datos, Almacenes, Historial, Informes)
   const handleSectionChange = (newSection: string) => {
     setActiveSection(newSection);
     if (newSection === 'Contador') {
@@ -1055,6 +1056,11 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
                           <div className="flex items-center gap-2">
                             <HistoryIcon className="h-4 w-4"/> Historial
                          </div>
+                    </SelectItem>
+                    <SelectItem value="Informes">
+                          <div className="flex items-center gap-2">
+                              <BarChart className="h-4 w-4" /> Informes
+                          </div>
                     </SelectItem>
                 </SelectContent>
             </Select>
@@ -1192,6 +1198,15 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
             {activeSection === 'Historial' && (
                 <div id="history-content">
                     <CountingHistoryViewer
+                        getWarehouseName={getWarehouseName}
+                    />
+                </div>
+            )}
+
+           {/* Discrepancy Report Section */}
+           {activeSection === 'Informes' && (
+                <div id="discrepancy-report-content">
+                    <DiscrepancyReportViewer
                         getWarehouseName={getWarehouseName}
                     />
                 </div>

@@ -1,7 +1,7 @@
 // src/app/page.tsx
 "use client";
 
-import type { DisplayProduct, ProductDetail, CountingHistoryEntry } from '@/types/product'; // Import CountingHistoryEntry
+import type { DisplayProduct, ProductDetail, CountingHistoryEntry } from '@/types/product';
 import { useToast } from "@/hooks/use-toast";
 import { cn, getLocalStorageItem, setLocalStorageItem, debounce } from "@/lib/utils";
 import {
@@ -24,7 +24,6 @@ import { format, isValid } from 'date-fns';
 import { es } from 'date-fns/locale'; // Import Spanish locale for date formatting
 import { Minus, Plus, Trash, RefreshCw, Warehouse as WarehouseIcon, AlertCircle, Search, Check, AppWindow, Database, Boxes, Loader2, History as HistoryIcon, CalendarIcon, Save, Edit, Download } from "lucide-react";
 import React, { useCallback, useEffect, useRef, useState, useMemo } from "react";
-// Removed backupToGoogleSheet import
 import { playBeep } from '@/lib/helpers';
 import { BarcodeEntry } from '@/components/barcode-entry';
 import { CountingListTable } from '@/components/counting-list-table';
@@ -50,7 +49,6 @@ const LOCAL_STORAGE_COUNTING_LIST_KEY_PREFIX = 'stockCounterPro_countingList_';
 const LOCAL_STORAGE_WAREHOUSE_KEY = 'stockCounterPro_currentWarehouse';
 const LOCAL_STORAGE_WAREHOUSES_KEY = 'stockCounterPro_warehouses';
 const LOCAL_STORAGE_ACTIVE_SECTION_KEY = 'stockCounterPro_activeSection';
-// Removed LOCAL_STORAGE_BACKUP_URL_KEY
 
 // --- Main Component ---
 
@@ -73,7 +71,6 @@ export default function Home() {
       LOCAL_STORAGE_ACTIVE_SECTION_KEY,
       'Contador'
   );
-  // Removed backupUrl state
 
   // --- Component State ---
   const [barcode, setBarcode] = useState("");
@@ -88,7 +85,6 @@ export default function Home() {
   const [productToDelete, setProductToDelete] = useState<DisplayProduct | null>(null);
   const [isDbLoading, setIsDbLoading] = useState(true); // Tracks loading for IndexedDB operations or initial list load
   const [isRefreshingStock, setIsRefreshingStock] = useState(false); // For the refresh button action specifically
-  // Removed isBackingUp state
   const [isSavingToHistory, setIsSavingToHistory] = useState(false); // State for saving to history
   const [lastScannedBarcode, setLastScannedBarcode] = useState<string | null>(null); // Keep for debouncing manual input
   const [isEditDetailDialogOpen, setIsEditDetailDialogOpen] = useState(false);
@@ -115,7 +111,15 @@ export default function Home() {
 
     console.log(`Attempting to load list for warehouse ${currentWarehouseId}`);
     const savedListKey = `${LOCAL_STORAGE_COUNTING_LIST_KEY_PREFIX}${currentWarehouseId}`;
-    const savedList = getLocalStorageItem<DisplayProduct[]>(savedListKey, []);
+    let savedList: DisplayProduct[] = [];
+    try {
+        savedList = getLocalStorageItem<DisplayProduct[]>(savedListKey, []);
+    } catch (error) {
+        console.error(`Error reading or parsing localStorage for key ${savedListKey}:`, error);
+        localStorage.removeItem(savedListKey); // Remove corrupted data
+        savedList = []; // Reset to empty array
+    }
+
 
     if (Array.isArray(savedList) && savedList.every(item => typeof item?.barcode === 'string')) {
         const loadedList = savedList
@@ -124,8 +128,7 @@ export default function Home() {
                 stock: item.stock ?? 0,
                 count: item.count ?? 0,
                 lastUpdated: item.lastUpdated || new Date().toISOString(),
-                 // Ensure warehouseId is present; default if missing (though it should be set on save)
-                warehouseId: item.warehouseId || currentWarehouseId
+                warehouseId: item.warehouseId || currentWarehouseId // Ensure warehouseId is present
             }));
         console.log(`Loaded ${loadedList.length} items for warehouse ${currentWarehouseId} from localStorage.`);
         // Filter after loading to ensure only items for the current warehouse are in the state
@@ -194,34 +197,31 @@ export default function Home() {
     let descriptionForToast = '';
     let productWasInList = false;
 
-    setCountingList(currentList => {
-        const existingProductIndex = currentList.findIndex((p) => p.barcode === trimmedBarcode && p.warehouseId === currentWarehouseId);
+    // Check the current list state first
+    const existingProductIndex = countingList.findIndex((p) => p.barcode === trimmedBarcode && p.warehouseId === currentWarehouseId);
 
-        if (existingProductIndex !== -1) {
-             productWasInList = true;
-            const productToUpdate = currentList[existingProductIndex];
-            descriptionForToast = productToUpdate.description;
-            const newCount = (productToUpdate.count ?? 0) + 1;
+    if (existingProductIndex !== -1) {
+        productWasInList = true;
+        const productToUpdate = countingList[existingProductIndex];
+        descriptionForToast = productToUpdate.description;
+        const newCount = (productToUpdate.count ?? 0) + 1;
+
+        // Update state asynchronously
+        setCountingList(currentList => {
             const updatedProductData: DisplayProduct = {
                 ...productToUpdate,
                 count: newCount,
                 lastUpdated: new Date().toISOString(),
             };
-
             // Move updated product to the top
-            const updatedList = [updatedProductData, ...currentList.filter((_, index) => index !== existingProductIndex)];
-            toast({ title: "Cantidad aumentada", description: `${descriptionForToast} cantidad aumentada a ${newCount}.` });
-            playBeep(880, 100);
-            return updatedList; // Return updated list for state update
+            return [updatedProductData, ...currentList.filter((_, index) => index !== existingProductIndex)];
+        });
 
-        } else {
-            // Product not in the current list state, DB check will happen outside
-            return currentList;
-        }
-    });
+        toast({ title: "Cantidad aumentada", description: `${descriptionForToast} cantidad aumentada a ${newCount}.` });
+        playBeep(880, 100);
 
-    // If the product was NOT found in the current counting list state, check the DB
-    if (!productWasInList) {
+    } else {
+        // Product not in the current list state, check the DB
         setIsDbLoading(true);
         try {
             const dbProduct = await getProductFromDB(trimmedBarcode);
@@ -280,13 +280,15 @@ export default function Home() {
     // Cleanup timeout for last scanned barcode debounce
     return () => clearTimeout(clearLastScannedTimeout);
 
-  }, [barcode, currentWarehouseId, getWarehouseName, lastScannedBarcode, toast]); // Dependencies
+  }, [barcode, currentWarehouseId, getWarehouseName, lastScannedBarcode, toast, countingList]); // Added countingList dependency
+
 
 // Modify product value (count or stock) in the counting list and potentially DB
 const modifyProductValue = useCallback(async (barcodeToUpdate: string, type: 'count' | 'stock', change: number) => {
     if (!isMountedRef.current) return;
 
-    let updatedProduct: DisplayProduct | undefined;
+    let productDescription = '';
+    let finalValue: number | undefined;
     let showToast = true;
     let needsConfirmation = false;
 
@@ -298,57 +300,59 @@ const modifyProductValue = useCallback(async (barcodeToUpdate: string, type: 'co
         }
 
         const product = prevList[productIndex];
+        productDescription = product.description; // Capture description for potential toast later
         const originalValue = type === 'count' ? product.count ?? 0 : product.stock ?? 0;
-        const finalValue = Math.max(0, originalValue + change);
-        // Reset confirmation flag at the start of each modification attempt
-        needsConfirmation = type === 'count' && product.stock !== 0 && (finalValue === product.stock || originalValue === product.stock) && finalValue !== originalValue;
+        finalValue = Math.max(0, originalValue + change); // Calculate final value first
 
-        updatedProduct = {
-             ...product,
-             [type]: finalValue,
-             lastUpdated: new Date().toISOString()
-        };
+        // Check for confirmation only for 'count' type
+        needsConfirmation = type === 'count' && product.stock !== 0 && finalValue === product.stock && originalValue !== product.stock && finalValue !== originalValue;
 
         if (needsConfirmation) {
             setConfirmQuantityProductBarcode(product.barcode);
             setConfirmQuantityAction(change > 0 ? 'increment' : 'decrement');
             setConfirmQuantityNewValue(finalValue);
             setIsConfirmQuantityDialogOpen(true);
-            showToast = false; // Toast will be shown after confirmation or cancellation
-            return prevList; // Return previous list as confirmation is pending
+            showToast = false; // Defer toast until after confirmation
+            return prevList; // Return previous list; confirmation pending
         } else {
             // No confirmation needed, update directly
+            const updatedProduct = {
+                 ...product,
+                 [type]: finalValue,
+                 lastUpdated: new Date().toISOString()
+            };
             const updatedList = [...prevList];
             updatedList[productIndex] = updatedProduct;
             return updatedList;
         }
     });
 
-    // If no confirmation was needed, proceed with DB update (if type is 'stock') and toasts
+    // --- Post-State Update Logic ---
+    // This part runs AFTER the setCountingList update has been scheduled.
+    // The 'finalValue' and 'productDescription' captured earlier can be used here.
+
     if (!needsConfirmation) {
-        if (type === 'stock' && updatedProduct) {
+        // Update DB only if type is 'stock'
+        if (type === 'stock' && finalValue !== undefined) {
             try {
                 const dbProduct = await getProductFromDB(barcodeToUpdate);
                 if (dbProduct) {
-                    const updatedDbProduct: ProductDetail = {
-                        ...dbProduct,
-                        stock: updatedProduct.stock // Update stock in DB
-                    };
+                    const updatedDbProduct: ProductDetail = { ...dbProduct, stock: finalValue };
                     await addOrUpdateProductToDB(updatedDbProduct);
                      toast({
                          title: `Stock (DB) Actualizado`,
-                         description: `Stock de ${updatedProduct.description} actualizado a ${updatedProduct.stock} en la base de datos.`
+                         description: `Stock de ${productDescription} actualizado a ${finalValue} en la base de datos.`
                      });
-                    showToast = false; // Prevent generic toast if DB toast was shown
+                    showToast = false; // DB toast shown, prevent generic toast
                 } else {
-                     console.warn(`Product ${barcodeToUpdate} not found in DB while trying to update stock.`);
-                      const listProduct = countingList.find(p => p.barcode === barcodeToUpdate && p.warehouseId === currentWarehouseId);
+                    console.warn(`Product ${barcodeToUpdate} not found in DB while trying to update stock.`);
+                      const listProduct = countingList.find(p => p.barcode === barcodeToUpdate && p.warehouseId === currentWarehouseId); // Find again in potentially stale list state
                       if(listProduct) {
                            const newDbProduct: ProductDetail = {
                                 barcode: listProduct.barcode,
-                                description: listProduct.description,
+                                description: listProduct.description, // Use description from list item
                                 provider: listProduct.provider,
-                                stock: updatedProduct.stock
+                                stock: finalValue // Use calculated finalValue
                             };
                             await addOrUpdateProductToDB(newDbProduct);
                              toast({
@@ -363,20 +367,19 @@ const modifyProductValue = useCallback(async (barcodeToUpdate: string, type: 'co
                 toast({
                     variant: "destructive",
                     title: "Error DB",
-                    description: `No se pudo actualizar el stock en la base de datos para ${updatedProduct?.description}.`
+                    description: `No se pudo actualizar el stock en la base de datos para ${productDescription}.`
                 });
-                 showToast = false; // Prevent generic toast if DB error toast was shown
+                 showToast = false; // DB error toast shown
             }
         }
 
-         // Simplified Toast logic: Only show generic if no DB toast was shown
-        if (showToast && updatedProduct) {
+        // Show generic toast only if no DB-specific toast was shown
+        if (showToast && finalValue !== undefined) {
              const valueTypeText = type === 'count' ? 'Cantidad' : 'Stock';
              const warehouseNameText = getWarehouseName(currentWarehouseId);
-             const descriptionText = updatedProduct.description;
              toast({
                  title: `${valueTypeText} Modificada`,
-                 description: `${valueTypeText} de ${descriptionText} (${warehouseNameText}) cambiada a ${type === 'count' ? updatedProduct.count : updatedProduct.stock}.`,
+                 description: `${valueTypeText} de ${productDescription} (${warehouseNameText}) cambiada a ${finalValue}.`,
                  duration: 3000
              });
          }
@@ -393,7 +396,8 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
         return;
     }
 
-    let updatedProduct: DisplayProduct | undefined;
+    let productDescription = '';
+    let finalValue: number | undefined;
     let showToast = true;
     let needsConfirmation = false;
 
@@ -402,25 +406,27 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
         if (productIndex === -1) return prevList;
 
         const product = prevList[productIndex];
+        productDescription = product.description; // Capture description
         const originalValue = type === 'count' ? product.count ?? 0 : product.stock ?? 0;
-        let finalValue = sumValue ? (originalValue + newValue) : newValue;
-        finalValue = Math.max(0, finalValue); // Ensure value is not negative
+        let calculatedValue = sumValue ? (originalValue + newValue) : newValue;
+        finalValue = Math.max(0, calculatedValue); // Ensure value is not negative
+
+        // Check for confirmation only for 'count' changes
         needsConfirmation = type === 'count' && product.stock !== 0 && finalValue === product.stock && originalValue !== product.stock;
 
-        updatedProduct = {
-            ...product,
-            [type]: finalValue,
-            lastUpdated: new Date().toISOString()
-        };
-
-        if (needsConfirmation) { // Only for count changes
+        if (needsConfirmation) {
             setConfirmQuantityProductBarcode(product.barcode);
             setConfirmQuantityAction('set');
             setConfirmQuantityNewValue(finalValue);
             setIsConfirmQuantityDialogOpen(true);
-            showToast = false;
-            return prevList;
+            showToast = false; // Defer toast
+            return prevList; // Confirmation pending
         } else {
+            const updatedProduct = {
+                ...product,
+                [type]: finalValue,
+                lastUpdated: new Date().toISOString()
+            };
             const updatedList = [...prevList];
             updatedList[productIndex] = updatedProduct;
             setOpenModifyDialog(null); // Close dialog if no confirmation needed
@@ -428,20 +434,17 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
         }
     });
 
-    // If no confirmation was needed, proceed with DB update (if type is 'stock') and toasts
-     if (!needsConfirmation) {
-         if (type === 'stock' && updatedProduct) {
+    // --- Post-State Update Logic ---
+    if (!needsConfirmation && finalValue !== undefined) {
+         if (type === 'stock') {
              try {
                  const dbProduct = await getProductFromDB(barcodeToUpdate);
                  if (dbProduct) {
-                     const updatedDbProduct: ProductDetail = {
-                         ...dbProduct,
-                         stock: updatedProduct.stock
-                     };
+                     const updatedDbProduct: ProductDetail = { ...dbProduct, stock: finalValue };
                      await addOrUpdateProductToDB(updatedDbProduct);
                       toast({
                           title: `Stock (DB) Actualizado`,
-                          description: `Stock de ${updatedProduct.description} actualizado a ${updatedProduct.stock} en la base de datos.`
+                          description: `Stock de ${productDescription} actualizado a ${finalValue} en la base de datos.`
                       });
                      showToast = false;
                  } else {
@@ -452,7 +455,7 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
                                  barcode: listProduct.barcode,
                                  description: listProduct.description,
                                  provider: listProduct.provider,
-                                 stock: updatedProduct.stock
+                                 stock: finalValue
                              };
                              await addOrUpdateProductToDB(newDbProduct);
                               toast({
@@ -467,21 +470,20 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
                  toast({
                      variant: "destructive",
                      title: "Error DB",
-                     description: `No se pudo actualizar el stock en la base de datos para ${updatedProduct?.description}.`
+                     description: `No se pudo actualizar el stock en la base de datos para ${productDescription}.`
                  });
                   showToast = false;
              }
          }
 
-        // Simplified Toast logic: Only show generic if no DB toast was shown
-         if (showToast && updatedProduct) {
+        // Show generic toast only if no DB-specific toast was shown
+         if (showToast) {
              const valueTypeText = type === 'count' ? 'Cantidad' : 'Stock';
              const actionText = sumValue ? "sumada a" : "establecida en";
              const warehouseNameText = getWarehouseName(currentWarehouseId);
-             const descriptionText = updatedProduct.description;
              toast({
                  title: `${valueTypeText} Modificada`,
-                 description: `${valueTypeText} de ${descriptionText} (${warehouseNameText}) ${actionText} ${type === 'count' ? updatedProduct.count : updatedProduct.stock}.`,
+                 description: `${valueTypeText} de ${productDescription} (${warehouseNameText}) ${actionText} ${finalValue}.`,
                  duration: 3000
              });
          }
@@ -500,7 +502,7 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
   }, [modifyProductValue]);
 
   // Handle confirmation of quantity change
-  const handleConfirmQuantityChange = useCallback(() => {
+ const handleConfirmQuantityChange = useCallback(() => {
      if (!isMountedRef.current || !confirmQuantityProductBarcode || confirmQuantityAction === null || confirmQuantityNewValue === null) {
          console.warn("Confirmation attempted with invalid state.");
          setIsConfirmQuantityDialogOpen(false);
@@ -510,13 +512,25 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
      const warehouseId = currentWarehouseId;
      const barcodeToUpdate = confirmQuantityProductBarcode;
      const newValue = confirmQuantityNewValue;
+     let productDescription = ''; // Variable to hold description for the toast
 
+     // First, find the product to get its description before updating the state
+     const productInList = countingList.find(p => p.barcode === barcodeToUpdate && p.warehouseId === warehouseId);
+     if (productInList) {
+         productDescription = productInList.description;
+     } else {
+         console.warn("Product for confirmation not found in the list, cannot show description in toast.");
+         // Proceed without description or use barcode as fallback
+         productDescription = barcodeToUpdate;
+     }
+
+     // Update the state
      setCountingList(prevList => {
          const index = prevList.findIndex(p => p.barcode === barcodeToUpdate && p.warehouseId === warehouseId);
-         if (index === -1) return prevList;
+         if (index === -1) return prevList; // Should not happen if productInList was found, but good practice
 
          const updatedList = [...prevList];
-         const product = updatedList[index];
+         const product = updatedList[index]; // Get the product again within the updater scope
          const finalConfirmedCount = Math.max(0, newValue); // Ensure non-negative
 
          updatedList[index] = {
@@ -525,19 +539,27 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
              lastUpdated: new Date().toISOString()
          };
 
-         toast({ title: "Cantidad Modificada", description: `Cantidad de ${product.description} (${getWarehouseName(warehouseId)}) cambiada a ${finalConfirmedCount}.` });
-
          // Move updated product to the top
          return [updatedList[index], ...updatedList.filter((_, i) => i !== index)];
      });
 
+     // Show toast *after* state update is initiated
+     if (productDescription) {
+         toast({
+             title: "Cantidad Modificada",
+             description: `Cantidad de ${productDescription} (${getWarehouseName(warehouseId)}) cambiada a ${newValue}.`
+         });
+     }
+
+     // Reset confirmation state
      setIsConfirmQuantityDialogOpen(false);
      setConfirmQuantityProductBarcode(null);
      setConfirmQuantityAction(null);
      setConfirmQuantityNewValue(null);
-     setOpenModifyDialog(null);
+     setOpenModifyDialog(null); // Also close the modify dialog if it was open
 
- }, [currentWarehouseId, confirmQuantityProductBarcode, confirmQuantityAction, confirmQuantityNewValue, toast, getWarehouseName]);
+ }, [currentWarehouseId, confirmQuantityProductBarcode, confirmQuantityAction, confirmQuantityNewValue, toast, getWarehouseName, countingList]); // Added countingList
+
 
  // Request deletion of a product from the counting list
  const handleDeleteRequest = useCallback((product: DisplayProduct) => {
@@ -550,13 +572,14 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
      if (!isMountedRef.current || !productToDelete) return;
 
      const descriptionForToast = productToDelete.description;
+     const barcodeForToast = productToDelete.barcode; // Get barcode too
      const warehouseId = productToDelete.warehouseId;
 
      setCountingList(prevList => prevList.filter(p => !(p.barcode === productToDelete.barcode && p.warehouseId === warehouseId)));
 
      toast({
           title: "Producto eliminado (Lista Actual)",
-          description: `${descriptionForToast} (${productToDelete.barcode}) ha sido eliminado del inventario actual (${getWarehouseName(warehouseId)}).`,
+          description: `${descriptionForToast} (${barcodeForToast}) ha sido eliminado del inventario actual (${getWarehouseName(warehouseId)}).`,
           variant: "default"
       });
 
@@ -615,7 +638,6 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
     }
  }, [countingList, currentWarehouseId, toast, getWarehouseName]);
 
- // Removed handleBackupToGoogleSheet function
 
   // Save current counting list to local history
   const handleSaveToHistory = useCallback(async (hideToast = false) => { // Add flag to optionally hide toast
@@ -677,8 +699,8 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
                  if (dbProduct) {
                      return {
                          ...countingProduct, // Keep existing count and warehouseId
-                         description: dbProduct.description,
-                         provider: dbProduct.provider,
+                         description: dbProduct.description, // Update description
+                         provider: dbProduct.provider, // Update provider
                          stock: dbProduct.stock ?? countingProduct.stock ?? 0, // Update stock
                          lastUpdated: new Date().toISOString(), // Update timestamp
                      };
@@ -1034,7 +1056,6 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
 
               {/* Save and Export Actions */}
               <div className="mt-4 flex flex-col sm:flex-row justify-end items-center gap-2">
-                 {/* Removed Google Apps Script Backup URL Input and Backup Button */}
                   {/* Save to History Button */}
                   <Button
                         onClick={() => handleSaveToHistory()}

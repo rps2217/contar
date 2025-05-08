@@ -22,7 +22,7 @@ import {
 import { WarehouseManagement } from "@/components/warehouse-management";
 import { format, isValid } from 'date-fns';
 import { es } from 'date-fns/locale'; // Import Spanish locale for date formatting
-import { Minus, Plus, Trash, RefreshCw, Warehouse as WarehouseIcon, Camera, AlertCircle, Search, Check, AppWindow, Database, Boxes, UploadCloud, Loader2, History as HistoryIcon, CalendarIcon, Save, Edit, Download } from "lucide-react"; // Added HistoryIcon, CalendarIcon, Save, Edit, Download
+import { Minus, Plus, Trash, RefreshCw, Warehouse as WarehouseIcon, AlertCircle, Search, Check, AppWindow, Database, Boxes, UploadCloud, Loader2, History as HistoryIcon, CalendarIcon, Save, Edit, Download } from "lucide-react"; // Removed Camera icon
 import React, { useCallback, useEffect, useRef, useState, useMemo } from "react";
 import { backupToGoogleSheet } from './actions/backup-actions';
 import { playBeep } from '@/lib/helpers';
@@ -30,8 +30,7 @@ import { BarcodeEntry } from '@/components/barcode-entry';
 import { CountingListTable } from '@/components/counting-list-table';
 import { ModifyValueDialog } from '@/components/modify-value-dialog';
 import { ConfirmationDialog } from '@/components/confirmation-dialog';
-import { ScannerDialog } from '@/components/scanner-dialog';
-import { useBarcodeScanner } from '@/hooks/use-barcode-scanner';
+// Removed ScannerDialog import
 import { useLocalStorage } from '@/hooks/use-local-storage';
 import { EditProductDialog } from '@/components/edit-product-dialog';
 import {
@@ -60,7 +59,7 @@ export default function Home() {
   // --- Refs ---
   const { toast } = useToast();
   const barcodeInputRef = useRef<HTMLInputElement>(null);
-  const videoRef = useRef<HTMLVideoElement>(null); // Ref for the video element
+  // Removed videoRef
   const isMountedRef = useRef(false); // Track component mount status with ref
 
   // --- LocalStorage Hooks ---
@@ -94,11 +93,10 @@ export default function Home() {
   const [productToDelete, setProductToDelete] = useState<DisplayProduct | null>(null);
   const [isDbLoading, setIsDbLoading] = useState(true); // Tracks loading for IndexedDB operations or initial list load
   const [isRefreshingStock, setIsRefreshingStock] = useState(false); // For the refresh button action specifically
-  const [isScannerDialogOpen, setIsScannerDialogOpen] = useState(false); // Separate state for dialog visibility
-  const [isScannerActive, setIsScannerActive] = useState(false); // Separate state to enable/disable the hook
+  // Removed scanner-related state: isScannerDialogOpen, isScannerActive, isScannerInitializing, hasCameraPermission
   const [isBackingUp, setIsBackingUp] = useState(false);
   const [isSavingToHistory, setIsSavingToHistory] = useState(false); // State for saving to history
-  const [lastScannedBarcode, setLastScannedBarcode] = useState<string | null>(null);
+  const [lastScannedBarcode, setLastScannedBarcode] = useState<string | null>(null); // Keep for debouncing manual input
   const [isEditDetailDialogOpen, setIsEditDetailDialogOpen] = useState(false);
   const [productToEditDetail, setProductToEditDetail] = useState<ProductDetail | null>(null); // Detail only for edit dialog
   const [initialStockForEdit, setInitialStockForEdit] = useState<number>(0); // Initial stock for edit dialog
@@ -166,7 +164,7 @@ export default function Home() {
         return warehouse ? warehouse.name : `Almacén (${warehouseId})`;
   }, [warehouses]);
 
- // Handle adding a product (from barcode input or scan)
+ // Handle adding a product (from barcode input)
  const handleAddProduct = useCallback(async (barcodeToAdd?: string) => {
     if (!isMountedRef.current) return; // Ensure component is mounted
 
@@ -174,7 +172,7 @@ export default function Home() {
     const trimmedBarcode = rawBarcode.trim().replace(/\r?\n|\r$/g, ''); // Trim and remove trailing newlines
 
     if (!trimmedBarcode) {
-      toast({ variant: "default", title: "Código vacío", description: "Por favor, introduce o escanea un código de barras." });
+      toast({ variant: "default", title: "Código vacío", description: "Por favor, introduce un código de barras." });
       setBarcode("");
       requestAnimationFrame(() => barcodeInputRef.current?.focus());
       return;
@@ -184,15 +182,15 @@ export default function Home() {
         return;
     }
 
-    // Debounce consecutive scans/entries of the same barcode
+    // Debounce consecutive entries of the same barcode
      if (trimmedBarcode === lastScannedBarcode) {
-         console.log("Duplicate scan/entry detected within debounce period, ignoring:", trimmedBarcode);
+         console.log("Duplicate entry detected within debounce period, ignoring:", trimmedBarcode);
          setBarcode(""); // Clear input
          requestAnimationFrame(() => barcodeInputRef.current?.focus()); // Refocus
          return;
      }
      setLastScannedBarcode(trimmedBarcode);
-     // Debounce clearing last scanned barcode to prevent immediate re-scan issues
+     // Debounce clearing last scanned barcode to prevent immediate re-entry issues
      const clearLastScannedTimeout = setTimeout(() => {
          if (isMountedRef.current) {
               setLastScannedBarcode(null);
@@ -290,39 +288,7 @@ export default function Home() {
 
   }, [barcode, currentWarehouseId, getWarehouseName, lastScannedBarcode, toast]); // Dependencies
 
-
-  // Handle successful barcode scan from the hook
-  const handleScanSuccessCallback = useCallback((detectedBarcode: string) => {
-    console.log("handleScanSuccessCallback triggered with barcode:", detectedBarcode);
-    if (!isMountedRef.current || !isScannerActive) { // Check if scanner is still active
-         console.log("Scan success ignored: component unmounted or scanner deactivated.");
-         return;
-    }
-
-    // Add product and then close scanner to avoid race conditions
-    handleAddProduct(detectedBarcode).then(() => {
-       // Ensure component is still mounted and scanner dialog should close
-       if (isMountedRef.current && isScannerDialogOpen) {
-          console.log("Closing scanner dialog after successful scan processing.");
-          setIsScannerActive(false); // Deactivate the scanner hook
-          setIsScannerDialogOpen(false); // Close the dialog
-          // Refocus input after closing dialog
-           requestAnimationFrame(() => barcodeInputRef.current?.focus());
-       }
-    });
-  }, [handleAddProduct, isScannerActive, isScannerDialogOpen]); // Dependencies
-
-  // Initialize the barcode scanner hook
-  const {
-    isInitializing: isScannerInitializing,
-    hasPermission: hasCameraPermission,
-    startScanning,
-    stopScanning,
-  } = useBarcodeScanner({
-    onScanSuccess: handleScanSuccessCallback,
-    videoRef: videoRef, // Pass the ref here
-    isEnabled: isScannerActive, // Control the hook's activity
-  });
+  // Removed handleScanSuccessCallback and useBarcodeScanner hook initialization
 
 
 // Modify product value (count or stock) in the counting list and potentially DB
@@ -414,7 +380,7 @@ const modifyProductValue = useCallback(async (barcodeToUpdate: string, type: 'co
             }
         }
 
-
+         // Simplified Toast logic: Only show generic if no DB toast was shown
         if (showToast && updatedProduct) {
              const valueTypeText = type === 'count' ? 'Cantidad' : 'Stock';
              const warehouseNameText = getWarehouseName(currentWarehouseId);
@@ -521,17 +487,18 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
              }
          }
 
-        if (showToast && updatedProduct) {
-            const valueTypeText = type === 'count' ? 'Cantidad' : 'Stock';
-            const actionText = sumValue ? "sumada a" : "establecida en";
-            const warehouseNameText = getWarehouseName(currentWarehouseId);
-            const descriptionText = updatedProduct.description;
-            toast({
-                title: `${valueTypeText} Modificada`,
-                description: `${valueTypeText} de ${descriptionText} (${warehouseNameText}) ${actionText} ${type === 'count' ? updatedProduct.count : updatedProduct.stock}.`,
-                duration: 3000
-            });
-        }
+        // Simplified Toast logic: Only show generic if no DB toast was shown
+         if (showToast && updatedProduct) {
+             const valueTypeText = type === 'count' ? 'Cantidad' : 'Stock';
+             const actionText = sumValue ? "sumada a" : "establecida en";
+             const warehouseNameText = getWarehouseName(currentWarehouseId);
+             const descriptionText = updatedProduct.description;
+             toast({
+                 title: `${valueTypeText} Modificada`,
+                 description: `${valueTypeText} de ${descriptionText} (${warehouseNameText}) ${actionText} ${type === 'count' ? updatedProduct.count : updatedProduct.stock}.`,
+                 duration: 3000
+             });
+         }
      }
 
 
@@ -959,9 +926,7 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
     if (newSection === 'Contador') {
        requestAnimationFrame(() => barcodeInputRef.current?.focus());
     }
-    if (newSection !== 'Contador' && isScannerActive) {
-       handleStopScanning(); // Stop scanning if switching away
-    }
+    // Removed scanner stop logic
   };
 
    // Handle warehouse change
@@ -1011,27 +976,7 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
          }
    };
 
-   // Handle clicking the scan button
-   const handleScanButtonClick = () => {
-         console.log("Scan button clicked, requesting scanner start.");
-         if (!videoRef.current) {
-            console.error("Cannot start scanner: video element reference is not yet available.");
-            toast({ variant: "destructive", title: "Error de Cámara", description: "No se pudo inicializar el elemento de vídeo." });
-            return;
-          }
-         setIsScannerDialogOpen(true); // Open the dialog
-         setIsScannerActive(true); // Enable the hook to start scanning
-         startScanning(); // Inform the hook to attempt start (might trigger permission)
-   };
-
-   // Handle stopping the scanner (e.g., clicking cancel in dialog)
-   const handleStopScanning = () => {
-         console.log("Stop scanning requested.");
-         setIsScannerActive(false); // Disable the hook's activity FIRST
-         setIsScannerDialogOpen(false); // Then close the dialog
-         stopScanning(); // Inform the hook to stop processing and release resources
-         requestAnimationFrame(() => barcodeInputRef.current?.focus()); // Refocus input
-   };
+   // Removed handleScanButtonClick and handleStopScanning
 
    // Get the current value for the ModifyValueDialog
    const getCurrentValueForDialog = (type: 'count' | 'stock') => {
@@ -1049,7 +994,7 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
        <div className="flex flex-col md:flex-row justify-between items-center mb-4 gap-4">
          <h1 className="text-2xl font-bold text-gray-700 dark:text-gray-200">StockCounter Pro</h1>
          <div className="flex flex-col sm:flex-row items-center gap-2 w-full md:w-auto">
-             {/* Section Selector FIRST */}
+            {/* Section Selector FIRST */}
             <Select value={activeSection} onValueChange={handleSectionChange}>
                 <SelectTrigger className="w-full sm:w-auto min-w-[180px] max-w-[250px] bg-white dark:bg-gray-800 border-gray-300 dark:border-gray-600">
                     <SelectValue placeholder="Seleccionar Sección" />
@@ -1098,19 +1043,7 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
          </div>
       </div>
 
-       {/* Always render the video element for the ref to be consistently available */}
-       {/* We hide it visually when the dialog is closed */}
-       <video
-            ref={videoRef}
-            className={cn(
-                "absolute -z-10", // Keep it out of the normal layout flow
-                isScannerDialogOpen ? "w-px h-px" : "w-0 h-0" // Use minimal size when hidden
-            )}
-            autoPlay
-            muted
-            playsInline
-        ></video>
-
+      {/* Removed video element */}
 
       {/* Main Content Area based on activeSection */}
       <div className="w-full md:w-[800px] lg:w-[1000px] mx-auto">
@@ -1122,12 +1055,11 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
                     barcode={barcode}
                     setBarcode={setBarcode}
                     onAddProduct={() => handleAddProduct()}
-                    onScanClick={handleScanButtonClick}
                     onRefreshStock={handleRefreshStock}
-                    isLoading={isDbLoading || isRefreshingStock || isBackingUp || isScannerInitializing || isSavingToHistory}
-                    isScanning={isScannerActive || isScannerDialogOpen} // Consider dialog open as scanning active for UI
+                    isLoading={isDbLoading || isRefreshingStock || isBackingUp || isSavingToHistory} // Removed isScannerInitializing
                     isRefreshingStock={isRefreshingStock}
                     inputRef={barcodeInputRef}
+                    // Removed onScanClick and isScanning props
                 />
                 {/* Search Input for Counting List */}
                  <div className="relative mb-4">
@@ -1305,14 +1237,7 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
          isDestructive={true}
       />
 
-      {/* Scanner Dialog (Modal) */}
-       <ScannerDialog
-          isOpen={isScannerDialogOpen}
-          onClose={handleStopScanning} // Use dedicated stop handler
-          videoRef={videoRef} // Pass the actual ref
-          isInitializing={isScannerInitializing}
-          hasPermission={hasCameraPermission}
-       />
+      {/* Removed Scanner Dialog */}
 
       {/* Dialog for Editing Product Details */}
       <EditProductDialog
@@ -1336,7 +1261,7 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
                    console.error("Failed to delete product from DB via edit dialog:", error);
                    toast({ variant: "destructive", title: "Error al Eliminar", description: `No se pudo eliminar: ${error.message}` });
                } finally {
-                    if (!isMountedRef.current) { // Check moved inside finally
+                    if (isMountedRef.current) { // Check moved inside finally
                         setIsDbLoading(false);
                     }
                     setIsDeleteDialogOpen(false); // Ensure delete dialog is also closed

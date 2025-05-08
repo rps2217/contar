@@ -2,17 +2,15 @@
 import React from 'react';
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
-import { Camera, RefreshCw } from "lucide-react";
+import { RefreshCw } from "lucide-react"; // Removed Camera icon
 import { cn } from "@/lib/utils";
 
 interface BarcodeEntryProps {
   barcode: string;
   setBarcode: (value: string) => void;
   onAddProduct: () => void;
-  onScanClick: () => void;
   onRefreshStock: () => void;
-  isLoading: boolean; // General loading (DB, initial list)
-  isScanning: boolean; // Camera scanning active
+  isLoading: boolean; // General loading (DB, initial list, backup, history)
   isRefreshingStock: boolean; // Refresh stock action active
   inputRef: React.RefObject<HTMLInputElement>;
 }
@@ -21,10 +19,8 @@ export const BarcodeEntry: React.FC<BarcodeEntryProps> = ({
   barcode,
   setBarcode,
   onAddProduct,
-  onScanClick,
   onRefreshStock,
-  isLoading, // This prop now covers general DB loading, backup, history saving
-  isScanning,
+  isLoading, // This prop covers general loading, backup, history saving
   isRefreshingStock,
   inputRef
 }) => {
@@ -36,7 +32,7 @@ export const BarcodeEntry: React.FC<BarcodeEntryProps> = ({
   };
 
   // isLoading prop now also indicates if backing up or saving to history
-  const isAnyLoadingActive = isLoading || isScanning || isRefreshingStock;
+  const isAnyLoadingActive = isLoading || isRefreshingStock;
 
 
   return (
@@ -58,19 +54,7 @@ export const BarcodeEntry: React.FC<BarcodeEntryProps> = ({
         aria-label="Código de barras"
         disabled={isAnyLoadingActive}
       />
-      <Button
-        onClick={onScanClick}
-        variant="outline"
-        size="icon"
-        className={cn(
-          "text-blue-600 dark:text-blue-400 border-blue-300 dark:border-blue-600 hover:bg-blue-50 dark:hover:bg-blue-900 hover:text-blue-700 dark:hover:text-blue-300"
-        )}
-        aria-label="Escanear código de barras con la cámara"
-        title="Escanear con Cámara"
-        disabled={isAnyLoadingActive}
-      >
-        <Camera className="h-5 w-5" />
-      </Button>
+      {/* Removed Scan Button */}
       <Button
         onClick={onAddProduct}
         className="bg-teal-600 hover:bg-teal-700 text-white rounded-md shadow-sm px-5 py-2 transition-colors duration-200"

@@ -11,7 +11,7 @@ import { format, isValid } from 'date-fns'; // Import isValid
 interface CountingListTableProps {
   countingList: DisplayProduct[];
   warehouseName: string;
-  isLoading: boolean;
+  isLoading: boolean; // Keep isLoading prop if needed for other UI elements, but remove check below if not used
   onDeleteRequest: (product: DisplayProduct) => void;
   onOpenStockDialog: (product: DisplayProduct) => void;
   onOpenQuantityDialog: (product: DisplayProduct) => void;
@@ -66,7 +66,7 @@ export const CountingListTable: React.FC<CountingListTableProps> = ({
                 <TableCell
                     className="px-4 py-3 font-medium text-gray-900 dark:text-gray-100 cursor-pointer hover:text-red-600 dark:hover:text-red-400 hover:underline"
                     onClick={() => onDeleteRequest(product)}
-                    title={`Eliminar ${product.description} de este inventario`}
+                    title={`Eliminar ${product.description} (${product.barcode}) de este inventario`}
                     aria-label={`Eliminar ${product.description}`}
                 >
                     {product.description}
@@ -135,17 +135,10 @@ export const CountingListTable: React.FC<CountingListTableProps> = ({
                 </TableCell>
                 </TableRow>
             );})}
-          {countingList.length === 0 && !isLoading && (
+          {countingList.length === 0 && (
             <TableRow>
-              <TableCell colSpan={6} className="text-center px-4 py-10 text-gray-500 dark:text-gray-400">
-                No hay productos en este inventario. Escanea un código de barras para empezar.
-              </TableCell>
-            </TableRow>
-          )}
-          {isLoading && (
-            <TableRow>
-              <TableCell colSpan={6} className="text-center px-4 py-10 text-gray-500 dark:text-gray-400">
-                Cargando datos del almacén...
+              <TableCell colSpan={7} className="text-center px-4 py-10 text-gray-500 dark:text-gray-400">
+                No hay productos en este inventario. Agrega uno para empezar.
               </TableCell>
             </TableRow>
           )}
@@ -154,5 +147,3 @@ export const CountingListTable: React.FC<CountingListTableProps> = ({
     </ScrollArea>
   );
 };
-
-    

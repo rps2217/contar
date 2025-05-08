@@ -1,7 +1,7 @@
 // src/components/product-database.tsx
 "use client";
 
-import type { ProductDetail, InventoryItem, DisplayProduct } from '@/types/product';
+import type { ProductDetail, DisplayProduct } from '@/types/product';
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useToast } from "@/hooks/use-toast";
 import { cn, getLocalStorageItem, setLocalStorageItem } from "@/lib/utils";
@@ -15,7 +15,7 @@ import {
 import {
     Edit, Filter, Play, Loader2, Save, Trash, Upload, AlertCircle, Warehouse as WarehouseIcon
 } from "lucide-react";
-import Papa from 'papaparse'; // Using PapaParse for robust CSV parsing
+import Papa from 'papaparse'; // Ensure PapaParse is imported for CSV parsing
 import * as React from "react"; // Import React
 import { useCallback, useEffect, useState } from "react";
 import { useForm } from "react-hook-form";
@@ -42,7 +42,7 @@ const productDetailSchema = z.object({
   description: z.string().min(1, { message: "La descripción es requerida." }),
   provider: z.string().optional(),
   stock: z.preprocess(
-    (val) => (val === "" || val === undefined || val === null ? 0 : Number(val)),
+    (val) => (val === "" || val === undefined || val === null || Number.isNaN(Number(val)) ? 0 : Number(val)),
     z.number().min(0, { message: "El stock debe ser mayor o igual a 0." }).default(0)
   ),
 });
@@ -144,7 +144,7 @@ async function fetchAndParseGoogleSheetData(sheetUrlOrId: string): Promise<Produ
     // Determine if the first row is a header or actual data.
     // For position-based, we might assume all rows are data unless a specific check is made.
     // Let's start from row 0, assuming no header or header is to be ignored for positional mapping.
-    const startDataRow = 0; // Or 1 if you're sure the first row is always a header and should be skipped
+    const startDataRow = 1; // Assume first row is header and skip it
 
     for (let i = startDataRow; i < csvData.length; i++) {
         const values = csvData[i];
@@ -195,7 +195,6 @@ async function fetchAndParseGoogleSheetData(sheetUrlOrId: string): Promise<Produ
 
  interface ProductDatabaseProps {
   onStartCountByProvider: (products: DisplayProduct[]) => void;
-  // No currentWarehouseId prop needed here as this component manages its own data
  }
 
 
@@ -247,7 +246,6 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = ({ onStartCountBy
  const handleAddOrUpdateProductSubmit = useCallback(async (data: ProductDetailValues) => {
     const isUpdating = !!selectedProduct;
     const productData: ProductDetail = {
-        ...data,
         barcode: isUpdating ? selectedProduct!.barcode : data.barcode.trim(), // Keep original barcode if updating
         description: data.description.trim() || `Producto ${data.barcode.trim()}`,
         provider: data.provider?.trim() || "Desconocido",
@@ -490,9 +488,6 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = ({ onStartCountBy
       }
 
       // Convert ProductDetail[] to DisplayProduct[] for onStartCountByProvider
-      // Assuming onStartCountByProvider expects DisplayProduct which might have warehouseId, count, etc.
-      // For this context, we'll assume the count starts at 0 for a new session.
-      // The warehouseId would be determined by the "Contador" section's current warehouse.
       const productsToCount: DisplayProduct[] = providerProducts.map(p => ({
           ...p,
           warehouseId: '', // This will be set by the main page context
@@ -631,7 +626,7 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = ({ onStartCountBy
              </Button>
          </div>
          <p id="google-sheet-info" className="text-xs text-muted-foreground dark:text-gray-400 mt-1">
-              Introduzca la URL completa de la Hoja de Google (compartida públicamente) o simplemente el ID de la hoja de cálculo. Los datos se leerán por posición de columna (ignorando encabezados): Col 1: Código Barras, Col 2: Descripción, Col 6: Stock, Col 10: Proveedor.
+              Introduzca la URL completa de la Hoja de Google (compartida públicamente) o simplemente el ID de la hoja de cálculo. Los datos se leerán por posición de columna (asumiendo primera fila es encabezado): Col 1: Código Barras, Col 2: Descripción, Col 6: Stock, Col 10: Proveedor.
          </p>
          {isProcessing && (
              <div className="mt-4 space-y-1">
@@ -692,7 +687,6 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = ({ onStartCountBy
           isProcessing={isProcessing}
           initialStock={selectedProduct?.stock} // Pass current stock of selected product
           context="database"
-          // No warehouseName prop needed if EditProductDialog handles stock for the product detail directly
        />
     </div>
   );
@@ -701,9 +695,9 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = ({ onStartCountBy
 
 // --- Child Component: ProductTable ---
 interface ProductTableProps {
-  products: ProductDetail[]; // Changed from ProductDetail[] to ProductDetail[]
+  products: ProductDetail[];
   isLoading: boolean;
-  onEdit: (product: ProductDetail) => void; // Changed from ProductDetail to ProductDetail
+  onEdit: (product: ProductDetail) => void;
   onDelete: (barcode: string) => void;
 }
 
@@ -711,7 +705,7 @@ const ProductTable: React.FC<ProductTableProps> = ({
   products,
   isLoading,
   onEdit,
-  onDelete,
+  onDelete, // Keep onDelete for the delete button inside EditProductDialog
 }) => {
 
   return (
@@ -724,7 +718,7 @@ const ProductTable: React.FC<ProductTableProps> = ({
             <TableHead className="w-[40%] md:w-[50%] px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">Descripción (Click para Editar)</TableHead>
              <TableHead className="hidden md:table-cell w-[20%] px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">Proveedor</TableHead>
             <TableHead className="w-[15%] md:w-[10%] px-4 py-3 text-center text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">Stock</TableHead>
-            {/* Actions column removed as editing is triggered by clicking description */}
+            {/* Removed Actions column */}
           </TableRow>
         </TableHeader>
         <TableBody>
@@ -741,7 +735,7 @@ const ProductTable: React.FC<ProductTableProps> = ({
               </TableCell>
             </TableRow>
           ) : (
-            products.map((product) => ( // Changed from ProductDetail to ProductDetail
+            products.map((product) => (
               <TableRow key={product.barcode} className="hover:bg-muted/50 dark:hover:bg-gray-700 text-sm transition-colors duration-150">
                 <TableCell className="px-4 py-3 font-medium text-gray-700 dark:text-gray-200">{product.barcode}</TableCell>
                 <TableCell

@@ -22,7 +22,7 @@ import {
 import { WarehouseManagement } from "@/components/warehouse-management";
 import { format, isValid } from 'date-fns';
 import { es } from 'date-fns/locale'; // Import Spanish locale for date formatting
-import { Minus, Plus, Trash, RefreshCw, Warehouse as WarehouseIcon, AlertCircle, Search, Check, AppWindow, Database, Boxes, Loader2, History as HistoryIcon, CalendarIcon, Save, Edit, Download, BarChart, Settings } from "lucide-react";
+import { Minus, Plus, Trash, RefreshCw, Warehouse as WarehouseIcon, AlertCircle, Search, Check, AppWindow, Database, Boxes, Loader2, History as HistoryIcon, CalendarIcon, Save, Edit, Download, BarChart, Settings, AlertTriangle } from "lucide-react";
 import React, { useCallback, useEffect, useRef, useState, useMemo } from "react";
 import { playBeep } from '@/lib/helpers';
 import { BarcodeEntry } from '@/components/barcode-entry';
@@ -40,6 +40,7 @@ import {
     clearAllDatabases, // Import clear all data function
     getCountingHistory,
     clearCountingHistory,
+    clearInventoryForWarehouse, // Import function to clear warehouse-specific items
 } from '@/lib/database'; // Import IndexedDB helpers
 import { CountingHistoryViewer } from '@/components/counting-history-viewer'; // Import History Viewer
 import { DiscrepancyReportViewer } from '@/components/discrepancy-report-viewer'; // Import Discrepancy Report Viewer
@@ -92,6 +93,8 @@ export default function Home() {
   const [isEditDetailDialogOpen, setIsEditDetailDialogOpen] = useState(false);
   const [productToEditDetail, setProductToEditDetail] = useState<ProductDetail | null>(null); // Detail only for edit dialog
   const [initialStockForEdit, setInitialStockForEdit] = useState<number>(0); // Initial stock for edit dialog
+  const [isClearAllDataConfirmOpen, setIsClearAllDataConfirmOpen] = useState(false); // State for clearing ALL data
+
 
   // --- Effects ---
 
@@ -217,18 +220,34 @@ export default function Home() {
         const newCount = (productToUpdate.count ?? 0) + 1;
         newCountForToast = newCount; // Store for toast after state update
 
-        // Update state asynchronously
-        setCountingList(currentList => {
-            const updatedProductData: DisplayProduct = {
-                ...productToUpdate,
-                count: newCount,
-                lastUpdated: new Date().toISOString(),
-            };
-            // Move updated product to the top
-            return [updatedProductData, ...currentList.filter((_, index) => index !== existingProductIndex)];
-        });
+        // Check if confirmation is needed before updating state
+        const productStock = productToUpdate.stock ?? 0;
+        const originalCount = productToUpdate.count ?? 0;
+        const needsConfirmation = newCount > productStock && originalCount <= productStock && productStock > 0;
 
-        playBeep(880, 100);
+        if (needsConfirmation) {
+             setConfirmQuantityProductBarcode(productToUpdate.barcode);
+             setConfirmQuantityAction('increment');
+             setConfirmQuantityNewValue(newCount);
+             setIsConfirmQuantityDialogOpen(true);
+             // Don't update state yet, wait for confirmation
+             playBeep(660, 100); // Play a beep to acknowledge scan, but different pitch/duration?
+        } else {
+            // Update state asynchronously if no confirmation needed
+            setCountingList(currentList => {
+                const updatedProductData: DisplayProduct = {
+                    ...productToUpdate,
+                    count: newCount,
+                    lastUpdated: new Date().toISOString(),
+                };
+                // Move updated product to the top
+                return [updatedProductData, ...currentList.filter((_, index) => index !== existingProductIndex)];
+            });
+             playBeep(880, 100); // Standard increment beep
+             // Trigger toast for increment after state update is scheduled
+             toast({ title: "Cantidad aumentada", description: `${descriptionForToast} cantidad aumentada a ${newCount}.` });
+        }
+
 
     } else {
         // Product not in the current list state, check the DB
@@ -280,18 +299,18 @@ export default function Home() {
         }
     }
 
-    // Trigger toasts after state updates are scheduled
-    if (productWasInList && newCountForToast !== null) {
-        toast({ title: "Cantidad aumentada", description: `${descriptionForToast} cantidad aumentada a ${newCountForToast}.` });
-    } else if (productAddedForToast) {
-         toast({ title: "Producto agregado", description: `${productAddedForToast} agregado al inventario (${getWarehouseName(currentWarehouseId)}).` });
-    } else if (unknownProductForToast) {
-          toast({
-              variant: "destructive",
-              title: "Producto Desconocido",
-              description: `Producto ${unknownProductForToast} no encontrado. Agregado temporalmente. Edita en 'Base de Datos'.`,
-              duration: 7000,
-          });
+    // Trigger toasts for non-increment cases (add/unknown) AFTER state updates are scheduled
+    if (!productWasInList) {
+        if (productAddedForToast) {
+            toast({ title: "Producto agregado", description: `${productAddedForToast} agregado al inventario (${getWarehouseName(currentWarehouseId)}).` });
+        } else if (unknownProductForToast) {
+            toast({
+                variant: "destructive",
+                title: "Producto Desconocido",
+                description: `Producto ${unknownProductForToast} no encontrado. Agregado temporalmente. Edita en 'Base de Datos'.`,
+                duration: 7000,
+            });
+        }
     }
 
 
@@ -332,6 +351,7 @@ const modifyProductValue = useCallback(async (barcodeToUpdate: string, type: 'co
         // Check for confirmation only for 'count' type when INCREASING count ABOVE stock level
         needsConfirmation = type === 'count' && productStock > 0 && change > 0 && finalValue > productStock && originalValue <= productStock;
 
+
         if (needsConfirmation) {
             setConfirmQuantityProductBarcode(product.barcode);
             setConfirmQuantityAction(change > 0 ? 'increment' : 'decrement'); // Still using increment/decrement here based on 'change'
@@ -346,16 +366,18 @@ const modifyProductValue = useCallback(async (barcodeToUpdate: string, type: 'co
                  [type]: finalValue,
                  lastUpdated: new Date().toISOString()
             };
-            const updatedList = [...prevList];
-            updatedList[productIndex] = updatedProduct;
+             const updatedList = [...prevList];
+             const listWithoutProduct = updatedList.filter((_, i) => i !== productIndex);
+             // Move updated product to the top
+             const newList = [updatedProduct, ...listWithoutProduct];
 
-            // Prepare toast message for generic update (if needed)
-             const valueTypeText = type === 'count' ? 'Cantidad' : 'Stock';
-             const warehouseNameText = getWarehouseName(currentWarehouseId);
-             toastTitle = `${valueTypeText} Modificada`;
-             toastDescription = `${valueTypeText} de ${productDescription} (${warehouseNameText}) cambiada a ${finalValue}.`;
+             // Prepare toast message for generic update (if needed)
+              const valueTypeText = type === 'count' ? 'Cantidad' : 'Stock';
+              const warehouseNameText = getWarehouseName(currentWarehouseId);
+              toastTitle = `${valueTypeText} Modificada`;
+              toastDescription = `${valueTypeText} de ${productDescription} (${warehouseNameText}) cambiada a ${finalValue}.`;
 
-            return updatedList;
+            return newList; // Return the modified list with the item at the top
         }
     });
 
@@ -471,7 +493,8 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
                 lastUpdated: new Date().toISOString()
             };
             const updatedList = [...prevList];
-            updatedList[productIndex] = updatedProduct;
+            const listWithoutProduct = updatedList.filter((_, i) => i !== productIndex);
+            const newList = [updatedProduct, ...listWithoutProduct]; // Add updated product to the top
             setOpenModifyDialog(null); // Close dialog if no confirmation needed
 
             // Prepare generic toast message
@@ -481,7 +504,7 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
             toastTitle = `${valueTypeText} Modificada`;
             toastDescription = `${valueTypeText} de ${productDescription} (${warehouseNameText}) ${actionText} ${finalValue}.`;
 
-            return updatedList;
+            return newList; // Return updated list
         }
     });
 
@@ -1044,26 +1067,30 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
         return type === 'stock' ? (currentItem?.stock ?? 0) : (currentItem?.count ?? 0);
    };
 
-    // Handle action from the Select dropdown
-    const handleActionSelect = (value: string) => {
-        switch (value) {
-            case 'saveHistory':
-                handleSaveToHistory();
-                break;
-            case 'export':
-                handleExport();
-                break;
-            case 'clearList':
-                if (countingList.filter(p => p.warehouseId === currentWarehouseId).length > 0) {
-                    setIsDeleteListDialogOpen(true); // Open confirmation dialog
-                } else {
-                    toast({ title: "Vacío", description: "La lista actual ya está vacía." });
-                }
-                break;
-            default:
-                console.warn("Unknown action selected:", value);
-        }
-    };
+  // Handle clearing ALL data (products and history)
+   const handleClearAllData = async () => {
+    if (!isMountedRef.current) return;
+    setIsDbLoading(true); // Indicate processing
+    try {
+      await clearAllDatabases(); // Call the DB function to clear all stores
+      toast({ title: "Base de Datos Borrada", description: "Todos los productos y el historial han sido eliminados." });
+      // Reset relevant states
+      setCountingList([]);
+      // Reset other related states if necessary (e.g., product database view)
+       if (activeSection === 'Base de Datos') {
+         // Trigger reload or state reset for ProductDatabase component if needed
+         // This might involve a state variable or a key change for the component
+       }
+    } catch (error: any) {
+      console.error("Error clearing all data:", error);
+      toast({ variant: "destructive", title: "Error al Borrar", description: `No se pudo borrar la base de datos: ${error.message}` });
+    } finally {
+      if (isMountedRef.current) {
+        setIsDbLoading(false);
+      }
+       setIsClearAllDataConfirmOpen(false); // Close confirmation dialog
+    }
+  };
 
 
   // --- Main Component Render ---
@@ -1170,35 +1197,39 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
                     key={`${currentWarehouseId}-${countingList.length}`} // Add key to force re-render on list change or warehouse switch
                 />
 
-              {/* Actions Dropdown */}
-               <div className="mt-4 flex justify-end">
-                    <Select
-                        onValueChange={handleActionSelect}
+              {/* Individual Action Buttons */}
+               <div className="mt-4 flex flex-wrap justify-center md:justify-end gap-2">
+                    <Button
+                        onClick={() => handleSaveToHistory()}
                         disabled={countingList.filter(p => p.warehouseId === currentWarehouseId).length === 0 || isDbLoading || isSavingToHistory}
+                        variant="outline"
+                        className="flex items-center gap-1"
                     >
-                        <SelectTrigger className="w-full sm:w-auto min-w-[180px] max-w-[250px] bg-white dark:bg-gray-800 border-gray-300 dark:border-gray-600">
-                            <Settings className="mr-2 h-4 w-4" />
-                            <SelectValue placeholder="Acciones..." />
-                        </SelectTrigger>
-                        <SelectContent>
-                            <SelectItem value="saveHistory">
-                                <div className="flex items-center gap-2">
-                                    {isSavingToHistory ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
-                                    {isSavingToHistory ? "Guardando..." : "Guardar en Historial"}
-                                </div>
-                            </SelectItem>
-                            <SelectItem value="export">
-                                <div className="flex items-center gap-2">
-                                    <Download className="h-4 w-4" /> Exportar Inventario
-                                </div>
-                            </SelectItem>
-                            <SelectItem value="clearList">
-                                <div className="flex items-center gap-2 text-red-600 dark:text-red-400">
-                                    <Trash className="h-4 w-4" /> Borrar Lista Actual
-                                </div>
-                             </SelectItem>
-                        </SelectContent>
-                    </Select>
+                        {isSavingToHistory ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
+                        {isSavingToHistory ? "Guardando..." : "Guardar Historial"}
+                    </Button>
+                    <Button
+                        onClick={handleExport}
+                        disabled={countingList.filter(p => p.warehouseId === currentWarehouseId).length === 0 || isDbLoading}
+                        variant="outline"
+                        className="flex items-center gap-1"
+                    >
+                        <Download className="h-4 w-4" /> Exportar
+                    </Button>
+                    <Button
+                        onClick={() => {
+                            if (countingList.filter(p => p.warehouseId === currentWarehouseId).length > 0) {
+                                setIsDeleteListDialogOpen(true); // Open confirmation dialog
+                            } else {
+                                toast({ title: "Vacío", description: "La lista actual ya está vacía." });
+                            }
+                        }}
+                        disabled={countingList.filter(p => p.warehouseId === currentWarehouseId).length === 0 || isDbLoading}
+                        variant="destructive"
+                         className="flex items-center gap-1"
+                    >
+                        <Trash className="h-4 w-4" /> Borrar Lista
+                    </Button>
                 </div>
 
             </div>
@@ -1220,23 +1251,8 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
                     warehouses={warehouses}
                     onAddWarehouse={handleAddWarehouse}
                     onUpdateWarehouses={handleUpdateWarehouses}
-                    onClearDatabaseRequest={async () => {
-                        console.log("Request to clear all DB data");
-                         if (window.confirm("¿Estás seguro de que quieres borrar TODA la base de datos (productos, historial, etc.)? Esta acción es irreversible.")) {
-                             try {
-                                 await clearAllDatabases();
-                                 toast({title: "Base de Datos Borrada", description: "Todos los datos han sido eliminados."});
-                                 // Reload or reset states if necessary
-                                 if (activeSection === 'Base de Datos') {
-                                     // Potentially force a re-render or state reset for ProductDatabase
-                                 }
-                                 setCountingList([]);
-                                 localStorage.removeItem(`${LOCAL_STORAGE_COUNTING_LIST_KEY_PREFIX}${currentWarehouseId}`);
-                             } catch (error: any) {
-                                  toast({variant: "destructive", title: "Error al Borrar", description: `No se pudo borrar la base de datos: ${error.message}`});
-                             }
-                         }
-                    }}
+                    // Pass the handler to open the confirmation dialog for clearing all data
+                    onClearDatabaseRequest={() => setIsClearAllDataConfirmOpen(true)}
                   />
              </div>
            )}
@@ -1284,8 +1300,9 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
           description={
             confirmQuantityNewValue !== null &&
             countingList.find(p => p.barcode === confirmQuantityProductBarcode)?.stock !== null &&
-            confirmQuantityNewValue > countingList.find(p => p.barcode === confirmQuantityProductBarcode)!.stock!
-                ? `La cantidad contada (${confirmQuantityNewValue}) ahora supera el stock del sistema para "${countingList.find(p => p.barcode === confirmQuantityProductBarcode)?.description}". ¿Confirmar?`
+            confirmQuantityNewValue > countingList.find(p => p.barcode === confirmQuantityProductBarcode)!.stock! &&
+             countingList.find(p => p.barcode === confirmQuantityProductBarcode)!.stock! > 0 // Add check for stock > 0
+                ? `La cantidad contada (${confirmQuantityNewValue}) ahora supera el stock del sistema (${countingList.find(p => p.barcode === confirmQuantityProductBarcode)?.stock}) para "${countingList.find(p => p.barcode === confirmQuantityProductBarcode)?.description}". ¿Confirmar?`
                 : `Está a punto de modificar la cantidad contada para "${countingList.find(p => p.barcode === confirmQuantityProductBarcode)?.description}". ¿Continuar?`
         }
           onConfirm={handleConfirmQuantityChange}
@@ -1318,6 +1335,29 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
           onCancel={() => setIsDeleteListDialogOpen(false)}
           isDestructive={true}
       />
+
+        {/* Confirmation Dialog for Clearing ALL Data */}
+        <ConfirmationDialog
+            isOpen={isClearAllDataConfirmOpen}
+            onOpenChange={setIsClearAllDataConfirmOpen}
+            title="Confirmar Borrado Completo"
+            description={
+                <div className="space-y-2">
+                    <div className="flex items-center gap-2 text-destructive">
+                         <AlertTriangle className="h-5 w-5"/>
+                         <span className="font-semibold">¡Acción Irreversible!</span>
+                    </div>
+                    <p>Estás a punto de eliminar <span className="font-bold">TODOS</span> los productos de la base de datos y <span className="font-bold">TODO</span> el historial de conteos.</p>
+                    <p>Esta acción no se puede deshacer.</p>
+                 </div>
+            }
+            confirmText="Sí, Borrar Todo"
+            onConfirm={handleClearAllData}
+            onCancel={() => setIsClearAllDataConfirmOpen(false)}
+            isDestructive={true}
+            isProcessing={isDbLoading}
+        />
+
 
       {/* Dialog for Editing Product Details */}
       <EditProductDialog

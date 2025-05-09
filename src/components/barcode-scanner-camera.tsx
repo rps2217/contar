@@ -7,7 +7,7 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Loader2, AlertTriangle, XCircle } from 'lucide-react';
 import { useToast } from "@/hooks/use-toast";
-import { cn } from "@/lib/utils"; // Added import for cn
+import { cn } from "@/lib/utils";
 
 interface BarcodeScannerCameraProps {
   onScanSuccess: (decodedText: string) => void;
@@ -25,119 +25,151 @@ export const BarcodeScannerCamera: React.FC<BarcodeScannerCameraProps> = ({
   const [isLoading, setIsLoading] = useState(true);
   const [hasPermission, setHasPermission] = useState<boolean | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
-  const { toast } = useToast();
+  // const { toast } = useToast(); // Toast not used directly in this version of useEffect logic
+  const streamRef = useRef<MediaStream | null>(null); // To hold the stream for cleanup
 
   useEffect(() => {
     let isCancelled = false;
-    let currentStream: MediaStream | null = null;
 
     const initializeScanner = async () => {
-      if (isCancelled || !videoRef.current) {
-        if(!videoRef.current && !isCancelled) {
-          console.warn("Video ref not available during init, retrying...");
-          // Only retry if not cancelled and videoRef.current is null
-           if (!isCancelled) {
-             setTimeout(initializeScanner, 100);
-           }
-        }
+      if (isCancelled) return;
+
+      if (!videoRef.current) {
+        console.warn("Video ref not available during init. Scanner will not start.");
+        if (!isCancelled) setIsLoading(false); // Stop loading if ref is missing
         return;
       }
 
       setIsLoading(true);
       setErrorMessage(null);
 
+      if (!readerRef.current) {
+        readerRef.current = new BrowserMultiFormatReader(undefined, 500); // Added hints and increased scan interval
+      }
+
       try {
-        currentStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
+        // Ensure any previous stream is stopped
+        if (streamRef.current) {
+          streamRef.current.getTracks().forEach(track => track.stop());
+          streamRef.current = null;
+        }
+        // Reset the reader to clear any previous state or video associations.
+        // This is important if initializeScanner can be called multiple times.
+        if (readerRef.current && typeof readerRef.current.reset === 'function') {
+            try {
+                 readerRef.current.reset();
+            } catch(e) {
+                // console.warn("Error resetting reader (might be harmless):", e);
+            }
+        }
+
+
+        const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
+        if (isCancelled) { // Check cancellation immediately after async operation
+          stream.getTracks().forEach(track => track.stop());
+          return;
+        }
+        streamRef.current = stream;
         setHasPermission(true);
 
-        if (videoRef.current && !isCancelled) {
-          videoRef.current.srcObject = currentStream;
-          // Ensure video is playing before starting decode
-          await videoRef.current.play().catch(playError => {
-            // This catch is important for browsers that might block autoplay
-            console.warn("Video play was prevented or failed:", playError);
-            setErrorMessage("No se pudo iniciar el video. Asegúrate de que los permisos estén concedidos y no haya otra aplicación usando la cámara.");
-            setIsLoading(false);
-          });
+        if (videoRef.current) {
+          videoRef.current.srcObject = stream;
+          // Wait for video to be ready to play to avoid issues with play()
+          videoRef.current.onloadedmetadata = async () => {
+            if (isCancelled || !videoRef.current) return;
+            try {
+              await videoRef.current.play();
+              // At this point, video should be playing or ready to play.
+              // Call decodeFromVideoDevice. The library handles waiting for 'canplay'.
+              if (readerRef.current && videoRef.current && !isCancelled) {
+                 readerRef.current.decodeFromVideoDevice(undefined, videoRef.current, (result, error) => {
+                    if (isCancelled) return;
 
+                    if (result) {
+                        onScanSuccess(result.getText());
+                    } else if (error) {
+                        if (
+                        !(error instanceof NotFoundException) &&
+                        !(error instanceof ChecksumException) &&
+                        !(error instanceof FormatException)
+                        ) {
+                         // console.warn("Barcode scan error (other than not found):", error.message);
+                         // onScanError(error); // Optionally report other errors
+                        }
+                    }
+                 });
+               } else if (!isCancelled) {
+                  console.warn("Scanner or video element became unavailable after loadedmetadata.");
+               }
 
-          if (!readerRef.current) {
-            readerRef.current = new BrowserMultiFormatReader();
-          }
-          
-          if (videoRef.current && !isCancelled && videoRef.current.readyState >= videoRef.current.HAVE_ENOUGH_DATA) {
-            readerRef.current.decodeFromVideoDevice(undefined, videoRef.current, (result, error) => {
+            } catch (playError: any) {
               if (isCancelled) return;
-
-              if (result) {
-                onScanSuccess(result.getText());
-              } else if (error) {
-                if (
-                  !(error instanceof NotFoundException) &&
-                  !(error instanceof ChecksumException) &&
-                  !(error instanceof FormatException)
-                ) {
-                  // Don't report common 'not found' errors, as scanning is continuous
-                  // onScanError(error);
-                  console.warn("Error de escaneo (ignorado):", error.message);
-                }
-              }
-            });
-          } else if (!isCancelled) {
-             console.warn("Video not ready for decoding, will retry or wait for play event.");
-             // Could implement a retry here or rely on the play event listener if added
+              console.warn("Video play was prevented or failed:", playError);
+              setErrorMessage("No se pudo iniciar el video. Asegúrate de que los permisos estén concedidos y no haya otra aplicación usando la cámara.");
+              onScanError(new Error("Video play failed: " + playError.message));
+            } finally {
+                if(!isCancelled) setIsLoading(false);
+            }
+          };
+          videoRef.current.onerror = (e) => {
+            if(isCancelled) return;
+            console.error("Video element error:", e);
+            setErrorMessage("Error con el elemento de video.");
+            setIsLoading(false);
+            onScanError(new Error("Video element error"));
           }
+        } else if (!isCancelled) {
+            console.warn("Video ref became null after permission grant.");
+            setIsLoading(false);
         }
       } catch (err: any) {
         if (isCancelled) return;
-        console.error('Error al acceder a la cámara:', err);
+        console.error('Error al acceder a la cámara o iniciar escáner:', err);
         setHasPermission(false);
         if (err.name === "NotAllowedError" || err.name === "PermissionDeniedError") {
           setErrorMessage("Permiso de cámara denegado. Por favor, habilita el acceso a la cámara en la configuración de tu navegador.");
         } else if (err.name === "NotFoundError" || err.name === "DevicesNotFoundError") {
           setErrorMessage("No se encontró ninguna cámara. Asegúrate de que tienes una cámara conectada y habilitada.");
-        } else {
+        } else if (err.name === "NotReadableError" || err.message?.includes("Device already in use")) {
+            setErrorMessage("La cámara ya está en uso por otra aplicación o pestaña. Cierra otras aplicaciones que puedan estar usando la cámara y reintenta.");
+        }
+        else {
           setErrorMessage(`Error al iniciar la cámara: ${err.message}`);
         }
         onScanError(err);
-      } finally {
-        if (!isCancelled) {
-          setIsLoading(false);
-        }
+        setIsLoading(false);
       }
+      // setIsLoading(false) is now handled in onloadedmetadata or catch blocks to ensure it's set after async ops.
     };
-    
-    if (videoRef.current) {
-        videoRef.current.oncanplay = () => {
-            if (!isCancelled && readerRef.current && videoRef.current) {
-                 // Potentially re-initiate decode if it failed due to video not being ready
-                 console.log("Video can play, attempting to decode if not already active.");
-                  // This check is important to avoid multiple decodeFromVideoDevice calls
-                 if (videoRef.current && readerRef.current && !readerRef.current.isVideoPlaying()) {
-                    initializeScanner(); // Or a more specific restart decode logic
-                 }
-            }
-        };
-    }
-
 
     initializeScanner();
 
     return () => {
       isCancelled = true;
       if (readerRef.current) {
-        readerRef.current.reset();
-        // readerRef.current = null; // Avoid nulling out if re-initialization logic depends on it being potentially there
+        try {
+            // Check if methods exist before calling, typical for defensive programming
+            if (typeof readerRef.current.stopContinuousDecode === 'function') {
+                 readerRef.current.stopContinuousDecode();
+            }
+            if (typeof readerRef.current.reset === 'function') {
+                readerRef.current.reset();
+            }
+        } catch(e) {
+            // console.warn("Error during reader cleanup:", e);
+        }
       }
-      if (currentStream) {
-        currentStream.getTracks().forEach(track => track.stop());
+      if (streamRef.current) {
+        streamRef.current.getTracks().forEach(track => track.stop());
+        streamRef.current = null;
       }
        if (videoRef.current) {
          videoRef.current.srcObject = null;
-         videoRef.current.oncanplay = null; // Clean up event listener
+         videoRef.current.onloadedmetadata = null; // Clean up event listener
+         videoRef.current.onerror = null; // Clean up error listener
        }
     };
-  }, [onScanSuccess, onScanError, toast]);
+  }, [onScanSuccess, onScanError]); // Dependencies for useEffect
 
   return (
     <div className="relative border rounded-lg p-4 my-4 bg-card shadow-md">
@@ -168,7 +200,6 @@ export const BarcodeScannerCamera: React.FC<BarcodeScannerCameraProps> = ({
         </Alert>
       )}
 
-      {/* Render video element regardless of permission to ensure ref is available */}
       <div className={cn("aspect-video overflow-hidden rounded-md", { 'hidden': !hasPermission || isLoading })}>
           <video
           ref={videoRef}
@@ -188,6 +219,3 @@ export const BarcodeScannerCamera: React.FC<BarcodeScannerCameraProps> = ({
     </div>
   );
 };
-
-
-    

@@ -4,21 +4,21 @@ import type { DisplayProduct } from '@/types/product';
 import { Table, TableBody, TableCaption, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Button } from "@/components/ui/button";
-import { Check, Minus, Plus, Edit, Trash } from "lucide-react"; // Import Edit and Trash icons
+import { Check, Minus, Plus, Edit, Trash } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { format, isValid } from 'date-fns'; // Import isValid
+import { format, isValid } from 'date-fns';
 
 interface CountingListTableProps {
   countingList: DisplayProduct[];
   warehouseName: string;
-  isLoading: boolean; // Keep isLoading prop if needed for other UI elements, but remove check below if not used
+  isLoading: boolean;
   onDeleteRequest: (product: DisplayProduct) => void;
   onOpenStockDialog: (product: DisplayProduct) => void;
   onOpenQuantityDialog: (product: DisplayProduct) => void;
   onDecrement: (barcode: string, type: 'count' | 'stock') => void;
   onIncrement: (barcode: string, type: 'count' | 'stock') => void;
-  onEditDetailRequest: (product: DisplayProduct) => void; // Add prop for editing details
-  tableHeightClass?: string; // Allow custom height
+  onEditDetailRequest: (product: DisplayProduct) => void;
+  tableHeightClass?: string;
 }
 
 export const CountingListTable: React.FC<CountingListTableProps> = ({
@@ -30,8 +30,8 @@ export const CountingListTable: React.FC<CountingListTableProps> = ({
   onOpenQuantityDialog,
   onDecrement,
   onIncrement,
-  onEditDetailRequest, // Destructure the new prop
-  tableHeightClass = "h-[calc(100vh-360px)] md:h-[calc(100vh-330px)]" // Default height
+  onEditDetailRequest,
+  tableHeightClass = "h-[calc(100vh-360px)] md:h-[calc(100vh-330px)]"
 }) => {
   return (
     <ScrollArea className={cn(tableHeightClass, "border rounded-lg shadow-sm bg-white dark:bg-gray-800")}>
@@ -39,7 +39,7 @@ export const CountingListTable: React.FC<CountingListTableProps> = ({
         <TableCaption className="py-3 text-sm text-gray-500 dark:text-gray-400">Inventario para {warehouseName}.</TableCaption>
         <TableHeader className="bg-gray-50 dark:bg-gray-700 sticky top-0 z-10 shadow-sm">
           <TableRow>
-            <TableHead className="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider w-[35%] sm:w-2/5">Descripción (Click para Borrar)</TableHead>
+            <TableHead className="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider w-[35%] sm:w-2/5">Descripción</TableHead>
             <TableHead className="px-4 py-3 text-center text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider w-[15%] sm:w-[15%]">Stock (Click para Editar)</TableHead>
             <TableHead className="px-4 py-3 text-center text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider w-[15%] sm:w-[15%]">Cantidad (Click para Editar)</TableHead>
             <TableHead className="hidden md:table-cell px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider w-1/5">Última Actualización</TableHead>
@@ -49,14 +49,12 @@ export const CountingListTable: React.FC<CountingListTableProps> = ({
         </TableHeader>
         <TableBody>
           {countingList.map((product, index) => {
-             // Attempt to parse the date and check validity
              const lastUpdatedDate = product.lastUpdated ? new Date(product.lastUpdated) : null;
              const isValidDate = lastUpdatedDate && isValid(lastUpdatedDate);
-             // Ensure a unique key, combining barcode, warehouseId, and index
              const uniqueKey = `${product.barcode}-${product.warehouseId || 'unknown'}-${index}`;
             return (
                 <TableRow
-                key={uniqueKey} // Use the generated unique key
+                key={uniqueKey}
                   className={cn(
                     "hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors duration-150",
                     product.count === product.stock && product.stock !== 0 ? "bg-green-50 dark:bg-green-900/30" : ""
@@ -64,17 +62,40 @@ export const CountingListTable: React.FC<CountingListTableProps> = ({
                 aria-rowindex={index + 1}
                 >
                 <TableCell
-                    className="px-4 py-3 font-medium text-gray-900 dark:text-gray-100 cursor-pointer hover:text-red-600 dark:hover:text-red-400 hover:underline"
-                    onClick={() => onDeleteRequest(product)}
-                    title={`Eliminar ${product.description} (${product.barcode}) de este inventario`}
-                    aria-label={`Eliminar ${product.description}`}
+                    className="px-4 py-3 font-medium text-gray-900 dark:text-gray-100"
+                    aria-label={`Detalles para ${product.description}`}
                 >
-                    {product.description}
-                     <Trash className="inline-block h-4 w-4 ml-2 text-red-500 md:hidden" /> {/* Inline delete icon for mobile */}
+                    <span
+                        onClick={() => onEditDetailRequest(product)}
+                        className="cursor-pointer hover:text-blue-600 dark:hover:text-blue-400 hover:underline"
+                        title={`Editar detalles de ${product.description}`}
+                    >
+                        {product.description}
+                    </span>
+                    <div className="flex items-center gap-1 mt-1 md:hidden"> {/* Container for mobile action icons */}
+                        <Button
+                            variant="ghost"
+                            size="icon"
+                            className="h-6 w-6 text-blue-500 hover:text-blue-600 p-0" // Smaller icon button
+                            onClick={() => onEditDetailRequest(product)}
+                            title={`Editar detalles de ${product.description}`}
+                        >
+                            <Edit className="h-3.5 w-3.5" /> {/* Smaller icon */}
+                        </Button>
+                        <Button
+                            variant="ghost"
+                            size="icon"
+                            className="h-6 w-6 text-red-500 hover:text-red-600 p-0" // Smaller icon button
+                            onClick={() => onDeleteRequest(product)}
+                            title={`Eliminar ${product.description}`}
+                        >
+                            <Trash className="h-3.5 w-3.5" /> {/* Smaller icon */}
+                        </Button>
+                    </div>
                 </TableCell>
                 <TableCell
                     className="px-4 py-3 text-center text-gray-600 dark:text-gray-300 cursor-pointer hover:text-teal-700 dark:hover:text-teal-400 hover:font-semibold tabular-nums"
-                    onClick={() => onOpenStockDialog(product)} // Use dialog for stock edit
+                    onClick={() => onOpenStockDialog(product)}
                     title={`Editar stock para ${product.description} en ${warehouseName}`}
                     aria-label={`Editar stock para ${product.description}`}
                 >
@@ -120,7 +141,6 @@ export const CountingListTable: React.FC<CountingListTableProps> = ({
                     >
                         <Plus className="h-4 w-4" />
                     </Button>
-                     {/* Button to open the product detail edit dialog (for stock etc) */}
                       <Button
                          onClick={() => onEditDetailRequest(product)}
                          size="icon"
@@ -131,13 +151,23 @@ export const CountingListTable: React.FC<CountingListTableProps> = ({
                      >
                          <Edit className="h-4 w-4" />
                      </Button>
+                     <Button
+                        variant="ghost"
+                        size="icon"
+                        className="text-gray-500 dark:text-gray-400 hover:text-red-600 dark:hover:text-red-400 hover:bg-red-100 dark:hover:bg-red-900/50 rounded-full w-8 h-8"
+                        onClick={() => onDeleteRequest(product)}
+                        title={`Eliminar ${product.description} de este inventario`}
+                        aria-label={`Eliminar ${product.description}`}
+                      >
+                        <Trash className="h-4 w-4" />
+                      </Button>
                     </div>
                 </TableCell>
                 </TableRow>
             );})}
           {countingList.length === 0 && (
             <TableRow>
-              <TableCell colSpan={7} className="text-center px-4 py-10 text-gray-500 dark:text-gray-400">
+              <TableCell colSpan={6} className="text-center px-4 py-10 text-gray-500 dark:text-gray-400">
                 No hay productos en este inventario. Agrega uno para empezar.
               </TableCell>
             </TableRow>
@@ -147,3 +177,4 @@ export const CountingListTable: React.FC<CountingListTableProps> = ({
     </ScrollArea>
   );
 };
+

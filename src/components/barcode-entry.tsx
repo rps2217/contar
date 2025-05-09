@@ -2,7 +2,7 @@
 import React from 'react';
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
-import { RefreshCw } from "lucide-react";
+import { RefreshCw, Camera, XCircle } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 interface BarcodeEntryProps {
@@ -13,6 +13,8 @@ interface BarcodeEntryProps {
   isLoading: boolean; // General loading (DB, initial list, history saving)
   isRefreshingStock: boolean; // Refresh stock action active
   inputRef: React.RefObject<HTMLInputElement>;
+  onToggleCameraScanner: () => void;
+  isCameraScannerActive: boolean;
 }
 
 export const BarcodeEntry: React.FC<BarcodeEntryProps> = ({
@@ -20,9 +22,11 @@ export const BarcodeEntry: React.FC<BarcodeEntryProps> = ({
   setBarcode,
   onAddProduct,
   onRefreshStock,
-  isLoading, // This prop covers general loading and history saving
+  isLoading,
   isRefreshingStock,
-  inputRef
+  inputRef,
+  onToggleCameraScanner,
+  isCameraScannerActive,
 }) => {
   const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
     if (e.key === "Enter") {
@@ -31,7 +35,6 @@ export const BarcodeEntry: React.FC<BarcodeEntryProps> = ({
     }
   };
 
-  // isLoading prop now also indicates if saving to history
   const isAnyLoadingActive = isLoading || isRefreshingStock;
 
 
@@ -39,12 +42,11 @@ export const BarcodeEntry: React.FC<BarcodeEntryProps> = ({
     <div className="flex items-center mb-4 gap-2">
       <Input
         type="number"
-        pattern="\d*" // Ensures numeric keyboard on mobile if supported
-        inputMode="numeric" // Better semantic for numeric input
+        pattern="\d*"
+        inputMode="numeric"
         placeholder="Escanear o ingresar código de barras"
         value={barcode}
         onChange={(e) => {
-          // Ensure only digits are entered
           const numericValue = e.target.value.replace(/\D/g, '');
           setBarcode(numericValue);
         }}
@@ -54,6 +56,20 @@ export const BarcodeEntry: React.FC<BarcodeEntryProps> = ({
         aria-label="Código de barras"
         disabled={isAnyLoadingActive}
       />
+       <Button
+        onClick={onToggleCameraScanner}
+        variant="outline"
+        size="icon"
+        className={cn(
+          "text-purple-600 dark:text-purple-400 border-purple-300 dark:border-purple-600 hover:bg-purple-50 dark:hover:bg-purple-900 hover:text-purple-700 dark:hover:text-purple-300",
+          isCameraScannerActive && "bg-purple-100 dark:bg-purple-800"
+        )}
+        disabled={isAnyLoadingActive}
+        aria-label={isCameraScannerActive ? "Cerrar Escáner de Cámara" : "Abrir Escáner de Cámara"}
+        title={isCameraScannerActive ? "Cerrar Escáner de Cámara" : "Abrir Escáner de Cámara"}
+      >
+        {isCameraScannerActive ? <XCircle className="h-5 w-5" /> : <Camera className="h-5 w-5" />}
+      </Button>
       <Button
         onClick={onAddProduct}
         className="bg-teal-600 hover:bg-teal-700 text-white rounded-md shadow-sm px-5 py-2 transition-colors duration-200"
@@ -67,7 +83,7 @@ export const BarcodeEntry: React.FC<BarcodeEntryProps> = ({
         variant="outline"
         size="icon"
         className="text-blue-600 dark:text-blue-400 border-blue-300 dark:border-blue-600 hover:bg-blue-50 dark:hover:bg-blue-900 hover:text-blue-700 dark:hover:text-blue-300"
-        disabled={isAnyLoadingActive} // Also disable if saving to history
+        disabled={isAnyLoadingActive}
         aria-label="Actualizar stocks desde la base de datos para este almacén"
         title="Actualizar Stocks"
       >
@@ -76,3 +92,6 @@ export const BarcodeEntry: React.FC<BarcodeEntryProps> = ({
     </div>
   );
 };
+
+
+    

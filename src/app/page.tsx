@@ -22,7 +22,7 @@ import {
 import { WarehouseManagement } from "@/components/warehouse-management";
 import { format, isValid } from 'date-fns';
 import { es } from 'date-fns/locale'; // Import Spanish locale for date formatting
-import { Minus, Plus, Trash, RefreshCw, Warehouse as WarehouseIcon, AlertCircle, Search, Check, AppWindow, Database, Boxes, Loader2, History as HistoryIcon, CalendarIcon, Save, Edit, Download, BarChart, Settings, AlertTriangle, Camera } from "lucide-react";
+import { Minus, Plus, Trash, RefreshCw, Warehouse as WarehouseIcon, AlertCircle, Search, Check, AppWindow, Database, Boxes, Loader2, History as HistoryIcon, CalendarIcon, Save, Edit, Download, BarChart, Settings, AlertTriangle, Camera, Barcode } from "lucide-react";
 import React, { useCallback, useEffect, useRef, useState, useMemo } from "react";
 import { playBeep } from '@/lib/helpers';
 import { BarcodeEntry } from '@/components/barcode-entry';
@@ -44,6 +44,8 @@ import {
 import { CountingHistoryViewer } from '@/components/counting-history-viewer';
 import { DiscrepancyReportViewer } from '@/components/discrepancy-report-viewer';
 import Papa from 'papaparse';
+import { BarcodeScannerCamera } from '@/components/barcode-scanner-camera';
+
 
 // --- Constants ---
 const LOCAL_STORAGE_COUNTING_LIST_KEY_PREFIX = 'stockCounterPro_countingList_';
@@ -94,6 +96,8 @@ export default function Home() {
   const [productToEditDetail, setProductToEditDetail] = useState<ProductDetail | null>(null);
   const [initialStockForEdit, setInitialStockForEdit] = useState<number>(0);
   const [isClearAllDataConfirmOpen, setIsClearAllDataConfirmOpen] = useState(false);
+  const [isCameraScannerActive, setIsCameraScannerActive] = useState(false);
+
 
   // --- Effects ---
 
@@ -303,8 +307,6 @@ const modifyProductValue = useCallback(async (barcodeToUpdate: string, type: 'co
     let productDescription = '';
     let finalValue: number | undefined;
     let needsConfirmation = false;
-    let toastTitle = '';
-    let toastDescription = '';
     let productForToast: DisplayProduct | null = null;
 
     setCountingList(prevList => {
@@ -374,7 +376,7 @@ const modifyProductValue = useCallback(async (barcodeToUpdate: string, type: 'co
                     description: `No se pudo actualizar el stock en la base de datos para ${productDescription}.`
                 });
             }
-        } else if (type === 'count') {
+        } else if (type === 'count' ) {
             if (!showDiscrepancyToastIfNeeded(productForToast, finalValue)) {
                 toast({
                     title: "Cantidad Modificada",
@@ -965,6 +967,23 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
   }, [toast]);
 
 
+ const handleCameraScanSuccess = (scannedBarcode: string) => {
+    if (scannedBarcode) {
+      setBarcode(scannedBarcode); // Set the barcode state
+      handleAddProduct(scannedBarcode); // Directly call handleAddProduct
+      setIsCameraScannerActive(false); // Close camera scanner after successful scan
+    }
+  };
+
+  const handleCameraScanError = (error: Error) => {
+    toast({
+      variant: "destructive",
+      title: "Error de Escáner",
+      description: error.message || "No se pudo escanear el código de barras.",
+    });
+  };
+
+
   // --- Main Component Render ---
   return (
     <div className="container mx-auto p-4">
@@ -1034,7 +1053,16 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
                     isLoading={isDbLoading || isRefreshingStock || isSavingToHistory}
                     isRefreshingStock={isRefreshingStock}
                     inputRef={barcodeInputRef}
+                    onToggleCameraScanner={() => setIsCameraScannerActive(prev => !prev)}
+                    isCameraScannerActive={isCameraScannerActive}
                 />
+                 {isCameraScannerActive && (
+                   <BarcodeScannerCamera
+                     onScanSuccess={handleCameraScanSuccess}
+                     onScanError={handleCameraScanError}
+                     onClose={() => setIsCameraScannerActive(false)}
+                   />
+                 )}
                  <div className="relative mb-4">
                     <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
                     <Input
@@ -1261,3 +1289,5 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
   );
 }
 
+
+    

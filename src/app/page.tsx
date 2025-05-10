@@ -21,9 +21,9 @@ import {
     Table, TableBody, TableCaption, TableCell, TableHead, TableHeader, TableRow
 } from "@/components/ui/table";
 import { WarehouseManagement } from "@/components/warehouse-management";
-import { format, isValid } from 'date-fns';
+import { format, isValid, parseISO } from 'date-fns';
 import { es } from 'date-fns/locale'; 
-import { Minus, Plus, Trash, RefreshCw, Warehouse as WarehouseIcon, Search, Check, AppWindow, Database, Boxes, Loader2, History as HistoryIcon, CalendarIcon, Save, Edit, Download, BarChart, Settings, AlertTriangle, Camera, XCircle, PanelLeftClose, PanelRightOpen, User } from "lucide-react";
+import { Minus, Plus, Trash, RefreshCw, Warehouse as WarehouseIcon, Search, Check, AppWindow, Database, Boxes, Loader2, History as HistoryIcon, CalendarIcon, Save, Edit, Download, BarChart, Settings, AlertTriangle, Camera, XCircle, PanelLeftClose, PanelRightOpen, User, ShieldAlert } from "lucide-react";
 import React, { useCallback, useEffect, useRef, useState, useMemo } from "react";
 import { playBeep } from '@/lib/helpers';
 import { BarcodeEntry } from '@/components/barcode-entry';
@@ -44,6 +44,7 @@ import {
 } from '@/lib/database';
 import { CountingHistoryViewer } from '@/components/counting-history-viewer';
 import { DiscrepancyReportViewer } from '@/components/discrepancy-report-viewer';
+import { ExpirationControl } from '@/components/expiration-control'; // Import ExpirationControl
 import Papa from 'papaparse';
 import BarcodeScannerCamera from '@/components/barcode-scanner-camera';
 
@@ -54,7 +55,7 @@ const LOCAL_STORAGE_WAREHOUSE_KEY = 'stockCounterPro_currentWarehouse';
 const LOCAL_STORAGE_WAREHOUSES_KEY = 'stockCounterPro_warehouses';
 const LOCAL_STORAGE_ACTIVE_SECTION_KEY = 'stockCounterPro_activeSection';
 const LOCAL_STORAGE_SIDEBAR_COLLAPSED_KEY = 'stockCounterPro_sidebarCollapsed';
-const LOCAL_STORAGE_USER_ID_KEY = 'stockCounterPro_userId'; // Key for storing simulated userId
+const LOCAL_STORAGE_USER_ID_KEY = 'stockCounterPro_userId';
 const LOCAL_STORAGE_SAVE_DEBOUNCE_MS = 500;
 
 // --- Main Component ---
@@ -76,17 +77,15 @@ export default function Home() {
   );
   const [activeSection, setActiveSection] = useLocalStorage<string>(
       LOCAL_STORAGE_ACTIVE_SECTION_KEY,
-      'Contador' // Default section
+      'Contador' 
   );
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useLocalStorage<boolean>(
     LOCAL_STORAGE_SIDEBAR_COLLAPSED_KEY,
     false
   );
-  // Simulated userId for multi-user context preparation
-  // Initialize with null to prevent hydration mismatch, generate client-side in useEffect
   const [currentUserId, setCurrentUserId] = useLocalStorage<string | null>(
     LOCAL_STORAGE_USER_ID_KEY,
-    null // Default to null, generate in useEffect
+    null 
   );
   const [showUserIdInput, setShowUserIdInput] = useState(false);
 
@@ -119,7 +118,6 @@ export default function Home() {
 
   useEffect(() => {
     isMountedRef.current = true;
-    // Generate userId client-side if it's null (not found in localStorage or initial state)
     if (currentUserId === null) {
         const newUserId = `user_${Math.random().toString(36).substring(2, 11)}`;
         setCurrentUserId(newUserId);
@@ -147,7 +145,8 @@ export default function Home() {
                 stock: item.stock ?? 0,
                 count: item.count ?? 0,
                 lastUpdated: item.lastUpdated || new Date().toISOString(),
-                warehouseId: item.warehouseId || currentWarehouseId
+                warehouseId: item.warehouseId || currentWarehouseId,
+                expirationDate: item.expirationDate || undefined,
             }));
         setCountingList(loadedList.filter(item => item.warehouseId === currentWarehouseId));
     } else {
@@ -226,7 +225,7 @@ export default function Home() {
 
      if (trimmedBarcode === lastScannedBarcode) {
          console.log("Duplicate scan prevented for barcode:", trimmedBarcode);
-         setBarcode(""); // Clear input after handling
+         setBarcode(""); 
          requestAnimationFrame(() => barcodeInputRef.current?.focus());
          return;
      }
@@ -281,6 +280,7 @@ export default function Home() {
                     stock: dbProduct.stock ?? 0,
                     count: 1,
                     lastUpdated: new Date().toISOString(),
+                    expirationDate: dbProduct.expirationDate || undefined,
                 };
                 playBeep(660, 150);
                 const discrepancyShown = showDiscrepancyToastIfNeeded(newProductForList);
@@ -298,6 +298,7 @@ export default function Home() {
                     stock: 0,
                     count: 1,
                     lastUpdated: new Date().toISOString(),
+                    expirationDate: undefined,
                 };
                 playBeep(440, 300); 
                 toast({
@@ -387,7 +388,8 @@ const modifyProductValue = useCallback(async (barcodeToUpdate: string, type: 'co
                                 barcode: listProduct.barcode,
                                 description: listProduct.description,
                                 provider: listProduct.provider,
-                                stock: finalValue
+                                stock: finalValue,
+                                expirationDate: listProduct.expirationDate,
                             };
                             await addOrUpdateProductToDB(newDbProduct);
                             toast({
@@ -483,7 +485,8 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
                                  barcode: listProduct.barcode,
                                  description: listProduct.description,
                                  provider: listProduct.provider,
-                                 stock: finalValue
+                                 stock: finalValue,
+                                 expirationDate: listProduct.expirationDate,
                              };
                              await addOrUpdateProductToDB(newDbProduct);
                               toast({
@@ -633,6 +636,7 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
             StockSistema: p.stock ?? 0,
             CantidadContada: p.count ?? 0,
             UltimaActualizacion: p.lastUpdated ? format(new Date(p.lastUpdated), 'yyyy-MM-dd HH:mm:ss') : 'N/A',
+            FechaVencimiento: p.expirationDate ? format(parseISO(p.expirationDate), 'yyyy-MM-dd') : 'N/A',
         }));
 
         const csv = Papa.unparse(dataToExport, { header: true });
@@ -684,7 +688,7 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
         const currentWHName = getWarehouseName(currentWarehouseId);
         const historyEntry: CountingHistoryEntry = {
             id: new Date().toISOString(),
-            userId: currentUserId || undefined, // Associate with current user, ensure it's string or undefined
+            userId: currentUserId || undefined, 
             timestamp: new Date().toISOString(),
             warehouseId: currentWarehouseId,
             warehouseName: currentWHName,
@@ -733,7 +737,9 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
                  if (dbProduct) {
                      if (countingProduct.description !== dbProduct.description ||
                          countingProduct.provider !== dbProduct.provider ||
-                         countingProduct.stock !== (dbProduct.stock ?? 0))
+                         countingProduct.stock !== (dbProduct.stock ?? 0) ||
+                         countingProduct.expirationDate !== (dbProduct.expirationDate || undefined)
+                        )
                      {
                          updatedProductCount++;
                          return {
@@ -741,6 +747,7 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
                              description: dbProduct.description,
                              provider: dbProduct.provider,
                              stock: dbProduct.stock ?? 0, 
+                             expirationDate: dbProduct.expirationDate || undefined,
                              lastUpdated: new Date().toISOString(), 
                          };
                      }
@@ -806,7 +813,8 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
                  barcode: product.barcode,
                  description: product.description, 
                  provider: product.provider,     
-                 stock: product.stock ?? 0       
+                 stock: product.stock ?? 0,
+                 expirationDate: product.expirationDate,
              };
              setProductToEditDetail(placeholderDetail);
              setInitialStockForEdit(product.stock ?? 0); 
@@ -837,6 +845,7 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
              description: data.description.trim(),
              provider: data.provider?.trim() || "Desconocido",
              stock: data.stock ?? 0, 
+             expirationDate: data.expirationDate || undefined,
          };
          await addOrUpdateProductToDB(updatedProductData);
          if (!isMountedRef.current) return;
@@ -848,6 +857,7 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
                      description: updatedProductData.description,
                      provider: updatedProductData.provider,
                      stock: updatedProductData.stock, 
+                     expirationDate: updatedProductData.expirationDate,
                      lastUpdated: new Date().toISOString()
                    }
                  : item
@@ -887,6 +897,7 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
          stock: dbProduct.stock ?? 0, 
          count: 0, 
          lastUpdated: new Date().toISOString(),
+         expirationDate: dbProduct.expirationDate || undefined,
      }));
 
      setCountingList(prevList => {
@@ -916,13 +927,14 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
     return currentWarehouseList.filter(product =>
       product.description.toLowerCase().includes(lowerSearchTerm) ||
       product.barcode.includes(lowerSearchTerm) ||
-      (product.provider || '').toLowerCase().includes(lowerSearchTerm)
+      (product.provider || '').toLowerCase().includes(lowerSearchTerm) ||
+      (product.expirationDate || '').includes(lowerSearchTerm)
     );
   }, [countingList, searchTerm, currentWarehouseId]);
 
   const handleSectionChange = useCallback((newSection: string) => {
     setActiveSection(newSection);
-    if (newSection === 'Contador') { // Match exact name from sectionItems
+    if (newSection === 'Contador') { 
        requestAnimationFrame(() => barcodeInputRef.current?.focus());
     }
   }, [setActiveSection]);
@@ -1035,6 +1047,7 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
     { name: 'Contador', icon: AppWindow, label: `Contador (${getWarehouseName(currentWarehouseId)})`},
     { name: 'Base de Datos', icon: Database, label: 'Base de Datos' },
     { name: 'Almacenes', icon: Boxes, label: 'Almacenes' },
+    { name: 'Control de Vencimiento', icon: ShieldAlert, label: 'Control de Vencimiento' }, // New section
     { name: 'Historial', icon: HistoryIcon, label: 'Historial' },
     { name: 'Informes', icon: BarChart, label: 'Informes' },
   ], [getWarehouseName, currentWarehouseId]);
@@ -1080,7 +1093,6 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
         </nav>
         
         <div className={cn("mt-auto pt-4 border-t border-border", isSidebarCollapsed && "hidden")}>
-           {/* Simulated User ID Management */}
            <div className="space-y-2 mb-4">
                 <Label htmlFor="user-id-display" className="px-2 text-sm font-medium text-muted-foreground">
                     Usuario Actual:
@@ -1232,12 +1244,18 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
                   />
              </div>
            )}
+        
+            {activeSection === 'Control de Vencimiento' && (
+                 <div id="expiration-control-content">
+                    <ExpirationControl />
+                 </div>
+            )}
 
             {activeSection === 'Historial' && (
                 <div id="history-content">
                     <CountingHistoryViewer
                         getWarehouseName={getWarehouseName}
-                        currentUserId={currentUserId || undefined} // Pass currentUserId
+                        currentUserId={currentUserId || undefined}
                     />
                 </div>
             )}
@@ -1358,8 +1376,8 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
                     if (isMountedRef.current) {
                         setIsDbLoading(false);
                     }
-                    setIsDeleteDialogOpen(false);
-                    setProductToDelete(null);
+                    setIsDeleteDialogOpen(false); // Ensure any delete confirmation dialog is closed
+                    setProductToDelete(null); // Reset product to delete
                }
            }}
          isProcessing={isDbLoading}
@@ -1370,6 +1388,3 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
     </div>
   );
 }
-
-
-

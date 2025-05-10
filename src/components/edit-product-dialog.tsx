@@ -11,13 +11,18 @@ import {
     DialogHeader, DialogTitle
 } from "@/components/ui/dialog";
 import {
-    Form, FormControl, FormField, FormItem, FormLabel, FormMessage
+    Form, FormControl, FormDescription, FormField, FormItem, FormLabel, FormMessage
 } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
-import { Loader2, Save, Trash } from "lucide-react";
+import { Calendar } from "@/components/ui/calendar";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { CalendarIcon, Loader2, Save, Trash } from "lucide-react";
 import React, { useEffect } from "react";
 import { useForm } from "react-hook-form";
 import * as z from "zod";
+import { format, parseISO, isValid } from 'date-fns';
+import { es } from 'date-fns/locale';
+
 
 // --- Zod Schema for the Edit Dialog (includes stock for the specific warehouse) ---
 const editProductSchema = z.object({
@@ -28,6 +33,10 @@ const editProductSchema = z.object({
     (val) => (val === "" || val === undefined || val === null ? 0 : Number(val)),
     z.number().min(0, { message: "El stock debe ser mayor o igual a 0." }).default(0)
   ),
+  expirationDate: z.string().optional().refine(val => {
+    if (!val) return true; // Optional field
+    return /^\d{4}-\d{2}-\d{2}$/.test(val) || isValid(parseISO(val));
+  }, { message: "Formato de fecha inválido. Use YYYY-MM-DD." }),
 });
 
 // --- Infer the type from the schema ---
@@ -37,14 +46,14 @@ type EditProductValues = z.infer<typeof editProductSchema>;
 interface EditProductDialogProps {
   isOpen: boolean;
   setIsOpen: (open: boolean) => void;
-  selectedDetail: ProductDetail | null; // Accepts ProductDetail (which might not have full stockPerWarehouse)
-  setSelectedDetail: (detail: ProductDetail | null) => void; // Add this prop
-  onSubmit: (data: EditProductValues) => Promise<void>; // Expects a Promise now
-  onDelete?: (barcode: string) => void; // Optional delete handler
-  isProcessing?: boolean; // Optional processing state
-  initialStock?: number; // Initial stock value FOR THE CURRENT WAREHOUSE
-  context?: 'database' | 'countingList'; // Optional context prop
-  warehouseName?: string; // Add warehouse name for context
+  selectedDetail: ProductDetail | null;
+  setSelectedDetail: (detail: ProductDetail | null) => void;
+  onSubmit: (data: EditProductValues) => Promise<void>;
+  onDelete?: (barcode: string) => void;
+  isProcessing?: boolean;
+  initialStock?: number;
+  context?: 'database' | 'countingList' | 'expiration';
+  warehouseName?: string;
 }
 
 // --- React Component ---
@@ -57,12 +66,11 @@ export const EditProductDialog: React.FC<EditProductDialogProps> = ({
   onDelete,
   isProcessing = false,
   initialStock = 0,
-  context = 'database', // Default context is database
-  warehouseName = 'Almacén Principal', // Default warehouse name
+  context = 'database',
+  warehouseName = 'Almacén Principal',
 }) => {
   const { toast } = useToast();
 
-  // --- Initialize the form ---
   const form = useForm<EditProductValues>({
     resolver: zodResolver(editProductSchema),
     defaultValues: {
@@ -70,58 +78,59 @@ export const EditProductDialog: React.FC<EditProductDialogProps> = ({
       description: "",
       provider: "",
       stock: 0,
+      expirationDate: "",
     },
   });
 
-  // --- Effect to reset form when selectedDetail changes ---
   useEffect(() => {
     if (selectedDetail) {
       form.reset({
         barcode: selectedDetail.barcode,
         description: selectedDetail.description,
         provider: selectedDetail.provider || "",
-        stock: initialStock, // Use initialStock prop for stock of the current warehouse
+        stock: context === 'database' ? (selectedDetail.stock ?? 0) : initialStock,
+        expirationDate: selectedDetail.expirationDate || "",
       });
     } else {
-      form.reset({ // Reset to empty values when adding new
+      form.reset({
         barcode: "",
         description: "",
         provider: "",
         stock: 0,
+        expirationDate: "",
       });
     }
-  }, [selectedDetail, initialStock, form]); // Depend on initialStock
+  }, [selectedDetail, initialStock, form, context]);
 
-  // --- Submit Handler ---
   const handleFormSubmit = async (data: EditProductValues) => {
     try {
       await onSubmit(data);
-      // Keep dialog open on error handled in parent, close on success
     } catch (error) {
        console.error("Error during form submission:", error);
-       // Toast message should be handled in the parent onSubmit
     }
   };
 
   const handleClose = () => {
     setIsOpen(false);
-    form.reset(); // Reset form on close
+    form.reset(); 
      if (setSelectedDetail) {
-      setSelectedDetail(null); // Clear selected detail on close
+      setSelectedDetail(null); 
     }
   };
 
-  // --- Render ---
-  const isAddingNew = !selectedDetail?.barcode; // Check if adding a new product
-  const dialogTitle = isAddingNew ? "Agregar Nuevo Producto" : `Editar Producto (${warehouseName})`;
+  const isAddingNew = !selectedDetail?.barcode;
+  const dialogTitle = isAddingNew ? "Agregar Nuevo Producto" : 
+    (context === 'expiration' ? `Editar Vencimiento (${selectedDetail?.description})` : `Editar Producto (${warehouseName})`);
   const dialogDescription = isAddingNew ?
-      "Completa la información para agregar un nuevo producto y su stock inicial." :
-      `Modifica los detalles del producto y el stock para el almacén "${warehouseName}".`;
-  const stockLabel = `Stock (${warehouseName})`;
+      "Completa la información para agregar un nuevo producto, su stock inicial y fecha de vencimiento." :
+      (context === 'expiration' ? "Modifica la fecha de vencimiento del producto." :
+      `Modifica los detalles del producto, el stock para el almacén "${warehouseName}" y su fecha de vencimiento.`);
+  const stockLabel = context === 'database' || context === 'expiration' ? `Stock (Base de Datos)` : `Stock (${warehouseName})`;
+
 
   return (
     <Dialog open={isOpen} onOpenChange={(open) => { if (!open) handleClose(); else setIsOpen(true); }}>
-      <DialogContent className="sm:max-w-[425px]">
+      <DialogContent className="sm:max-w-md"> {/* Adjusted width */}
         <DialogHeader>
           <DialogTitle>{dialogTitle}</DialogTitle>
           <DialogDescription>
@@ -129,7 +138,7 @@ export const EditProductDialog: React.FC<EditProductDialogProps> = ({
           </DialogDescription>
         </DialogHeader>
         <Form {...form}>
-          <form onSubmit={form.handleSubmit(handleFormSubmit)} className="space-y-4">
+          <form onSubmit={form.handleSubmit(handleFormSubmit)} className="space-y-3"> {/* Reduced space */}
             <FormField
               control={form.control}
               name="barcode"
@@ -137,7 +146,7 @@ export const EditProductDialog: React.FC<EditProductDialogProps> = ({
                 <FormItem>
                   <FormLabel>Código de Barras</FormLabel>
                   <FormControl>
-                    <Input placeholder="Código de Barras" {...field} disabled={!isAddingNew} /> {/* Disable if editing */}
+                    <Input placeholder="Código de Barras" {...field} disabled={!isAddingNew} />
                   </FormControl>
                   <FormMessage />
                 </FormItem>
@@ -156,19 +165,21 @@ export const EditProductDialog: React.FC<EditProductDialogProps> = ({
                 </FormItem>
               )}
             />
-            <FormField
-              control={form.control}
-              name="provider"
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel>Proveedor</FormLabel>
-                  <FormControl>
-                    <Input placeholder="Nombre del Proveedor (Opcional)" {...field} />
-                  </FormControl>
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
+            {context !== 'expiration' && (
+              <FormField
+                control={form.control}
+                name="provider"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Proveedor</FormLabel>
+                    <FormControl>
+                      <Input placeholder="Nombre del Proveedor (Opcional)" {...field} />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+            )}
              <FormField
               control={form.control}
               name="stock"
@@ -176,19 +187,65 @@ export const EditProductDialog: React.FC<EditProductDialogProps> = ({
                 <FormItem>
                   <FormLabel>{stockLabel}</FormLabel>
                   <FormControl>
-                    <Input type="number" inputMode="numeric" placeholder="Stock" {...field} onChange={e => field.onChange(parseInt(e.target.value) || 0)} />
+                    <Input type="number" inputMode="numeric" placeholder="Stock" {...field} onChange={e => field.onChange(parseInt(e.target.value) || 0)} 
+                     disabled={context === 'expiration'} // Disable stock editing in expiration context
+                    />
                   </FormControl>
                   <FormMessage />
                 </FormItem>
               )}
             />
-            <DialogFooter className="flex flex-col sm:flex-row sm:justify-between gap-2 mt-4">
-               {/* Delete button available only if editing an existing product */}
-               {!isAddingNew && onDelete && (
+             <FormField
+                control={form.control}
+                name="expirationDate"
+                render={({ field }) => (
+                  <FormItem className="flex flex-col">
+                    <FormLabel>Fecha de Vencimiento (Opcional)</FormLabel>
+                    <Popover>
+                      <PopoverTrigger asChild>
+                        <FormControl>
+                          <Button
+                            variant={"outline"}
+                            className={cn(
+                              "w-full pl-3 text-left font-normal",
+                              !field.value && "text-muted-foreground"
+                            )}
+                          >
+                            {field.value ? (
+                              format(parseISO(field.value), "PPP", { locale: es })
+                            ) : (
+                              <span>Seleccionar fecha</span>
+                            )}
+                            <CalendarIcon className="ml-auto h-4 w-4 opacity-50" />
+                          </Button>
+                        </FormControl>
+                      </PopoverTrigger>
+                      <PopoverContent className="w-auto p-0" align="start">
+                        <Calendar
+                          mode="single"
+                          selected={field.value ? parseISO(field.value) : undefined}
+                          onSelect={(date) => field.onChange(date ? format(date, "yyyy-MM-dd") : "")}
+                          disabled={(date) =>
+                            date < new Date("1900-01-01") 
+                          }
+                          initialFocus
+                          locale={es}
+                        />
+                      </PopoverContent>
+                    </Popover>
+                    <FormDescription>
+                      La fecha en que el producto vence.
+                    </FormDescription>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+            <DialogFooter className="flex flex-col sm:flex-row sm:justify-between gap-2 mt-3"> {/* Reduced margin */}
+               {!isAddingNew && onDelete && context !== 'expiration' && (
                   <Button
                     type="button"
                     variant="destructive"
-                    onClick={() => onDelete(selectedDetail!.barcode)} // Use selectedDetail barcode
+                    onClick={() => selectedDetail && onDelete(selectedDetail.barcode)}
                     disabled={isProcessing}
                     className="w-full sm:w-auto"
                   >
@@ -196,8 +253,8 @@ export const EditProductDialog: React.FC<EditProductDialogProps> = ({
                     Eliminar de DB
                   </Button>
                 )}
-                 {/* Spacer to push buttons to the right if delete is not shown */}
-                 {isAddingNew && <div className="flex-grow"></div>}
+                 {(isAddingNew || context === 'expiration') && <div className="flex-grow sm:hidden"></div>} {/* Spacer for mobile layout consistency */}
+
 
                 <div className="flex flex-col sm:flex-row sm:justify-end gap-2 w-full sm:w-auto">
                    <DialogClose asChild>

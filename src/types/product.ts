@@ -8,6 +8,7 @@ export interface ProductDetail {
   description: string;
   provider: string;
   stock?: number; // Optional: Base stock level (if managed centrally)
+  expirationDate?: string; // Optional: ISO 8601 format YYYY-MM-DD
   // Potential future fields:
   // category?: string;
   // unit?: string; // e.g., 'pcs', 'kg', 'm'
@@ -33,6 +34,7 @@ export interface InventoryItem {
 export interface DisplayProduct extends ProductDetail, Omit<InventoryItem, 'barcode' | 'warehouseId' | 'stock'> {
     warehouseId: string; // Keep warehouseId for context
     // stock and count are inherited from InventoryItem via Omit and included in ProductDetail potentially
+    // expirationDate is inherited from ProductDetail
 }
 
 /**

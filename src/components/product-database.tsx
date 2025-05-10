@@ -2,24 +2,25 @@
 "use client";
 
 import type { ProductDetail, DisplayProduct } from '@/types/product';
-import { zodResolver } from "@hookform/resolvers/zod";
+// zodResolver and other form-related imports might not be directly needed here if EditProductDialog handles it
+// import { zodResolver } from "@hookform/resolvers/zod";
 import { useToast } from "@/hooks/use-toast";
-import { cn, getLocalStorageItem, setLocalStorageItem } from "@/lib/utils";
+import { cn } from "@/lib/utils";
 import {
   addOrUpdateProductToDB,
   getAllProductsFromDB,
   deleteProductFromDB,
-  clearProductDatabase as clearProductDatabaseFromDB, // Renamed to avoid conflict
+  clearProductDatabase as clearProductDatabaseFromDB,
   addProductsToDB,
 } from '@/lib/database';
 import {
-    Edit, Filter, Play, Loader2, Save, Trash, Upload, AlertCircle, Warehouse as WarehouseIcon
+    Filter, Play, Loader2, Save, Trash, Upload, AlertCircle, Warehouse as WarehouseIcon, CalendarIcon
 } from "lucide-react";
-import Papa from 'papaparse'; // Ensure PapaParse is imported for CSV parsing
-import * as React from "react"; // Import React
-import { useCallback, useEffect, useState } from "react";
-import { useForm } from "react-hook-form";
-import * as z from "zod";
+import Papa from 'papaparse';
+import * as React from "react"; 
+import { useCallback, useEffect, useState, useMemo } from "react";
+// import { useForm } from "react-hook-form"; // Might not be needed directly here
+// import * as z from "zod"; // Might not be needed directly here
 import { ConfirmationDialog } from "@/components/confirmation-dialog";
 import { EditProductDialog } from "@/components/edit-product-dialog";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
@@ -35,42 +36,31 @@ import {
     Table, TableBody, TableCaption, TableCell, TableHead, TableHeader, TableRow
 } from "@/components/ui/table";
 import { useLocalStorage } from '@/hooks/use-local-storage';
+import { format, parse, isValid } from 'date-fns';
+import { es } from 'date-fns/locale';
 
-// --- Zod Schema ---
-const productDetailSchema = z.object({
-  barcode: z.string().min(1, { message: "El código de barras es requerido." }),
-  description: z.string().min(1, { message: "La descripción es requerida." }),
-  provider: z.string().optional(),
-  stock: z.preprocess(
-    (val) => (val === "" || val === undefined || val === null || Number.isNaN(Number(val)) ? 0 : Number(val)),
-    z.number().min(0, { message: "El stock debe ser mayor o igual a 0." }).default(0)
-  ),
-});
-type ProductDetailValues = z.infer<typeof productDetailSchema>;
 
 const GOOGLE_SHEET_URL_LOCALSTORAGE_KEY = 'stockCounterPro_googleSheetUrl';
 
-// --- Helper Function to Extract Spreadsheet ID ---
+// Helper Function to Extract Spreadsheet ID
 const extractSpreadsheetId = (input: string): string | null => {
   if (!input) return null;
-  // Regex for standard Google Sheet URL
   const sheetUrlPattern = /\/spreadsheets\/d\/([a-zA-Z0-9-_]+)/;
   const match = input.match(sheetUrlPattern);
   if (match && match[1]) {
     return match[1];
   }
-  // If it's not a URL but looks like an ID (common length for IDs)
   if (!input.startsWith('http') && input.length > 30 && input.length < 50 && /^[a-zA-Z0-9-_]+$/.test(input)) {
     return input;
   }
-  return null; // Not a valid URL or ID format
+  return null;
 };
 
-// --- Google Sheet Parsing Logic ---
+// Google Sheet Parsing Logic
 const parseGoogleSheetUrl = (sheetUrlOrId: string): { spreadsheetId: string | null; gid: string } => {
     const spreadsheetId = extractSpreadsheetId(sheetUrlOrId);
     const gidMatch = sheetUrlOrId.match(/[#&]gid=([0-9]+)/);
-    const gid = gidMatch ? gidMatch[1] : '0'; // Default to first sheet if GID not specified
+    const gid = gidMatch ? gidMatch[1] : '0';
 
     if (!spreadsheetId) {
          console.warn("Could not extract spreadsheet ID from input:", sheetUrlOrId);
@@ -81,19 +71,16 @@ const parseGoogleSheetUrl = (sheetUrlOrId: string): { spreadsheetId: string | nu
 
 async function fetchAndParseGoogleSheetData(sheetUrlOrId: string): Promise<ProductDetail[]> {
     const { spreadsheetId, gid } = parseGoogleSheetUrl(sheetUrlOrId);
-    // Use a more reliable CSV export URL format
     const csvExportUrl = `https://docs.google.com/spreadsheets/d/${spreadsheetId}/export?format=csv&gid=${gid}`;
     console.log("Fetching Google Sheet CSV from:", csvExportUrl);
 
     let response: Response;
     try {
-        // Add a cache-busting parameter to ensure fresh data
         const urlWithCacheBust = `${csvExportUrl}&_=${new Date().getTime()}`;
-        response = await fetch(urlWithCacheBust, { cache: "no-store" }); // Prevent caching of the CSV
+        response = await fetch(urlWithCacheBust, { cache: "no-store" });
     } catch (error: any) {
         console.error("Network error fetching Google Sheet:", error);
         let userMessage = "Error de red al obtener la hoja. Verifique su conexión y la URL/ID.";
-        // Provide more specific feedback if possible
         if (error.message?.includes('Failed to fetch')) {
             userMessage += " Posible problema de CORS o conectividad, o la URL/ID es incorrecta.";
         } else {
@@ -105,91 +92,111 @@ async function fetchAndParseGoogleSheetData(sheetUrlOrId: string): Promise<Produ
     if (!response.ok) {
         const status = response.status;
         const statusText = response.statusText;
-        // Attempt to read the error body, which might contain useful info or HTML
         const errorBody = await response.text().catch(() => "Could not read error response body.");
-        console.error(`Failed to fetch Google Sheet data: ${status} ${statusText}`, { url: csvExportUrl, body: errorBody.substring(0, 500) }); // Log part of the body
-
+        console.error(`Failed to fetch Google Sheet data: ${status} ${statusText}`, { url: csvExportUrl, body: errorBody.substring(0, 500) });
         let userMessage = `Error ${status} al obtener datos. `;
-        if (status === 400) userMessage += "Verifique la URL/ID y asegúrese de que el ID de la hoja (gid=...) sea correcto.";
-        else if (status === 403 || errorBody.toLowerCase().includes("google accounts sign in")) userMessage = "Error de Acceso: La hoja no es pública. Cambie la configuración de compartir a 'Cualquier persona con el enlace puede ver'.";
+        if (status === 400 || errorBody.toLowerCase().includes("publish to the web")) userMessage = "Error: La hoja de cálculo debe estar 'Publicada en la web' como CSV para acceder a ella sin autenticación. Ve a Archivo > Compartir > Publicar en la web en Google Sheets.";
+        else if (status === 403 || errorBody.toLowerCase().includes("google accounts sign in")) userMessage = "Error de Acceso: La hoja no es pública o requiere inicio de sesión. Cambie la configuración de compartir a 'Cualquier persona con el enlace puede ver' y asegúrese de que esté publicada en la web como CSV.";
         else if (status === 404) userMessage += "Hoja no encontrada. Verifique la URL/ID y el ID de la hoja.";
         else userMessage += ` ${statusText}. Revise los permisos de la hoja o la URL/ID.`;
-
         throw new Error(userMessage);
     }
 
     const csvText = await response.text();
     console.log(`Successfully fetched CSV data (length: ${csvText.length}). Parsing...`);
 
-    // Use Papaparse for robust CSV parsing
-    const { data: csvData, errors: parseErrors } = Papa.parse<string[]>(csvText, {
-      header: false, // Data is parsed by position, not by header names
-      skipEmptyLines: true,
-    });
+    return new Promise((resolve, reject) => {
+        Papa.parse<string[]>(csvText, {
+            skipEmptyLines: true,
+            complete: (results) => {
+                if (results.errors.length > 0) {
+                    console.warn("Parsing errors encountered:", results.errors);
+                    // Optionally reject or continue with partial data
+                }
+                const csvData = results.data;
+                const products: ProductDetail[] = [];
+                if (csvData.length === 0) {
+                    console.warn("CSV data is empty or contains only empty lines.");
+                    resolve(products);
+                    return;
+                }
+                console.log(`Processing ${csvData.length} data rows (assuming first row is header).`);
+                const startDataRow = 1; // Assume first row is header and skip it
 
-    if (parseErrors.length > 0) {
-        console.warn("Parsing errors encountered:", parseErrors);
-        // Depending on severity, you might choose to throw an error or continue
-        // For now, we'll log and continue, skipping problematic rows.
-    }
+                for (let i = startDataRow; i < csvData.length; i++) {
+                    const values = csvData[i];
+                    // Column 1: Barcode (index 0)
+                    // Column 2: Description (index 1)
+                    // Column 6: Stock (index 5)
+                    // Column 10: Provider (index 9)
+                    // Column 11 (NEW): Expiration Date (index 10), format YYYY-MM-DD
+                    if (!values || values.length < 2) { // Barcode and Description are essential
+                        console.warn(`Skipping row ${i + 1}: Insufficient essential columns. Row:`, values);
+                        continue;
+                    }
 
-    const products: ProductDetail[] = [];
-    if (csvData.length === 0) {
-        console.warn("CSV data is empty or contains only empty lines.");
-        return products;
-    }
+                    const barcode = values[0]?.trim();
+                    if (!barcode) {
+                        console.warn(`Skipping row ${i + 1}: Missing or empty barcode. Row:`, values);
+                        continue;
+                    }
+                    if (barcode.length > 100) {
+                        console.warn(`Skipping row ${i + 1}: Barcode too long (${barcode.length} chars). Row:`, values);
+                        continue;
+                    }
 
-    console.log(`Processing ${csvData.length} data rows (including potential header).`);
+                    const description = values[1]?.trim() || `Producto ${barcode}`;
+                    
+                    let stock = 0;
+                    if (values.length > 5 && values[5]) {
+                        const stockStr = values[5].trim();
+                        const parsedStock = parseInt(stockStr, 10);
+                        if (!isNaN(parsedStock) && parsedStock >= 0) {
+                            stock = parsedStock;
+                        } else {
+                            console.warn(`Invalid stock value "${stockStr}" for barcode ${barcode} in row ${i + 1}. Defaulting to 0.`);
+                        }
+                    }
 
-    // Determine if the first row is a header or actual data.
-    // For position-based, we might assume all rows are data unless a specific check is made.
-    // Let's start from row 0, assuming no header or header is to be ignored for positional mapping.
-    const startDataRow = 1; // Assume first row is header and skip it
+                    const provider = (values.length > 9 && values[9]?.trim()) ? values[9].trim() : "Desconocido";
 
-    for (let i = startDataRow; i < csvData.length; i++) {
-        const values = csvData[i];
+                    let expirationDate: string | undefined = undefined;
+                    if (values.length > 10 && values[10]) {
+                        const dateStr = values[10].trim();
+                        // Try to parse common date formats or ensure it's YYYY-MM-DD
+                        const commonFormats = ["yyyy-MM-dd", "dd/MM/yyyy", "MM/dd/yyyy"];
+                        let parsedValidDate: Date | null = null;
 
-        // Expecting at least 10 columns now to access provider safely
-        if (!values || values.length < 10) {
-            console.warn(`Skipping row ${i + 1}: Insufficient columns. Expected at least 10. Row:`, values);
-            continue;
-        }
+                        for (const fmt of commonFormats) {
+                            try {
+                                const d = parse(dateStr, fmt, new Date());
+                                if (isValid(d)) {
+                                    parsedValidDate = d;
+                                    break;
+                                }
+                            } catch (e) {/* ignore parse errors for other formats */}
+                        }
+                        
+                        if (parsedValidDate) {
+                            expirationDate = format(parsedValidDate, "yyyy-MM-dd");
+                        } else if (/^\d{4}-\d{2}-\d{2}$/.test(dateStr) && isValid(parseISO(dateStr))) {
+                           expirationDate = dateStr; // Already in YYYY-MM-DD and valid
+                        } else {
+                            console.warn(`Invalid or unparseable expiration date "${dateStr}" for barcode ${barcode} in row ${i + 1}. Skipping expiration date.`);
+                        }
+                    }
 
-        // --- Column Position Mapping (0-based index) ---
-        // Column 1: Barcode
-        const barcode = values[0]?.trim(); // Barcode is in the first column (index 0)
-        if (!barcode) {
-            console.warn(`Skipping row ${i + 1}: Missing or empty barcode (Column 1). Row:`, values);
-            continue;
-        }
-         if (barcode.length > 100) { // Add length check if needed
-             console.warn(`Skipping row ${i + 1}: Barcode too long (${barcode.length} chars). Row:`, values);
-             continue;
-         }
-
-        // Column 2: Description
-        const description = values[1]?.trim() || `Producto ${barcode}`; // Description is in the second column (index 1)
-        // Column 6: Stock
-        const stockStr = values[5]?.trim() || '0'; // Stock is in the sixth column (index 5)
-        let stock = parseInt(stockStr, 10);
-        if (isNaN(stock) || stock < 0) {
-           console.warn(`Invalid stock value "${stockStr}" for barcode ${barcode} in row ${i + 1} (Column 6). Defaulting to 0.`);
-           stock = 0;
-        }
-        // Column 10: Provider
-        const provider = values[9]?.trim() || "Desconocido"; // Provider is in the tenth column (index 9)
-
-
-        products.push({
-            barcode: barcode,
-            description: description,
-            provider: provider,
-            stock: stock, // Stock from the sheet is now part of ProductDetail
+                    products.push({ barcode, description, provider, stock, expirationDate });
+                }
+                console.log(`Parsed ${products.length} products from CSV.`);
+                resolve(products);
+            },
+            error: (error: any) => {
+                console.error("PapaParse error:", error);
+                reject(new Error(`Error al analizar el archivo CSV: ${error.message}`));
+            }
         });
-    }
-
-    console.log(`Parsed ${products.length} products from CSV based on column position.`);
-    return products;
+    });
 }
 
 
@@ -200,7 +207,7 @@ async function fetchAndParseGoogleSheetData(sheetUrlOrId: string): Promise<Produ
 
 export const ProductDatabase: React.FC<ProductDatabaseProps> = ({ onStartCountByProvider }) => {
   const { toast } = useToast();
-  const [products, setProducts] = useState<ProductDetail[]>([]); // Holds all products from DB
+  const [products, setProducts] = useState<ProductDetail[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
   const [selectedProduct, setSelectedProduct] = useState<ProductDetail | null>(null);
@@ -218,7 +225,6 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = ({ onStartCountBy
   const [selectedProviderFilter, setSelectedProviderFilter] = useState<string>("all");
 
 
-  // Load initial data from IndexedDB
   const loadProductsFromDB = useCallback(async () => {
     setIsLoading(true);
     try {
@@ -243,13 +249,14 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = ({ onStartCountBy
   };
 
 
- const handleAddOrUpdateProductSubmit = useCallback(async (data: ProductDetailValues) => {
+ const handleAddOrUpdateProductSubmit = useCallback(async (data: ProductDetail) => { // Use ProductDetail directly
     const isUpdating = !!selectedProduct;
     const productData: ProductDetail = {
-        barcode: isUpdating ? selectedProduct!.barcode : data.barcode.trim(), // Keep original barcode if updating
+        barcode: isUpdating ? selectedProduct!.barcode : data.barcode.trim(),
         description: data.description.trim() || `Producto ${data.barcode.trim()}`,
         provider: data.provider?.trim() || "Desconocido",
-        stock: data.stock ?? 0, // Ensure stock is a number
+        stock: data.stock ?? 0,
+        expirationDate: data.expirationDate || undefined,
     };
 
     if (!productData.barcode) {
@@ -261,7 +268,7 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = ({ onStartCountBy
     setProcessingStatus(isUpdating ? "Actualizando producto..." : "Agregando producto...");
     try {
         await addOrUpdateProductToDB(productData);
-        await loadProductsFromDB(); // Reload data from DB
+        await loadProductsFromDB();
         toast({
             title: isUpdating ? "Producto Actualizado" : "Producto Agregado",
             description: `${productData.description} (${productData.barcode}) ha sido ${isUpdating ? 'actualizado' : 'agregado'}.`,
@@ -270,7 +277,7 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = ({ onStartCountBy
     } catch (error: any) {
         console.error("Add/Update product failed", error);
         let errorMessage = `Error al ${isUpdating ? 'actualizar' : 'guardar'} el producto.`;
-        if (error.name === 'ConstraintError') { // Specific IndexedDB error for unique key violation
+        if (error.name === 'ConstraintError') { 
             errorMessage = `El producto con código de barras ${productData.barcode} ya existe.`;
         } else if (error.message) {
              errorMessage += ` Detalle: ${error.message}`;
@@ -279,7 +286,7 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = ({ onStartCountBy
     } finally {
         setIsProcessing(false);
         setProcessingStatus("");
-        setSelectedProduct(null); // Clear selection after operation
+        setSelectedProduct(null);
     }
  }, [selectedProduct, toast, loadProductsFromDB]);
 
@@ -295,13 +302,13 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = ({ onStartCountBy
     setProcessingStatus("Eliminando producto...");
     try {
       await deleteProductFromDB(barcode);
-      await loadProductsFromDB(); // Reload
+      await loadProductsFromDB(); 
       toast({
         title: "Producto Eliminado",
         description: `El producto ${product?.description || barcode} ha sido eliminado de la base de datos.`,
       });
-      setIsEditModalOpen(false); // Close edit dialog if open
-      setIsAlertOpen(false); // Close confirmation dialog
+      setIsEditModalOpen(false); 
+      setIsAlertOpen(false); 
       setProductToDelete(null);
       setAlertAction(null);
     } catch (error: any) {
@@ -318,8 +325,8 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = ({ onStartCountBy
     setIsProcessing(true);
     setProcessingStatus("Borrando base de datos...");
     try {
-      await clearProductDatabaseFromDB(); // Use renamed import
-      setProducts([]); // Clear local state
+      await clearProductDatabaseFromDB(); 
+      setProducts([]); 
       toast({ title: "Base de Datos Borrada", description: "Todos los productos han sido eliminados." });
     } catch (error: any) {
       console.error("Failed to clear product database", error);
@@ -365,7 +372,6 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = ({ onStartCountBy
     } else {
         console.warn("Delete confirmation called with invalid state:", { alertAction, productToDelete });
     }
-    // Dialog closing and state reset now happens within handleDeleteProduct/handleClearProductDatabase
 }, [alertAction, productToDelete, handleDeleteProduct, handleClearProductDatabase]);
 
 
@@ -392,18 +398,16 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = ({ onStartCountBy
                  return;
              }
 
-             // Batch add to IndexedDB
-             const CHUNK_SIZE = 200; // Process in chunks
+             const CHUNK_SIZE = 200; 
              for (let i = 0; i < totalItemsToLoad; i += CHUNK_SIZE) {
                  const chunk = parsedProducts.slice(i, i + CHUNK_SIZE);
-                 await addProductsToDB(chunk); // This function handles transactions internally
+                 await addProductsToDB(chunk);
                  itemsLoaded += chunk.length;
                  setUploadProgress(Math.round((itemsLoaded / totalItemsToLoad) * 100));
                  setProcessingStatus(`Cargando ${itemsLoaded} de ${totalItemsToLoad} productos...`);
              }
 
-
-             await loadProductsFromDB(); // Reload data from DB
+             await loadProductsFromDB(); 
              toast({ title: "Carga Completa", description: `Se procesaron ${totalItemsToLoad} productos desde Google Sheet.` });
 
         } catch (error: any) {
@@ -424,18 +428,14 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = ({ onStartCountBy
        return;
      }
      try {
-         // Use Papaparse for CSV generation
-         const csv = Papa.unparse(products.map(p => ({
+         const dataToExport = products.map(p => ({
              BARCODE: p.barcode,
              DESCRIPTION: p.description,
              PROVIDER: p.provider,
              STOCK: p.stock ?? 0,
-         })), {
-            header: true,
-            quotes: true, // Ensure fields with commas are quoted
-            skipEmptyLines: true,
-         });
-
+             FECHA_VENCIMIENTO: p.expirationDate || '', // Include expirationDate
+         }));
+         const csv = Papa.unparse(dataToExport, { header: true, quotes: true, skipEmptyLines: true });
          const blob = new Blob([`\uFEFF${csv}`], { type: "text/csv;charset=utf-8;" });
          const link = document.createElement("a");
          link.href = URL.createObjectURL(blob);
@@ -453,8 +453,7 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = ({ onStartCountBy
    }, [products, toast]);
 
 
-    // Generate unique provider options from products
-    const providerOptions = React.useMemo(() => {
+    const providerOptions = useMemo(() => {
         const providers = new Set(products.map(p => p.provider || "Desconocido").filter(Boolean));
         const sortedProviders = ["all", ...Array.from(providers)].sort((a, b) => {
             if (a === 'all') return -1;
@@ -487,10 +486,9 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = ({ onStartCountBy
         return;
       }
 
-      // Convert ProductDetail[] to DisplayProduct[] for onStartCountByProvider
       const productsToCount: DisplayProduct[] = providerProducts.map(p => ({
           ...p,
-          warehouseId: '', // This will be set by the main page context
+          warehouseId: '', 
           count: 0,
           lastUpdated: new Date().toISOString()
       }));
@@ -507,27 +505,31 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = ({ onStartCountBy
   }, [selectedProviderFilter, products, onStartCountByProvider, toast]);
 
 
-  const filteredProducts = React.useMemo(() => {
+  const filteredProducts = useMemo(() => {
     const lowerSearchTerm = searchTerm.toLowerCase();
     return products.filter(product => {
       const matchesSearch = !lowerSearchTerm ||
                             product.description.toLowerCase().includes(lowerSearchTerm) ||
                             product.barcode.includes(lowerSearchTerm) ||
-                            (product.provider || '').toLowerCase().includes(lowerSearchTerm);
+                            (product.provider || '').toLowerCase().includes(lowerSearchTerm) ||
+                            (product.expirationDate || '').includes(lowerSearchTerm); // Include expiration date in search
 
       const matchesProvider = selectedProviderFilter === 'all' || (product.provider || "Desconocido") === selectedProviderFilter;
 
       return matchesSearch && matchesProvider;
+    }).sort((a, b) => { // Sort by expiration date (ascending, nulls/empty last)
+        if (!a.expirationDate && !b.expirationDate) return 0;
+        if (!a.expirationDate) return 1;
+        if (!b.expirationDate) return -1;
+        return new Date(a.expirationDate).getTime() - new Date(b.expirationDate).getTime();
     });
   }, [products, searchTerm, selectedProviderFilter]);
 
 
   return (
     <div className="p-4 md:p-6 space-y-6">
-       {/* --- Toolbar --- */}
        <div className="flex flex-col md:flex-row md:justify-between md:items-start gap-4">
          <div className="flex flex-wrap gap-2">
-            {/* Actions Dropdown */}
             <Select onValueChange={(value) => {
                 switch (value) {
                   case "add":
@@ -542,35 +544,33 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = ({ onStartCountBy
                 }
               }} disabled={isProcessing || isLoading}>
               <SelectTrigger className="w-full sm:w-auto md:w-[200px] h-10">
-                <SelectValue placeholder="Acciones" />
+                <SelectValue placeholder="Acciones DB" />
               </SelectTrigger>
               <SelectContent>
                 <SelectGroup>
-                  <SelectLabel>Acciones</SelectLabel>
+                  <SelectLabel>Acciones Base de Datos</SelectLabel>
                   <SelectItem value="add">
                     Agregar Producto
                   </SelectItem>
                   <SelectItem value="export" disabled={products.length === 0}>
-                    Exportar Base de Datos
+                    Exportar Base de Datos (CSV)
                   </SelectItem>
                   <SelectItem value="clear" disabled={products.length === 0}>Borrar Base de Datos</SelectItem>
                 </SelectGroup>
               </SelectContent>
             </Select>
          </div>
-         {/* Search and Filter Controls */}
           <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 w-full md:w-auto">
             <Label htmlFor="search-product" className="sr-only">Buscar Producto</Label>
              <Input
                  id="search-product"
                  type="text"
-                 placeholder="Buscar por código, descripción..."
+                 placeholder="Buscar por código, descripción, fecha..."
                  value={searchTerm}
                  onChange={(e) => setSearchTerm(e.target.value)}
                  className="h-10 flex-grow min-w-[150px]"
                  disabled={isProcessing || isLoading}
              />
-             {/* Provider Filter Dropdown */}
              <Select
                  value={selectedProviderFilter}
                  onValueChange={setSelectedProviderFilter}
@@ -588,7 +588,6 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = ({ onStartCountBy
                      ))}
                  </SelectContent>
              </Select>
-            {/* Start Count by Provider Button */}
             <Button
                 onClick={handleStartCountByProviderClick}
                 disabled={selectedProviderFilter === 'all' || isProcessing || isLoading}
@@ -601,7 +600,6 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = ({ onStartCountBy
          </div>
        </div>
 
-      {/* --- Google Sheet Loader --- */}
        <div className="space-y-2 p-4 border rounded-lg bg-card dark:bg-gray-800 shadow-sm">
            <Label htmlFor="google-sheet-url" className="block font-medium mb-1 dark:text-gray-200">
               Cargar/Actualizar desde Google Sheet (URL o ID):
@@ -626,7 +624,7 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = ({ onStartCountBy
              </Button>
          </div>
          <p id="google-sheet-info" className="text-xs text-muted-foreground dark:text-gray-400 mt-1">
-              Introduzca la URL completa de la Hoja de Google (compartida públicamente) o simplemente el ID de la hoja de cálculo. Los datos se leerán por posición de columna (asumiendo primera fila es encabezado): Col 1: Código Barras, Col 2: Descripción, Col 6: Stock, Col 10: Proveedor.
+              La hoja debe estar 'Publicada en la web' como CSV. Se leerá por posición de columna (asumiendo primera fila es encabezado): Col 1: Código, Col 2: Descripción, Col 6: Stock, Col 10: Proveedor, Col 11: Vencimiento (YYYY-MM-DD).
          </p>
          {isProcessing && (
              <div className="mt-4 space-y-1">
@@ -641,7 +639,6 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = ({ onStartCountBy
          )}
        </div>
 
-       {/* Confirmation Dialog for Delete/Clear */}
         <ConfirmationDialog
             isOpen={isAlertOpen}
             onOpenChange={setIsAlertOpen}
@@ -660,32 +657,21 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = ({ onStartCountBy
             isProcessing={isProcessing}
         />
 
-
-      {/* Products Table */}
        <ProductTable
            products={filteredProducts}
            isLoading={isLoading}
            onEdit={handleOpenEditDialog}
-           onDelete={(barcode) => {
-                const product = products.find(p => p.barcode === barcode);
-                if (product) {
-                     triggerDeleteProductAlert(product);
-                } else {
-                    toast({variant: "destructive", title: "Error", description: "No se encontró el producto para eliminar."})
-                }
-            }}
        />
 
-      {/* Add/Edit Product Dialog */}
       <EditProductDialog
           isOpen={isEditModalOpen}
           setIsOpen={setIsEditModalOpen}
-          selectedDetail={selectedProduct} // Changed from selectedProduct
+          selectedDetail={selectedProduct}
           setSelectedDetail={setSelectedProduct}
           onSubmit={handleAddOrUpdateProductSubmit}
           onDelete={(barcode) => triggerDeleteProductAlert(products.find(p => p.barcode === barcode) || null)}
           isProcessing={isProcessing}
-          initialStock={selectedProduct?.stock} // Pass current stock of selected product
+          initialStock={selectedProduct?.stock} 
           context="database"
        />
     </div>
@@ -693,44 +679,41 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = ({ onStartCountBy
 };
 
 
-// --- Child Component: ProductTable ---
 interface ProductTableProps {
   products: ProductDetail[];
   isLoading: boolean;
   onEdit: (product: ProductDetail) => void;
-  onDelete: (barcode: string) => void;
 }
 
 const ProductTable: React.FC<ProductTableProps> = ({
   products,
   isLoading,
   onEdit,
-  onDelete, // Keep onDelete for the delete button inside EditProductDialog
 }) => {
 
   return (
-    <ScrollArea className="h-[calc(100vh-400px)] md:h-[calc(100vh-350px)] border rounded-lg shadow-sm bg-white dark:bg-gray-800">
+    <ScrollArea className="h-[calc(100vh-480px)] md:h-[calc(100vh-430px)] border rounded-lg shadow-sm bg-white dark:bg-gray-800">
       <Table>
-        <TableCaption className="dark:text-gray-400">Productos en la base de datos.</TableCaption>
+        <TableCaption className="dark:text-gray-400">Productos en la base de datos. Click en la descripción para editar.</TableCaption>
         <TableHeader className="sticky top-0 bg-gray-50 dark:bg-gray-700 z-10 shadow-sm">
           <TableRow>
-            <TableHead className="w-[15%] md:w-[20%] px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">Código Barras</TableHead>
-            <TableHead className="w-[40%] md:w-[50%] px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">Descripción (Click para Editar)</TableHead>
-             <TableHead className="hidden md:table-cell w-[20%] px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">Proveedor</TableHead>
-            <TableHead className="w-[15%] md:w-[10%] px-4 py-3 text-center text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">Stock</TableHead>
-            {/* Removed Actions column */}
+            <TableHead className="w-[20%] px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">Código Barras</TableHead>
+            <TableHead className="w-[35%] px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">Descripción</TableHead>
+            <TableHead className="w-[20%] px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">Proveedor</TableHead>
+            <TableHead className="w-[10%] px-4 py-3 text-center text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">Stock</TableHead>
+            <TableHead className="w-[15%] px-4 py-3 text-center text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">Vencimiento</TableHead>
           </TableRow>
         </TableHeader>
         <TableBody>
           {isLoading ? (
             <TableRow>
-              <TableCell colSpan={4} className="text-center py-10 text-gray-500 dark:text-gray-400">
+              <TableCell colSpan={5} className="text-center py-10 text-gray-500 dark:text-gray-400">
                 Cargando productos...
               </TableCell>
             </TableRow>
           ) : products.length === 0 ? (
             <TableRow>
-              <TableCell colSpan={4} className="text-center py-10 text-gray-500 dark:text-gray-400">
+              <TableCell colSpan={5} className="text-center py-10 text-gray-500 dark:text-gray-400">
                 No hay productos en la base de datos.
               </TableCell>
             </TableRow>
@@ -740,14 +723,22 @@ const ProductTable: React.FC<ProductTableProps> = ({
                 <TableCell className="px-4 py-3 font-medium text-gray-700 dark:text-gray-200">{product.barcode}</TableCell>
                 <TableCell
                     className="px-4 py-3 text-gray-800 dark:text-gray-100 cursor-pointer hover:text-blue-600 dark:hover:text-blue-400 hover:underline"
-                    onClick={() => onEdit(product)} // Trigger edit on description click
+                    onClick={() => onEdit(product)}
                     title={`Editar ${product.description}`}
                  >
                     {product.description}
                 </TableCell>
-                 <TableCell className="hidden md:table-cell px-4 py-3 text-gray-600 dark:text-gray-300">{product.provider || 'N/A'}</TableCell>
+                 <TableCell className="px-4 py-3 text-gray-600 dark:text-gray-300">{product.provider || 'N/A'}</TableCell>
                 <TableCell className="px-4 py-3 text-center text-gray-600 dark:text-gray-300 tabular-nums">
                   {product.stock ?? 0}
+                </TableCell>
+                <TableCell 
+                    className={cn("px-4 py-3 text-center text-gray-600 dark:text-gray-300 tabular-nums",
+                        product.expirationDate && new Date(product.expirationDate) < new Date() ? 'text-red-500 dark:text-red-400 font-semibold' : ''
+                    )}
+                    title={product.expirationDate ? `Vence: ${format(parseISO(product.expirationDate), 'PPP', {locale: es})}` : 'Sin fecha'}
+                >
+                  {product.expirationDate ? format(parseISO(product.expirationDate), 'dd/MM/yy', {locale: es}) : 'N/A'}
                 </TableCell>
               </TableRow>
             ))

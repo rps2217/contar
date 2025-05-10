@@ -40,6 +40,7 @@ export interface DisplayProduct extends ProductDetail, Omit<InventoryItem, 'barc
  */
 export interface CountingHistoryEntry {
   id: string; // Unique identifier for the history entry (e.g., timestamp-based)
+  userId?: string; // Optional: Identifier for the user who created this entry
   timestamp: string; // ISO 8601 timestamp when the history was saved
   warehouseId: string;
   warehouseName: string; // Store the name for easier display

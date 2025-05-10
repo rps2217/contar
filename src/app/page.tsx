@@ -1,3 +1,4 @@
+
 // src/app/page.tsx
 "use client";
 
@@ -5,7 +6,7 @@ import type { DisplayProduct, ProductDetail, CountingHistoryEntry } from '@/type
 import { useToast } from "@/hooks/use-toast";
 import { cn, getLocalStorageItem, setLocalStorageItem, debounce } from "@/lib/utils";
 import {
-    AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
+    AlertDialogAction, AlertDialogCancel, AlertDialogContent,
     AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle
 } from "@/components/ui/alert-dialog";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
@@ -22,8 +23,8 @@ import {
 } from "@/components/ui/table";
 import { WarehouseManagement } from "@/components/warehouse-management";
 import { format, isValid } from 'date-fns';
-import { es } from 'date-fns/locale'; // Import Spanish locale for date formatting
-import { Minus, Plus, Trash, RefreshCw, Warehouse as WarehouseIcon, Search, Check, AppWindow, Database, Boxes, Loader2, History as HistoryIcon, CalendarIcon, Save, Edit, Download, BarChart, Settings, AlertTriangle, Camera, XCircle, PanelLeftClose, PanelRightOpen } from "lucide-react";
+import { es } from 'date-fns/locale'; 
+import { Minus, Plus, Trash, RefreshCw, Warehouse as WarehouseIcon, Search, Check, AppWindow, Database, Boxes, Loader2, History as HistoryIcon, CalendarIcon, Save, Edit, Download, BarChart, Settings, AlertTriangle, Camera, XCircle, PanelLeftClose, PanelRightOpen, User } from "lucide-react";
 import React, { useCallback, useEffect, useRef, useState, useMemo } from "react";
 import { playBeep } from '@/lib/helpers';
 import { BarcodeEntry } from '@/components/barcode-entry';
@@ -54,6 +55,7 @@ const LOCAL_STORAGE_WAREHOUSE_KEY = 'stockCounterPro_currentWarehouse';
 const LOCAL_STORAGE_WAREHOUSES_KEY = 'stockCounterPro_warehouses';
 const LOCAL_STORAGE_ACTIVE_SECTION_KEY = 'stockCounterPro_activeSection';
 const LOCAL_STORAGE_SIDEBAR_COLLAPSED_KEY = 'stockCounterPro_sidebarCollapsed';
+const LOCAL_STORAGE_USER_ID_KEY = 'stockCounterPro_userId'; // Key for storing simulated userId
 const LOCAL_STORAGE_SAVE_DEBOUNCE_MS = 500;
 
 // --- Main Component ---
@@ -81,6 +83,13 @@ export default function Home() {
     LOCAL_STORAGE_SIDEBAR_COLLAPSED_KEY,
     false
   );
+  // Simulated userId for multi-user context preparation
+  const [currentUserId, setCurrentUserId] = useLocalStorage<string>(
+    LOCAL_STORAGE_USER_ID_KEY,
+    `user_${Math.random().toString(36).substr(2, 9)}` // Generate a random-ish default user ID
+  );
+  const [showUserIdInput, setShowUserIdInput] = useState(false);
+
 
   // --- Component State ---
   const [barcode, setBarcode] = useState("");
@@ -110,10 +119,18 @@ export default function Home() {
 
   useEffect(() => {
     isMountedRef.current = true;
+    // Check if a userId exists, if not, prompt user or generate one
+    if (!getLocalStorageItem(LOCAL_STORAGE_USER_ID_KEY, '')) {
+        // For simplicity, we auto-generate one if not present.
+        // In a real multi-user app, this would be part of login.
+        const newUserId = `user_${Math.random().toString(36).substring(2, 11)}`;
+        setCurrentUserId(newUserId);
+        toast({title: "ID de Usuario", description: `ID de usuario generado: ${newUserId}. Puedes cambiarlo en la barra lateral.`});
+    }
     return () => {
       isMountedRef.current = false;
     };
-  }, []);
+  }, [setCurrentUserId, toast]);
 
   useEffect(() => {
     if (!currentWarehouseId || !isMountedRef.current) {
@@ -218,7 +235,7 @@ export default function Home() {
      setLastScannedBarcode(trimmedBarcode);
      const clearLastScannedTimeout = setTimeout(() => {
          if (isMountedRef.current) setLastScannedBarcode(null);
-     }, 800); // Increased debounce time for scan prevention
+     }, 800); 
 
     let descriptionForToast = '';
 
@@ -284,7 +301,7 @@ export default function Home() {
                     count: 1,
                     lastUpdated: new Date().toISOString(),
                 };
-                playBeep(440, 300); // Different beep for unknown
+                playBeep(440, 300); 
                 toast({
                     variant: "destructive",
                     title: "Producto Desconocido",
@@ -329,20 +346,19 @@ const modifyProductValue = useCallback(async (barcodeToUpdate: string, type: 'co
         productForToast = product; 
         productDescription = product.description;
         const originalValue = type === 'count' ? product.count ?? 0 : product.stock ?? 0;
-        finalValue = Math.max(0, originalValue + change); // Ensure value doesn't go below 0
+        finalValue = Math.max(0, originalValue + change); 
         const productStock = product.stock ?? 0;
+        
+        needsConfirmation = type === 'count' && finalValue > productStock && originalValue <= productStock && productStock > 0;
 
-        // Confirmation is only needed if type is 'count', the change is positive (incrementing),
-        // the new count exceeds current stock, and the original count was less than or equal to stock.
-        needsConfirmation = type === 'count' && change > 0 && finalValue > productStock && originalValue <= productStock && productStock > 0;
 
         if (needsConfirmation) {
             setConfirmQuantityProductBarcode(product.barcode);
-            setConfirmQuantityAction(change > 0 ? 'increment' : 'decrement'); // Though decrement won't trigger this path
+            setConfirmQuantityAction(change > 0 ? 'increment' : 'decrement'); 
             setConfirmQuantityNewValue(finalValue);
             setIsConfirmQuantityDialogOpen(true);
-            playBeep(660, 100); // Confirmation beep
-            return prevList; // Return original list, change will be applied after confirmation
+            playBeep(660, 100); 
+            return prevList; 
         } else {
             const updatedProduct = {
                  ...product,
@@ -351,7 +367,7 @@ const modifyProductValue = useCallback(async (barcodeToUpdate: string, type: 'co
             };
             productForToast = updatedProduct; 
             const listWithoutProduct = prevList.filter((_, i) => i !== productIndex);
-            return [updatedProduct, ...listWithoutProduct]; // Apply change and reorder
+            return [updatedProduct, ...listWithoutProduct]; 
         }
     });
     
@@ -427,9 +443,9 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
         let calculatedValue = sumValue ? (originalValue + newValue) : newValue;
         finalValue = Math.max(0, calculatedValue);
         const productStock = product.stock ?? 0;
-
-        // Confirmation only if type is 'count', the new value is greater than stock, original count was not already over stock, and stock is positive.
+        
         needsConfirmation = type === 'count' && finalValue > productStock && originalValue <= productStock && productStock > 0;
+
 
         if (needsConfirmation) {
             setConfirmQuantityProductBarcode(product.barcode);
@@ -670,16 +686,17 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
         const currentWHName = getWarehouseName(currentWarehouseId);
         const historyEntry: CountingHistoryEntry = {
             id: new Date().toISOString(),
+            userId: currentUserId, // Associate with current user
             timestamp: new Date().toISOString(),
             warehouseId: currentWarehouseId,
             warehouseName: currentWHName,
-            products: JSON.parse(JSON.stringify(currentListForWarehouse)) // Deep copy
+            products: JSON.parse(JSON.stringify(currentListForWarehouse)) 
         };
 
         await saveCountingHistory(historyEntry);
          if (!hideToast) {
             requestAnimationFrame(() => {
-                toast({ title: "Historial Guardado", description: `Conteo para ${currentWHName} guardado en el historial local.` });
+                toast({ title: "Historial Guardado", description: `Conteo para ${currentWHName} (Usuario: ${currentUserId}) guardado.` });
             });
         }
     } catch (error: any) {
@@ -694,7 +711,7 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
             setIsSavingToHistory(false);
         }
     }
-}, [countingList, currentWarehouseId, getWarehouseName, toast]);
+}, [countingList, currentWarehouseId, getWarehouseName, toast, currentUserId]);
 
 
  const handleRefreshStock = useCallback(async () => {
@@ -1065,6 +1082,33 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
         </nav>
         
         <div className={cn("mt-auto pt-4 border-t border-border", isSidebarCollapsed && "hidden")}>
+           {/* Simulated User ID Management */}
+           <div className="space-y-2 mb-4">
+                <Label htmlFor="user-id-display" className="px-2 text-sm font-medium text-muted-foreground">
+                    Usuario Actual:
+                </Label>
+                <div className="flex items-center gap-2 px-2">
+                    <User className="h-4 w-4 text-muted-foreground" />
+                    <span id="user-id-display" className="text-sm truncate" title={currentUserId}>
+                        {currentUserId}
+                    </span>
+                    <Button variant="ghost" size="icon" className="h-6 w-6" onClick={() => setShowUserIdInput(!showUserIdInput)} title="Cambiar ID de Usuario">
+                        <Edit className="h-3.5 w-3.5" />
+                    </Button>
+                </div>
+                {showUserIdInput && (
+                    <div className="px-2 space-y-1">
+                        <Input
+                            type="text"
+                            value={currentUserId}
+                            onChange={(e) => setCurrentUserId(e.target.value)}
+                            placeholder="Ingresar ID de Usuario"
+                            className="h-8 text-sm"
+                        />
+                         <p className="text-xs text-muted-foreground">Este ID se usa para el historial. No es una autenticación real.</p>
+                    </div>
+                )}
+            </div>
           {warehouses.length > 0 && (
             <div className="space-y-2">
               <Label htmlFor="warehouse-select-sidebar" className="px-2 text-sm font-medium text-muted-foreground">Almacén Activo:</Label>
@@ -1195,6 +1239,7 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
                 <div id="history-content">
                     <CountingHistoryViewer
                         getWarehouseName={getWarehouseName}
+                        currentUserId={currentUserId} // Pass currentUserId
                     />
                 </div>
             )}
@@ -1327,3 +1372,4 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
     </div>
   );
 }
+

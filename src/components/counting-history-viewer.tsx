@@ -3,10 +3,10 @@
 
 import React, { useState, useEffect, useCallback } from 'react';
 import { getCountingHistory, clearCountingHistory } from '@/lib/database';
-import type { CountingHistoryEntry, DisplayProduct } from '@/types/product';
+import type { CountingHistoryEntry } from '@/types/product';
 import { useToast } from "@/hooks/use-toast";
 import { format } from 'date-fns';
-import { es } from 'date-fns/locale'; // Import Spanish locale
+import { es } from 'date-fns/locale';
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import {
@@ -24,16 +24,17 @@ import {
   AccordionItem,
   AccordionTrigger,
 } from "@/components/ui/accordion";
-import { Trash, Loader2, CalendarIcon, Download } from "lucide-react"; // Import CalendarIcon and Download
+import { Trash, Loader2, CalendarIcon, Download, AlertCircle, User } from "lucide-react";
 import { ConfirmationDialog } from '@/components/confirmation-dialog';
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
-import Papa from 'papaparse'; // Ensure PapaParse is imported
+import Papa from 'papaparse';
 
 interface CountingHistoryViewerProps {
   getWarehouseName: (warehouseId: string | null | undefined) => string;
+  currentUserId?: string; // Optional: to filter history for current user
 }
 
-export const CountingHistoryViewer: React.FC<CountingHistoryViewerProps> = ({ getWarehouseName }) => {
+export const CountingHistoryViewer: React.FC<CountingHistoryViewerProps> = ({ getWarehouseName, currentUserId }) => {
   const [historyEntries, setHistoryEntries] = useState<CountingHistoryEntry[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -45,7 +46,10 @@ export const CountingHistoryViewer: React.FC<CountingHistoryViewerProps> = ({ ge
     setIsLoading(true);
     setError(null);
     try {
-      const history = await getCountingHistory();
+      // Pass currentUserId to getCountingHistory if you want to filter by user
+      // For now, it fetches all history, and we can show the userId.
+      // If strict filtering is needed, getCountingHistory needs to be adapted.
+      const history = await getCountingHistory(currentUserId); // Pass userId to potentially filter
       setHistoryEntries(history);
     } catch (err: any) {
       console.error("Error loading counting history:", err);
@@ -58,7 +62,7 @@ export const CountingHistoryViewer: React.FC<CountingHistoryViewerProps> = ({ ge
     } finally {
       setIsLoading(false);
     }
-  }, [toast]);
+  }, [toast, currentUserId]); // Add currentUserId as dependency
 
   useEffect(() => {
     loadHistory();
@@ -67,7 +71,8 @@ export const CountingHistoryViewer: React.FC<CountingHistoryViewerProps> = ({ ge
   const handleClearHistory = async () => {
     setIsClearing(true);
     try {
-      await clearCountingHistory();
+      await clearCountingHistory(); // This clears all history.
+      // If user-specific clearing is needed, clearCountingHistory would need adaptation.
       setHistoryEntries([]);
       toast({ title: "Historial Borrado", description: "Se ha borrado todo el historial de conteos." });
     } catch (err: any) {
@@ -83,7 +88,6 @@ export const CountingHistoryViewer: React.FC<CountingHistoryViewerProps> = ({ ge
     }
   };
 
-  // Function to handle exporting history to CSV
   const handleExportHistory = useCallback(() => {
     if (historyEntries.length === 0) {
       toast({ title: "Vacío", description: "No hay historial para exportar." });
@@ -98,6 +102,8 @@ export const CountingHistoryViewer: React.FC<CountingHistoryViewerProps> = ({ ge
 
         entry.products.forEach(product => {
           dataToExport.push({
+            "ID Historial": entry.id,
+            "ID Usuario": entry.userId || 'N/A', // Include userId
             "Fecha Historial": historyTimestamp,
             "Almacén": warehouseName,
             "Código Barras": product.barcode,
@@ -121,7 +127,8 @@ export const CountingHistoryViewer: React.FC<CountingHistoryViewerProps> = ({ ge
       const link = document.createElement("a");
       link.href = URL.createObjectURL(blob);
       const timestamp = format(new Date(), 'yyyyMMdd', { locale: es });
-      const fileName = `historial_conteos_${timestamp}.csv`;
+      const userPart = currentUserId ? `_usuario-${currentUserId.replace(/[^a-zA-Z0-9]/g, '_')}` : '';
+      const fileName = `historial_conteos${userPart}_${timestamp}.csv`;
 
       link.setAttribute("download", fileName);
       document.body.appendChild(link);
@@ -134,13 +141,13 @@ export const CountingHistoryViewer: React.FC<CountingHistoryViewerProps> = ({ ge
       console.error("Error exporting history:", error);
       toast({ variant: "destructive", title: "Error de Exportación", description: "No se pudo generar el archivo CSV del historial." });
     }
-  }, [historyEntries, getWarehouseName, toast]);
+  }, [historyEntries, getWarehouseName, toast, currentUserId]);
 
 
   return (
     <div className="p-4 md:p-6 space-y-6">
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
-        <h2 className="text-2xl font-bold">Historial de Conteos</h2>
+        <h2 className="text-2xl font-bold">Historial de Conteos {currentUserId && <span className="text-base font-normal text-muted-foreground">(Usuario: {currentUserId})</span>}</h2>
         <div className="flex flex-col sm:flex-row gap-2 w-full sm:w-auto">
            <Button
             variant="outline"
@@ -179,7 +186,9 @@ export const CountingHistoryViewer: React.FC<CountingHistoryViewerProps> = ({ ge
       )}
 
       {!isLoading && !error && historyEntries.length === 0 && (
-        <p className="text-center text-muted-foreground py-10">No hay historial de conteos guardado.</p>
+        <p className="text-center text-muted-foreground py-10">
+            {currentUserId ? `No hay historial de conteos para el usuario ${currentUserId}.` : "No hay historial de conteos guardado."}
+        </p>
       )}
 
       {!isLoading && !error && historyEntries.length > 0 && (
@@ -188,18 +197,21 @@ export const CountingHistoryViewer: React.FC<CountingHistoryViewerProps> = ({ ge
             {historyEntries.map((entry) => (
               <AccordionItem value={entry.id} key={entry.id}>
                 <AccordionTrigger className="px-4 py-3 text-left hover:bg-muted/50 dark:hover:bg-gray-700 transition-colors">
-                  <div className="flex items-center gap-3">
-                      <CalendarIcon className="h-5 w-5 text-muted-foreground" />
-                      <div>
+                  <div className="flex flex-col sm:flex-row sm:items-center gap-1 sm:gap-3 w-full">
+                      <div className="flex items-center gap-2">
+                        <CalendarIcon className="h-5 w-5 text-muted-foreground" />
                         <span className="font-medium text-foreground">
-                            {format(new Date(entry.timestamp), 'PPP p', { locale: es })} {/* Format date & time */}
+                            {format(new Date(entry.timestamp), 'PPP p', { locale: es })}
                         </span>
-                        <span className="text-sm text-muted-foreground ml-2">
-                          ({getWarehouseName(entry.warehouseId)})
-                        </span>
-                         <span className="text-xs text-muted-foreground ml-2 block sm:inline">
-                            {entry.products.length} productos
-                        </span>
+                      </div>
+                      <div className="flex flex-col sm:flex-row sm:items-center sm:gap-2 text-xs sm:text-sm text-muted-foreground ml-7 sm:ml-0">
+                        <span>({getWarehouseName(entry.warehouseId)})</span>
+                        <span>{entry.products.length} productos</span>
+                        {entry.userId && (
+                            <span className="flex items-center gap-1">
+                                <User className="h-3 w-3"/> {entry.userId}
+                            </span>
+                        )}
                       </div>
                   </div>
                 </AccordionTrigger>

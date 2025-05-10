@@ -22,7 +22,7 @@ import {
 import { WarehouseManagement } from "@/components/warehouse-management";
 import { format, isValid } from 'date-fns';
 import { es } from 'date-fns/locale'; // Import Spanish locale for date formatting
-import { Minus, Plus, Trash, RefreshCw, Warehouse as WarehouseIcon, AlertCircle, Search, Check, AppWindow, Database, Boxes, Loader2, History as HistoryIcon, CalendarIcon, Save, Edit, Download, BarChart, Settings, AlertTriangle, Camera, Barcode } from "lucide-react";
+import { Minus, Plus, Trash, RefreshCw, Warehouse as WarehouseIcon, Search, Check, AppWindow, Database, Boxes, Loader2, History as HistoryIcon, CalendarIcon, Save, Edit, Download, BarChart, Settings, AlertTriangle, Camera, XCircle } from "lucide-react";
 import React, { useCallback, useEffect, useRef, useState, useMemo } from "react";
 import { playBeep } from '@/lib/helpers';
 import { BarcodeEntry } from '@/components/barcode-entry';
@@ -44,7 +44,7 @@ import {
 import { CountingHistoryViewer } from '@/components/counting-history-viewer';
 import { DiscrepancyReportViewer } from '@/components/discrepancy-report-viewer';
 import Papa from 'papaparse';
-import { BarcodeScannerCamera } from '@/components/barcode-scanner-camera';
+import BarcodeScannerCamera from '@/components/barcode-scanner-camera';
 
 
 // --- Constants ---
@@ -97,6 +97,7 @@ export default function Home() {
   const [initialStockForEdit, setInitialStockForEdit] = useState<number>(0);
   const [isClearAllDataConfirmOpen, setIsClearAllDataConfirmOpen] = useState(false);
   const [isCameraScannerActive, setIsCameraScannerActive] = useState(false);
+  const [justScannedBarcode, setJustScannedBarcode] = useState<string | null>(null);
 
 
   // --- Effects ---
@@ -129,7 +130,7 @@ export default function Home() {
             }));
         setCountingList(loadedList.filter(item => item.warehouseId === currentWarehouseId));
     } else {
-        if (savedList === null || (Array.isArray(savedList) && savedList.length > 0)) { // Only warn if data was present but invalid
+        if (savedList === null || (Array.isArray(savedList) && savedList.length > 0)) { 
              console.warn(`Invalid data structure in localStorage for warehouse ${currentWarehouseId}. Clearing.`);
         }
         localStorage.removeItem(savedListKey);
@@ -213,12 +214,10 @@ export default function Home() {
      }, 800);
 
     let descriptionForToast = '';
-    let productWasInList = false;
 
     const existingProductIndex = countingList.findIndex((p) => p.barcode === trimmedBarcode && p.warehouseId === currentWarehouseId);
 
     if (existingProductIndex !== -1) {
-        productWasInList = true;
         const productToUpdate = countingList[existingProductIndex];
         descriptionForToast = productToUpdate.description;
         const newCount = (productToUpdate.count ?? 0) + 1;
@@ -239,7 +238,7 @@ export default function Home() {
                 count: newCount,
                 lastUpdated: new Date().toISOString(),
             };
-            setCountingList(currentList => [updatedProductData, ...currentList.filter((_, index) => index !== existingProductIndex)]);
+            setCountingList(currentList => [updatedProductData, ...currentList.filter((item, index) => item.barcode !== updatedProductData.barcode || index === existingProductIndex)]);
             playBeep(880, 100);
             if (!showDiscrepancyToastIfNeeded(updatedProductData, newCount)) {
                 toast({ title: "Cantidad aumentada", description: `${descriptionForToast} cantidad aumentada a ${newCount}.` });
@@ -298,7 +297,7 @@ export default function Home() {
     setBarcode("");
     requestAnimationFrame(() => barcodeInputRef.current?.focus());
     return () => clearTimeout(clearLastScannedTimeout);
-  }, [barcode, currentWarehouseId, getWarehouseName, lastScannedBarcode, toast, countingList, showDiscrepancyToastIfNeeded]);
+  }, [barcode, currentWarehouseId, getWarehouseName, lastScannedBarcode, toast, countingList, showDiscrepancyToastIfNeeded, setBarcode]);
 
 
 const modifyProductValue = useCallback(async (barcodeToUpdate: string, type: 'count' | 'stock', change: number) => {
@@ -316,13 +315,16 @@ const modifyProductValue = useCallback(async (barcodeToUpdate: string, type: 'co
         }
 
         const product = prevList[productIndex];
-        productForToast = product; // Store for toast
+        productForToast = product; 
         productDescription = product.description;
         const originalValue = type === 'count' ? product.count ?? 0 : product.stock ?? 0;
         finalValue = Math.max(0, originalValue + change);
         const productStock = product.stock ?? 0;
 
+        // Confirmation logic for INCREASING count ABOVE stock for the FIRST time.
+        // If change is negative (decrementing), no confirmation is needed even if it creates a discrepancy.
         needsConfirmation = type === 'count' && change > 0 && finalValue > productStock && originalValue <= productStock && productStock > 0;
+
 
         if (needsConfirmation) {
             setConfirmQuantityProductBarcode(product.barcode);
@@ -336,7 +338,7 @@ const modifyProductValue = useCallback(async (barcodeToUpdate: string, type: 'co
                  [type]: finalValue,
                  lastUpdated: new Date().toISOString()
             };
-            productForToast = updatedProduct; // Update for toast
+            productForToast = updatedProduct; 
             const listWithoutProduct = prevList.filter((_, i) => i !== productIndex);
             return [updatedProduct, ...listWithoutProduct];
         }
@@ -413,6 +415,8 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
         finalValue = Math.max(0, calculatedValue);
         const productStock = product.stock ?? 0;
 
+        // Confirmation logic for INCREASING count ABOVE stock for the FIRST time,
+        // or when setting a value that does the same.
         needsConfirmation = type === 'count' && finalValue > productStock && originalValue <= productStock && productStock > 0;
 
         if (needsConfirmation) {
@@ -530,7 +534,7 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
      });
 
      requestAnimationFrame(() => {
-        if (productAfterConfirm) { // productAfterConfirm is now populated from setCountingList's new state
+        if (productAfterConfirm) { 
             if (!showDiscrepancyToastIfNeeded(productAfterConfirm)) {
                 toast({
                     title: "Cantidad Modificada",
@@ -967,21 +971,29 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
   }, [toast]);
 
 
- const handleCameraScanSuccess = (scannedBarcode: string) => {
+  const handleCameraScanSuccess = useCallback((scannedBarcode: string) => {
     if (scannedBarcode) {
-      setBarcode(scannedBarcode); // Set the barcode state
-      handleAddProduct(scannedBarcode); // Directly call handleAddProduct
-      setIsCameraScannerActive(false); // Close camera scanner after successful scan
+      setJustScannedBarcode(scannedBarcode);
+      setIsCameraScannerActive(false); 
     }
-  };
+  }, [setIsCameraScannerActive, setJustScannedBarcode]);
 
-  const handleCameraScanError = (error: Error) => {
+  useEffect(() => {
+    if (justScannedBarcode && !isCameraScannerActive) { 
+      handleAddProduct(justScannedBarcode);
+      setJustScannedBarcode(null); 
+    }
+  }, [justScannedBarcode, isCameraScannerActive, handleAddProduct, setJustScannedBarcode]);
+
+
+  const handleCameraScanError = useCallback((error: Error) => {
     toast({
       variant: "destructive",
       title: "Error de Escáner",
       description: error.message || "No se pudo escanear el código de barras.",
     });
-  };
+    setIsCameraScannerActive(false); // Close scanner on error as well
+  },[toast, setIsCameraScannerActive]);
 
 
   // --- Main Component Render ---
@@ -1188,15 +1200,17 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
 
                if (confirmQuantityAction === 'set' || confirmQuantityAction === 'increment' || confirmQuantityAction === 'decrement') {
                    const isOverStock = stock > 0 && confirmQuantityNewValue > stock;
-                   const isUnderStock = stock > 0 && confirmQuantityNewValue < stock && confirmQuantityNewValue >= 0; // Check also for positive new value
+                   const isUnderStock = stock > 0 && confirmQuantityNewValue < stock && confirmQuantityNewValue >= 0; 
 
                    if (isOverStock) {
                        return `La cantidad contada (${confirmQuantityNewValue}) ahora SUPERA el stock del sistema (${stock}) para "${description}". ¿Confirmar?`;
                    } else if (isUnderStock) {
-                       return `La cantidad contada (${confirmQuantityNewValue}) ahora es MENOR al stock del sistema (${stock}) para "${description}". ¿Confirmar?`;
+                        // This message is for discrepancy, not simple confirmation.
+                        // It should only appear if the value is changing to *create* a discrepancy.
+                        // Let's ensure it's not shown if the quantity is simply being set to a value below stock.
                    }
                }
-               return `Está a punto de modificar la cantidad contada para "${description}". ¿Continuar?`;
+               return `Está a punto de modificar la cantidad contada para "${description}" a ${confirmQuantityNewValue}. ¿Continuar?`;
              })()
           }
           onConfirm={handleConfirmQuantityChange}
@@ -1288,6 +1302,3 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
     </div>
   );
 }
-
-
-    

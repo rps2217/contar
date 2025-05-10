@@ -44,7 +44,7 @@ import {
 } from '@/lib/database';
 import { CountingHistoryViewer } from '@/components/counting-history-viewer';
 import { DiscrepancyReportViewer } from '@/components/discrepancy-report-viewer';
-import { ExpirationControl } from '@/components/expiration-control'; // Import ExpirationControl
+import { ExpirationControl } from '@/components/expiration-control'; 
 import Papa from 'papaparse';
 import BarcodeScannerCamera from '@/components/barcode-scanner-camera';
 
@@ -83,10 +83,7 @@ export default function Home() {
     LOCAL_STORAGE_SIDEBAR_COLLAPSED_KEY,
     false
   );
-  const [currentUserId, setCurrentUserId] = useLocalStorage<string | null>(
-    LOCAL_STORAGE_USER_ID_KEY,
-    null 
-  );
+  const [currentUserId, setCurrentUserId] = useState<string | null>(null);
   const [showUserIdInput, setShowUserIdInput] = useState(false);
 
 
@@ -118,15 +115,28 @@ export default function Home() {
 
   useEffect(() => {
     isMountedRef.current = true;
-    if (currentUserId === null) {
+    // Initialize currentUserId from localStorage or generate a new one
+    const storedUserId = getLocalStorageItem<string | null>(LOCAL_STORAGE_USER_ID_KEY, null);
+    if (storedUserId) {
+        setCurrentUserId(storedUserId);
+    } else {
         const newUserId = `user_${Math.random().toString(36).substring(2, 11)}`;
+        setLocalStorageItem(LOCAL_STORAGE_USER_ID_KEY, newUserId);
         setCurrentUserId(newUserId);
         toast({title: "ID de Usuario", description: `ID de usuario generado: ${newUserId}. Puedes cambiarlo en la barra lateral.`});
     }
     return () => {
       isMountedRef.current = false;
     };
-  }, [currentUserId, setCurrentUserId, toast]);
+  }, [toast]); // Only run once on mount
+
+  // Effect to save currentUserId to localStorage when it changes
+  useEffect(() => {
+      if (isMountedRef.current && currentUserId !== null) { // Avoid saving initial null
+          setLocalStorageItem(LOCAL_STORAGE_USER_ID_KEY, currentUserId);
+      }
+  }, [currentUserId]);
+
 
   useEffect(() => {
     if (!currentWarehouseId || !isMountedRef.current) {
@@ -1047,7 +1057,7 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
     { name: 'Contador', icon: AppWindow, label: `Contador (${getWarehouseName(currentWarehouseId)})`},
     { name: 'Base de Datos', icon: Database, label: 'Base de Datos' },
     { name: 'Almacenes', icon: Boxes, label: 'Almacenes' },
-    { name: 'Control de Vencimiento', icon: ShieldAlert, label: 'Control de Vencimiento' }, // New section
+    { name: 'Control de Vencimiento', icon: ShieldAlert, label: 'Control de Vencimiento' }, 
     { name: 'Historial', icon: HistoryIcon, label: 'Historial' },
     { name: 'Informes', icon: BarChart, label: 'Informes' },
   ], [getWarehouseName, currentWarehouseId]);
@@ -1061,7 +1071,10 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
         "flex-shrink-0 border-r bg-card p-4 flex flex-col space-y-4 transition-all duration-300 ease-in-out",
         isSidebarCollapsed ? "w-20" : "w-60"
       )}>
-        <div className={cn("flex items-center mb-2", isSidebarCollapsed ? "justify-center" : "justify-between")}>
+        <div className={cn(
+          "flex items-center",
+          isSidebarCollapsed ? "justify-center" : "justify-between mb-2" 
+        )}>
           {!isSidebarCollapsed && <h2 className="text-xl font-semibold px-2 truncate">StockCounter Pro</h2>}
           <Button 
             variant="ghost" 
@@ -1074,25 +1087,34 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
           </Button>
         </div>
         
-        <nav className="flex-grow space-y-1">
+        <nav className={cn(
+          "flex-grow space-y-1",
+          isSidebarCollapsed ? "hidden md:block" : "block"
+        )}>
           {sectionItems.map((item) => (
             <Button
               key={item.name}
               variant={activeSection === item.name ? 'secondary' : 'ghost'}
               className={cn(
                 "w-full flex items-center gap-2 py-2.5 h-auto text-sm",
-                isSidebarCollapsed ? "justify-center px-0" : "justify-start"
+                 isSidebarCollapsed ? "md:justify-center md:px-0" : "justify-start"
               )}
               onClick={() => handleSectionChange(item.name)}
               title={item.label}
             >
-              <item.icon className={cn("h-5 w-5 flex-shrink-0", !isSidebarCollapsed && "mr-1")} />
+              <item.icon className={cn("h-5 w-5 flex-shrink-0", 
+                !isSidebarCollapsed && "mr-1",
+                isSidebarCollapsed && "md:mr-0" 
+              )} />
               {!isSidebarCollapsed && <span className="truncate">{item.label}</span>}
             </Button>
           ))}
         </nav>
         
-        <div className={cn("mt-auto pt-4 border-t border-border", isSidebarCollapsed && "hidden")}>
+        <div className={cn(
+            "mt-auto pt-4 border-t border-border", 
+            isSidebarCollapsed && "hidden"
+        )}>
            <div className="space-y-2 mb-4">
                 <Label htmlFor="user-id-display" className="px-2 text-sm font-medium text-muted-foreground">
                     Usuario Actual:

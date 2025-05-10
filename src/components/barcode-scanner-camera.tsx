@@ -2,7 +2,7 @@
 "use client";
 
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { BrowserMultiFormatReader, NotFoundException, ChecksumException, FormatException, DecodeHintType, BarcodeFormat } from '@zxing/library';
+import { BrowserMultiFormatReader, NotFoundException, ChecksumException, FormatException, DecodeHintType, BarcodeFormat, Exception } from '@zxing/library';
 import { XCircle, Loader2, AlertTriangle, RefreshCw } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
@@ -26,13 +26,16 @@ const BarcodeScannerCamera: React.FC<BarcodeScannerCameraProps> = ({
   const [isLoading, setIsLoading] = useState(true);
   const [hasPermission, setHasPermission] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
-  const isComponentMountedRef = useRef(true); // Tracks if the component is mounted
+  const isComponentMountedRef = useRef(true); 
 
   const stopScannerAndStream = useCallback(() => {
     if (readerRef.current) {
-      readerRef.current.reset();
-      readerRef.current.stopContinuousDecode(); // Ensure continuous decoding is stopped
-      console.log("ZXing Reader reset and stopped.");
+      try {
+        readerRef.current.reset(); 
+        console.log("ZXing Reader reset.");
+      } catch (e) {
+        console.error("Error resetting ZXing Reader:", e);
+      }
     }
     if (videoRef.current && videoRef.current.srcObject) {
       const stream = videoRef.current.srcObject as MediaStream;
@@ -54,46 +57,48 @@ const BarcodeScannerCamera: React.FC<BarcodeScannerCameraProps> = ({
         console.error("Video element ref not available during initialization attempt.");
         if (isComponentMountedRef.current) {
             setIsLoading(false);
-            setHasPermission(false);
-            setErrorMessage("Error interno: Referencia del elemento de video no disponible.");
+            setHasPermission(false); // Explicitly set no permission if ref is missing
+            const refError = new Error("Error interno: Referencia del elemento de video no disponible.");
+            setErrorMessage(refError.message);
+            onScanError(refError); 
         }
         return;
       }
 
       if (isComponentMountedRef.current) {
         setIsLoading(true);
-        setHasPermission(false);
+        setHasPermission(false); // Reset permission status on each attempt
         setErrorMessage(null);
       }
 
-      // Initialize the code reader
       if (!readerRef.current) {
         const hints = new Map();
         const formats = [
             BarcodeFormat.EAN_13, BarcodeFormat.EAN_8, BarcodeFormat.CODE_128, 
-            BarcodeFormat.QR_CODE, BarcodeFormat.DATA_MATRIX, BarcodeFormat.UPC_A, BarcodeFormat.UPC_E
+            BarcodeFormat.QR_CODE, BarcodeFormat.DATA_MATRIX, BarcodeFormat.UPC_A, BarcodeFormat.UPC_E,
+            BarcodeFormat.CODE_39, BarcodeFormat.CODE_93, BarcodeFormat.ITF, BarcodeFormat.CODABAR,
         ];
         hints.set(DecodeHintType.POSSIBLE_FORMATS, formats);
         hints.set(DecodeHintType.TRY_HARDER, true);
-        readerRef.current = new BrowserMultiFormatReader(hints);
+        readerRef.current = new BrowserMultiFormatReader(hints, 500); // 500ms scan interval
         console.log("ZXing Reader initialized.");
       }
 
       try {
         const constraints: MediaStreamConstraints = {
           video: {
-            facingMode: 'environment', // Prefer rear camera
-            width: { ideal: 640 },    // Request a reasonable resolution
+            facingMode: 'environment', 
+            width: { ideal: 640 },    
             height: { ideal: 480 },
           }
         };
         localStream = await navigator.mediaDevices.getUserMedia(constraints);
 
-        if (!isComponentMountedRef.current) { // Check again after await
+        if (!isComponentMountedRef.current) { 
           if (localStream) localStream.getTracks().forEach(track => track.stop());
           return;
         }
-
+        
         setHasPermission(true);
         videoRef.current.srcObject = localStream;
 
@@ -103,32 +108,54 @@ const BarcodeScannerCamera: React.FC<BarcodeScannerCameraProps> = ({
             await videoRef.current.play();
             console.log("Video stream playing, attempting to decode.");
 
-            if (readerRef.current && videoRef.current && isComponentMountedRef.current) {
-               // Ensure to use decodeFromVideoElement for continuous scanning from a video element
+            if (readerRef.current && videoRef.current && videoRef.current.srcObject && (videoRef.current.srcObject as MediaStream).active && isComponentMountedRef.current) {
               readerRef.current.decodeFromVideoElement(videoRef.current, (result, error) => {
-                if (!isComponentMountedRef.current) return; // Check mount status within callback
+                if (!isComponentMountedRef.current) return; 
 
                 if (result) {
                   console.log("Barcode scanned:", result.getText());
                   onScanSuccess(result.getText());
                 } else if (error) {
-                  // These errors are common during scanning and don't always mean a problem.
-                  if (!(error instanceof NotFoundException || error instanceof ChecksumException || error instanceof FormatException)) {
-                    // console.warn("Scan error:", error.message); // Log less critical scan errors
+                  if (isComponentMountedRef.current) {
+                    if (error.name === 'SourceDataEndedException' || (error.message && error.message.toLowerCase().includes("stream has ended"))) {
+                      console.warn("ZXing: Video stream ended during scan attempt. This might be normal if closing.");
+                    } else if (!(error instanceof NotFoundException || error instanceof ChecksumException || error instanceof FormatException)) {
+                      console.error("ZXing scan error:", error);
+                    }
                   }
                 }
               }).catch(decodeErr => {
-                 if (isComponentMountedRef.current) {
-                    console.error("Error during decodeFromVideoElement:", decodeErr);
-                    // setErrorMessage(`Error de decodificación: ${decodeErr.message}`); // Potentially too noisy
+                 if (!isComponentMountedRef.current) {
+                    console.log("decodeFromVideoElement error caught during component unmount (ignored):", (decodeErr as Error).message);
+                    return; 
                  }
+                 console.error("Error from decodeFromVideoElement promise (component mounted):", decodeErr);
+                 
+                 let specificErrorMessage = `Error de decodificación: ${(decodeErr as Error).message}`;
+                 if ((decodeErr as Exception).name === 'SourceDataEndedException' || ((decodeErr as Error).message && (decodeErr as Error).message.toLowerCase().includes("stream has ended"))){
+                     specificErrorMessage = "El flujo de video terminó inesperadamente. La cámara podría haberse desconectado o cerrado. Intenta de nuevo.";
+                 }
+                 
+                 setErrorMessage(specificErrorMessage);
+                 if (isLoading) setIsLoading(false);
+                 onScanError(new Error(specificErrorMessage)); // Propagate error to parent
               });
+            } else if (isComponentMountedRef.current) {
+                console.warn("Video stream not active or component unmounted before decoding could start.");
+                if (isLoading) setIsLoading(false);
+                if (videoRef.current && videoRef.current.srcObject && !(videoRef.current.srcObject as MediaStream).active) {
+                   const streamNotActiveError = new Error("El flujo de video de la cámara no está activo.");
+                   setErrorMessage(streamNotActiveError.message);
+                   onScanError(streamNotActiveError);
+                }
             }
           } catch (playError: any) {
             if (isComponentMountedRef.current) {
               console.error("Error playing video:", playError);
               setHasPermission(false);
-              setErrorMessage(`Error al reproducir video: ${playError.message}. Asegúrese de que los permisos de cámara están concedidos.`);
+              const videoPlayError = new Error(`Error al reproducir video: ${playError.message}. Asegúrese de que los permisos de cámara están concedidos.`);
+              setErrorMessage(videoPlayError.message);
+              onScanError(videoPlayError);
             }
           } finally {
              if (isComponentMountedRef.current) {
@@ -136,7 +163,6 @@ const BarcodeScannerCamera: React.FC<BarcodeScannerCameraProps> = ({
              }
           }
         };
-        // Handle cases where metadata might already be loaded
          if (videoRef.current.readyState >= videoRef.current.HAVE_METADATA) {
             const event = new Event('loadedmetadata');
             videoRef.current.dispatchEvent(event);
@@ -146,15 +172,16 @@ const BarcodeScannerCamera: React.FC<BarcodeScannerCameraProps> = ({
         if (isComponentMountedRef.current) {
           console.error("Error initializing camera:", err);
           setHasPermission(false);
+          let userFriendlyMessage = `Error al acceder a la cámara: ${err.name} - ${err.message}`;
            if (err.name === "NotAllowedError" || err.name === "PermissionDeniedError") {
-            setErrorMessage("Permiso de cámara denegado. Por favor, habilítalo en la configuración de tu navegador y recarga la página.");
+            userFriendlyMessage = "Permiso de cámara denegado. Por favor, habilítalo en la configuración de tu navegador y recarga la página.";
           } else if (err.name === "NotFoundError" || err.name === "DevicesNotFoundError") {
-            setErrorMessage("No se encontró una cámara compatible. Asegúrate de que esté conectada y no esté en uso por otra aplicación.");
+            userFriendlyMessage = "No se encontró una cámara compatible. Asegúrate de que esté conectada y no esté en uso por otra aplicación.";
           } else if (err.name === "NotReadableError" || err.name === "TrackStartError") {
-             setErrorMessage("La cámara está en uso por otra aplicación, no es accesible o hay un problema de hardware.");
-          } else {
-            setErrorMessage(`Error al acceder a la cámara: ${err.name} - ${err.message}`);
+             userFriendlyMessage = "La cámara está en uso por otra aplicación, no es accesible o hay un problema de hardware.";
           }
+          setErrorMessage(userFriendlyMessage);
+          onScanError(new Error(userFriendlyMessage));
           setIsLoading(false);
         }
       }
@@ -163,31 +190,27 @@ const BarcodeScannerCamera: React.FC<BarcodeScannerCameraProps> = ({
     initializeAndStartScanner();
 
     return () => {
-      isComponentMountedRef.current = false; // Mark as unmounted
+      isComponentMountedRef.current = false; 
+      console.log("BarcodeScannerCamera unmounting, stopping scanner and stream...");
       stopScannerAndStream();
       if (videoRef.current) {
-        videoRef.current.onloadedmetadata = null; // Clean up event handler
+        videoRef.current.onloadedmetadata = null; 
       }
       console.log("BarcodeScannerCamera unmounted and cleaned up.");
     };
-  }, [onScanSuccess, onScanError, stopScannerAndStream]); // onClose removed as cleanup is handled by stopScannerAndStream
+  }, [onScanSuccess, onScanError, stopScannerAndStream]); 
 
   const handleRetry = () => {
      if (isComponentMountedRef.current) {
         setIsLoading(true);
         setHasPermission(false);
         setErrorMessage(null);
-        // Re-initialize by forcing useEffect to re-run could be one way,
-        // but direct call to initialize is better if useEffect deps are stable.
-        // For now, just re-setting state should trigger re-attempt if deps are right
-        // Or, a more explicit re-init function could be called.
-        // Let's try re-triggering the effect by changing a dummy state or calling init directly if deps allow.
-        // This effect will re-run if `onScanSuccess` or `onScanError` identity changes, which they shouldn't often.
-        // For simplicity, we'll rely on the parent component re-mounting or the initial effect for now.
-        // A better solution might involve a dedicated re-init function.
-        // For now, inform the user to retry manually or re-open.
-         onScanError(new Error("Retry requested. Closing and reopening scanner might be necessary.")); // Notify parent
-         onClose(); // Close the scanner, user can reopen
+        // The useEffect will re-run due to state changes or if dependencies change.
+        // Forcing a re-initialization can be done by calling initializeAndStartScanner again,
+        // but typically it's better to let useEffect handle it if possible.
+        // Re-mounting the component (controlled by parent) is the most robust way to retry.
+        onScanError(new Error("Reintentando conexión de cámara...")); 
+        onClose(); // Close the scanner, user can reopen to trigger a fresh initialization
      }
   };
 
@@ -201,20 +224,20 @@ const BarcodeScannerCamera: React.FC<BarcodeScannerCameraProps> = ({
                 <XCircle className="h-6 w-6" />
             </Button>
         </div>
-
-        {/* Video Preview Area */}
-        <div className="aspect-[4/3] w-full bg-gray-900 rounded-md overflow-hidden relative mb-3">
+        
+        <div className={cn("aspect-video w-full bg-gray-900 rounded-md overflow-hidden relative mb-3", { 'hidden': isLoading && !hasPermission && !errorMessage })}>
             <video
             ref={videoRef}
-            className="w-full h-full object-cover" // Ensure video fills the container
-            playsInline // Essential for iOS
-            muted // Autoplay often requires muted
-            autoPlay // Try to autoplay
+            className="w-full h-full object-cover" 
+            playsInline 
+            muted 
+            autoPlay 
             />
-            {/* Focusing rectangle (optional visual aid) */}
-            <div className="absolute inset-0 flex justify-center items-center pointer-events-none">
-                <div className="w-3/4 h-1/2 border-2 border-dashed border-green-500 opacity-75 rounded-md"></div>
-            </div>
+            {hasPermission && !isLoading && !errorMessage && (
+              <div className="absolute inset-0 flex justify-center items-center pointer-events-none">
+                  <div className="w-3/4 h-1/2 border-2 border-dashed border-green-500 opacity-75 rounded-md"></div>
+              </div>
+            )}
         </div>
 
 
@@ -225,18 +248,18 @@ const BarcodeScannerCamera: React.FC<BarcodeScannerCameraProps> = ({
             </div>
         )}
 
-        {!isLoading && !hasPermission && (
+        {!isLoading && !hasPermission && errorMessage && (
              <Alert variant="destructive" className="mt-2">
                  <AlertTriangle className="h-5 w-5" />
                  <AlertTitle>Problema con la Cámara</AlertTitle>
                  <AlertDescription>
-                    {errorMessage || "No se pudo acceder a la cámara. Verifica los permisos y que no esté en uso."}
+                    {errorMessage}
                     <Button onClick={handleRetry} variant="link" className="p-0 h-auto mt-1 text-destructive-foreground">Intentar de nuevo</Button>
                  </AlertDescription>
              </Alert>
         )}
         
-        {!isLoading && hasPermission && errorMessage && (
+        {!isLoading && hasPermission && errorMessage && ( // Show error even if permission was granted but something else failed
              <Alert variant="destructive" className="mt-2">
                  <AlertTriangle className="h-5 w-5" />
                  <AlertTitle>Error del Escáner</AlertTitle>
@@ -248,7 +271,7 @@ const BarcodeScannerCamera: React.FC<BarcodeScannerCameraProps> = ({
         )}
         
         <p className="text-xs text-muted-foreground text-center mt-2">
-            Apunta la cámara al código de barras.
+            Apunta la cámara al código de barras. El escaneo es continuo.
         </p>
       </div>
     </div>

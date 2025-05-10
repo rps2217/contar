@@ -23,7 +23,7 @@ import {
 import { WarehouseManagement } from "@/components/warehouse-management";
 import { format, isValid } from 'date-fns';
 import { es } from 'date-fns/locale'; // Import Spanish locale for date formatting
-import { Minus, Plus, Trash, RefreshCw, Warehouse as WarehouseIcon, Search, Check, AppWindow, Database, Boxes, Loader2, History as HistoryIcon, CalendarIcon, Save, Edit, Download, BarChart, Settings, AlertTriangle, Camera, XCircle } from "lucide-react";
+import { Minus, Plus, Trash, RefreshCw, Warehouse as WarehouseIcon, Search, Check, AppWindow, Database, Boxes, Loader2, History as HistoryIcon, CalendarIcon, Save, Edit, Download, BarChart, Settings, AlertTriangle, Camera, XCircle, PanelLeftClose, PanelRightOpen } from "lucide-react";
 import React, { useCallback, useEffect, useRef, useState, useMemo } from "react";
 import { playBeep } from '@/lib/helpers';
 import { BarcodeEntry } from '@/components/barcode-entry';
@@ -45,7 +45,7 @@ import {
 import { CountingHistoryViewer } from '@/components/counting-history-viewer';
 import { DiscrepancyReportViewer } from '@/components/discrepancy-report-viewer';
 import Papa from 'papaparse';
-import BarcodeScannerCamera from '@/components/barcode-scanner-camera'; 
+import BarcodeScannerCamera from '@/components/barcode-scanner-camera';
 
 
 // --- Constants ---
@@ -53,6 +53,7 @@ const LOCAL_STORAGE_COUNTING_LIST_KEY_PREFIX = 'stockCounterPro_countingList_';
 const LOCAL_STORAGE_WAREHOUSE_KEY = 'stockCounterPro_currentWarehouse';
 const LOCAL_STORAGE_WAREHOUSES_KEY = 'stockCounterPro_warehouses';
 const LOCAL_STORAGE_ACTIVE_SECTION_KEY = 'stockCounterPro_activeSection';
+const LOCAL_STORAGE_SIDEBAR_COLLAPSED_KEY = 'stockCounterPro_sidebarCollapsed';
 const LOCAL_STORAGE_SAVE_DEBOUNCE_MS = 500;
 
 // --- Main Component ---
@@ -75,6 +76,10 @@ export default function Home() {
   const [activeSection, setActiveSection] = useLocalStorage<string>(
       LOCAL_STORAGE_ACTIVE_SECTION_KEY,
       'Contador'
+  );
+  const [isSidebarCollapsed, setIsSidebarCollapsed] = useLocalStorage<boolean>(
+    LOCAL_STORAGE_SIDEBAR_COLLAPSED_KEY,
+    false
   );
 
   // --- Component State ---
@@ -1011,36 +1016,55 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
   },[toast, setIsCameraScannerActive]);
 
 
-  const sectionItems = [
-    { name: 'Contador', icon: AppWindow, label: `Contador (${getWarehouseName(currentWarehouseId)})` },
+  const sectionItems = useMemo(() => [
+    { name: 'Contador', icon: AppWindow, label: `Contador (${getWarehouseName(currentWarehouseId)})`},
     { name: 'Base de Datos', icon: Database, label: 'Base de Datos' },
     { name: 'Almacenes', icon: Boxes, label: 'Almacenes' },
     { name: 'Historial', icon: HistoryIcon, label: 'Historial' },
     { name: 'Informes', icon: BarChart, label: 'Informes' },
-  ];
+  ], [getWarehouseName, currentWarehouseId]);
 
 
   // --- Main Component Render ---
   return (
     <div className="flex h-screen bg-background text-foreground">
-       {/* Sidebar */}
-      <aside className="w-60 flex-shrink-0 border-r bg-card p-4 flex flex-col space-y-4">
-        <h2 className="text-xl font-semibold px-2 text-center">StockCounter Pro</h2>
+      {/* Sidebar */}
+      <aside className={cn(
+        "flex-shrink-0 border-r bg-card p-4 flex flex-col space-y-4 transition-all duration-300 ease-in-out",
+        isSidebarCollapsed ? "w-20" : "w-60"
+      )}>
+        <div className={cn("flex items-center mb-2", isSidebarCollapsed ? "justify-center" : "justify-between")}>
+          {!isSidebarCollapsed && <h2 className="text-xl font-semibold px-2 truncate">StockCounter Pro</h2>}
+          <Button 
+            variant="ghost" 
+            size="icon" 
+            onClick={() => setIsSidebarCollapsed(!isSidebarCollapsed)}
+            aria-label={isSidebarCollapsed ? "Expandir barra lateral" : "Colapsar barra lateral"}
+            title={isSidebarCollapsed ? "Expandir barra lateral" : "Colapsar barra lateral"}
+          >
+            {isSidebarCollapsed ? <PanelRightOpen className="h-5 w-5" /> : <PanelLeftClose className="h-5 w-5" />}
+          </Button>
+        </div>
+        
         <nav className="flex-grow space-y-1">
           {sectionItems.map((item) => (
             <Button
               key={item.name}
               variant={activeSection === item.name ? 'secondary' : 'ghost'}
-              className="w-full justify-start"
+              className={cn(
+                "w-full flex items-center gap-2 py-2.5 h-auto text-sm",
+                isSidebarCollapsed ? "justify-center px-0" : "justify-start"
+              )}
               onClick={() => handleSectionChange(item.name)}
+              title={item.label}
             >
-              <item.icon className="mr-2 h-4 w-4" />
-              {item.label}
+              <item.icon className={cn("h-5 w-5 flex-shrink-0", !isSidebarCollapsed && "mr-1")} />
+              {!isSidebarCollapsed && <span className="truncate">{item.label}</span>}
             </Button>
           ))}
         </nav>
-        {/* Warehouse Selector */}
-        <div className="mt-auto pt-4 border-t border-border">
+        
+        <div className={cn("mt-auto pt-4 border-t border-border", isSidebarCollapsed && "hidden")}>
           {warehouses.length > 0 && (
             <div className="space-y-2">
               <Label htmlFor="warehouse-select-sidebar" className="px-2 text-sm font-medium text-muted-foreground">Almacén Activo:</Label>
@@ -1081,7 +1105,6 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
                      onScanSuccess={handleCameraScanSuccess}
                      onScanError={handleCameraScanError}
                      onClose={() => setIsCameraScannerActive(false)}
-                     className="z-50" 
                    />
                  )}
                  <div className="relative mb-4">

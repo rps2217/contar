@@ -1,4 +1,3 @@
-
 // src/app/page.tsx
 "use client";
 
@@ -77,7 +76,7 @@ export default function Home() {
   );
   const [activeSection, setActiveSection] = useLocalStorage<string>(
       LOCAL_STORAGE_ACTIVE_SECTION_KEY,
-      'Contador'
+      'Contador' // Default section
   );
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useLocalStorage<boolean>(
     LOCAL_STORAGE_SIDEBAR_COLLAPSED_KEY,
@@ -87,7 +86,7 @@ export default function Home() {
   // Initialize with null to prevent hydration mismatch, generate client-side in useEffect
   const [currentUserId, setCurrentUserId] = useLocalStorage<string | null>(
     LOCAL_STORAGE_USER_ID_KEY,
-    null
+    null // Default to null, generate in useEffect
   );
   const [showUserIdInput, setShowUserIdInput] = useState(false);
 
@@ -923,7 +922,7 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
 
   const handleSectionChange = useCallback((newSection: string) => {
     setActiveSection(newSection);
-    if (newSection === 'Contador') {
+    if (newSection === 'Contador') { // Match exact name from sectionItems
        requestAnimationFrame(() => barcodeInputRef.current?.focus());
     }
   }, [setActiveSection]);
@@ -1371,5 +1370,6 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
     </div>
   );
 }
+
 
 

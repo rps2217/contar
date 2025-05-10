@@ -11,6 +11,7 @@ import {
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import { ProductDatabase } from "@/components/product-database";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import {
@@ -44,7 +45,7 @@ import {
 import { CountingHistoryViewer } from '@/components/counting-history-viewer';
 import { DiscrepancyReportViewer } from '@/components/discrepancy-report-viewer';
 import Papa from 'papaparse';
-import BarcodeScannerCamera from '@/components/barcode-scanner-camera'; // Corrected import if it's default
+import BarcodeScannerCamera from '@/components/barcode-scanner-camera'; 
 
 
 // --- Constants ---
@@ -240,7 +241,7 @@ export default function Home() {
                 lastUpdated: new Date().toISOString(),
             };
              setCountingList(currentList => {
-                const listWithoutOld = currentList.filter(item => item.barcode !== updatedProductData.barcode || item.warehouseId !== currentWarehouseId);
+                const listWithoutOld = currentList.filter(item => !(item.barcode === updatedProductData.barcode && item.warehouseId === currentWarehouseId));
                 return [updatedProductData, ...listWithoutOld];
             });
             playBeep(880, 100);
@@ -288,7 +289,7 @@ export default function Home() {
             }
              if (isMountedRef.current && newProductForList) {
                  const finalProduct = newProductForList;
-                 setCountingList(currentList => [finalProduct, ...currentList.filter(item => item.barcode !== finalProduct.barcode || item.warehouseId !== currentWarehouseId)]);
+                 setCountingList(currentList => [finalProduct, ...currentList.filter(item => !(item.barcode === finalProduct.barcode && item.warehouseId === currentWarehouseId))]);
              }
         } catch (error) {
             console.error("Error fetching or adding product from IndexedDB:", error);
@@ -326,6 +327,8 @@ const modifyProductValue = useCallback(async (barcodeToUpdate: string, type: 'co
         finalValue = Math.max(0, originalValue + change); // Ensure value doesn't go below 0
         const productStock = product.stock ?? 0;
 
+        // Confirmation is only needed if type is 'count', the change is positive (incrementing),
+        // the new count exceeds current stock, and the original count was less than or equal to stock.
         needsConfirmation = type === 'count' && change > 0 && finalValue > productStock && originalValue <= productStock && productStock > 0;
 
         if (needsConfirmation) {
@@ -346,9 +349,7 @@ const modifyProductValue = useCallback(async (barcodeToUpdate: string, type: 'co
             return [updatedProduct, ...listWithoutProduct]; // Apply change and reorder
         }
     });
-
-    // This part runs AFTER setCountingList has potentially updated the list (if !needsConfirmation)
-    // Or it runs if needsConfirmation is false from the start.
+    
     if (!needsConfirmation && finalValue !== undefined && productForToast) {
         if (type === 'stock') {
             try {
@@ -361,8 +362,6 @@ const modifyProductValue = useCallback(async (barcodeToUpdate: string, type: 'co
                          description: `Stock de ${productDescription} actualizado a ${finalValue} en la base de datos.`
                      });
                 } else {
-                      // This case should ideally not happen if product is in countingList
-                      // but as a fallback, create it.
                       const listProduct = countingList.find(p => p.barcode === barcodeToUpdate && p.warehouseId === currentWarehouseId);
                       if(listProduct) {
                            const newDbProduct: ProductDetail = {
@@ -387,10 +386,7 @@ const modifyProductValue = useCallback(async (barcodeToUpdate: string, type: 'co
                     description: `No se pudo actualizar el stock en la base de datos para ${productDescription}.`
                 });
             }
-        } else if (type === 'count' ) { // Toast for count change (if not discrepancy)
-            // showDiscrepancyToastIfNeeded will be called by the caller of modifyProductValue or handleConfirmQuantityChange
-            // Here, we ensure a generic toast if no discrepancy was shown.
-            // However, the logic for this might be better placed in the confirmation handler or if needsConfirmation is false from start.
+        } else if (type === 'count' ) { 
              if (!showDiscrepancyToastIfNeeded(productForToast, finalValue)) {
                 toast({
                     title: "Cantidad Modificada",
@@ -427,29 +423,29 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
         finalValue = Math.max(0, calculatedValue);
         const productStock = product.stock ?? 0;
 
+        // Confirmation only if type is 'count', the new value is greater than stock, original count was not already over stock, and stock is positive.
         needsConfirmation = type === 'count' && finalValue > productStock && originalValue <= productStock && productStock > 0;
 
         if (needsConfirmation) {
             setConfirmQuantityProductBarcode(product.barcode);
-            setConfirmQuantityAction('set'); // Action is 'set' because we are setting to a new value
-            setConfirmQuantityNewValue(finalValue); // The final target value
+            setConfirmQuantityAction('set'); 
+            setConfirmQuantityNewValue(finalValue); 
             setIsConfirmQuantityDialogOpen(true);
             playBeep(660, 100);
-            return prevList; // Don't update list yet, wait for confirmation
+            return prevList; 
         } else {
             const updatedProduct = {
                 ...product,
                 [type]: finalValue,
                 lastUpdated: new Date().toISOString()
             };
-            productForToast = updatedProduct; // Update for toast
+            productForToast = updatedProduct; 
             const listWithoutProduct = prevList.filter((_, i) => i !== productIndex);
-            setOpenModifyDialog(null); // Close dialog after setting value
-            return [updatedProduct, ...listWithoutProduct]; // Apply change and reorder
+            setOpenModifyDialog(null); 
+            return [updatedProduct, ...listWithoutProduct]; 
         }
     });
 
-    // This part runs AFTER setCountingList (if !needsConfirmation) or if needsConfirmation is false from start.
     if (!needsConfirmation && finalValue !== undefined && productForToast) {
          if (type === 'stock') {
              try {
@@ -484,9 +480,9 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
                      description: `No se pudo actualizar el stock en la base de datos para ${productDescription}.`
                  });
              }
-         } else if (type === 'count') { // Toast for count change
+         } else if (type === 'count') { 
              const actionText = sumValue ? "sumada a" : "establecida en";
-             if (!showDiscrepancyToastIfNeeded(productForToast, finalValue)) { // Pass finalValue to check
+             if (!showDiscrepancyToastIfNeeded(productForToast, finalValue)) {
                  toast({
                      title: "Cantidad Modificada",
                      description: `Cantidad de ${productDescription} (${getWarehouseName(currentWarehouseId)}) ${actionText} ${finalValue}.`,
@@ -524,16 +520,16 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
      if (productInList) {
          productDescription = productInList.description;
      } else {
-         productDescription = barcodeToUpdate; // Fallback if not found (should not happen)
+         productDescription = barcodeToUpdate; 
      }
 
      setCountingList(prevList => {
          const index = prevList.findIndex(p => p.barcode === barcodeToUpdate && p.warehouseId === warehouseId);
-         if (index === -1) return prevList; // Should not happen if logic is correct
+         if (index === -1) return prevList;
 
          const listCopy = [...prevList];
          const productToUpdate = listCopy[index];
-         const finalConfirmedCount = Math.max(0, newValue); // Ensure count is not negative
+         const finalConfirmedCount = Math.max(0, newValue); 
          confirmedValue = finalConfirmedCount;
 
          productAfterConfirm = {
@@ -542,14 +538,12 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
              lastUpdated: new Date().toISOString()
          };
          listCopy[index] = productAfterConfirm;
-         // Move the updated item to the top
          return [productAfterConfirm, ...listCopy.filter((_, i) => i !== index)];
      });
 
-    // Use requestAnimationFrame to ensure state update has been processed before toasting
     requestAnimationFrame(() => {
         if (productAfterConfirm && confirmedValue !== null) { 
-            if (!showDiscrepancyToastIfNeeded(productAfterConfirm, confirmedValue)) { // Pass confirmedValue
+            if (!showDiscrepancyToastIfNeeded(productAfterConfirm, confirmedValue)) {
                 toast({
                     title: "Cantidad Modificada",
                     description: `Cantidad de ${productDescription} (${getWarehouseName(warehouseId)}) cambiada a ${confirmedValue}.`
@@ -562,7 +556,7 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
      setConfirmQuantityProductBarcode(null);
      setConfirmQuantityAction(null);
      setConfirmQuantityNewValue(null);
-     setOpenModifyDialog(null); // Ensure modify dialog is closed if open
+     setOpenModifyDialog(null); 
  }, [currentWarehouseId, confirmQuantityProductBarcode, confirmQuantityAction, confirmQuantityNewValue, toast, getWarehouseName, countingList, showDiscrepancyToastIfNeeded]);
 
 
@@ -702,24 +696,21 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
      if (!currentWarehouseId || !isMountedRef.current) return;
      setIsRefreshingStock(true);
      let updatedProductCount = 0;
-     let addedProductCount = 0; // To count products added to the list if they were in DB but not in list
+     let addedProductCount = 0; 
      try {
          const allDbProducts = await getAllProductsFromDB();
          const dbProductMap = new Map(allDbProducts.map(p => [p.barcode, p]));
 
          setCountingList(prevCountingList => {
-             // Separate current warehouse items from others to preserve other warehouses' data
              const currentWarehouseItems = prevCountingList.filter(item => item.warehouseId === currentWarehouseId);
              const otherWarehouseItems = prevCountingList.filter(item => item.warehouseId !== currentWarehouseId);
 
-             updatedProductCount = 0; // Reset counters for this refresh
+             updatedProductCount = 0; 
              addedProductCount = 0;
 
-             // Update existing items in the current warehouse list
              let updatedCurrentWarehouseList = currentWarehouseItems.map(countingProduct => {
                  const dbProduct = dbProductMap.get(countingProduct.barcode);
                  if (dbProduct) {
-                     // Check if any relevant detail has changed
                      if (countingProduct.description !== dbProduct.description ||
                          countingProduct.provider !== dbProduct.provider ||
                          countingProduct.stock !== (dbProduct.stock ?? 0))
@@ -729,31 +720,28 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
                              ...countingProduct,
                              description: dbProduct.description,
                              provider: dbProduct.provider,
-                             stock: dbProduct.stock ?? 0, // Update stock from DB
-                             lastUpdated: new Date().toISOString(), // Update timestamp
+                             stock: dbProduct.stock ?? 0, 
+                             lastUpdated: new Date().toISOString(), 
                          };
                      }
                  }
-                 return countingProduct; // No changes needed
+                 return countingProduct; 
              });
 
-              // Add products from DB that are not in the current warehouse's counting list yet
               allDbProducts.forEach(dbProduct => {
                   if (!updatedCurrentWarehouseList.some(cp => cp.barcode === dbProduct.barcode)) {
                       addedProductCount++;
                       updatedCurrentWarehouseList.push({
-                          ...dbProduct, // Spread all details from ProductDetail
-                          warehouseId: currentWarehouseId, // Set current warehouse context
-                          count: 0, // New items start with count 0
+                          ...dbProduct, 
+                          warehouseId: currentWarehouseId, 
+                          count: 0, 
                           lastUpdated: new Date().toISOString(),
                       });
                   }
               });
 
-             // Sort the updated list for the current warehouse (e.g., by lastUpdated)
              updatedCurrentWarehouseList.sort((a, b) => new Date(b.lastUpdated!).getTime() - new Date(a.lastUpdated!).getTime());
 
-             // Combine with items from other warehouses
              return [...updatedCurrentWarehouseList, ...otherWarehouseItems];
          });
 
@@ -793,16 +781,15 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
              setInitialStockForEdit(dbProduct.stock ?? 0);
              setIsEditDetailDialogOpen(true);
          } else {
-             // If not in DB, create a placeholder for editing (will be added to DB on save)
              if (!isMountedRef.current) return;
              const placeholderDetail: ProductDetail = {
                  barcode: product.barcode,
-                 description: product.description, // Use current list description
-                 provider: product.provider,     // Use current list provider
-                 stock: product.stock ?? 0       // Use current list stock
+                 description: product.description, 
+                 provider: product.provider,     
+                 stock: product.stock ?? 0       
              };
              setProductToEditDetail(placeholderDetail);
-             setInitialStockForEdit(product.stock ?? 0); // Stock is for the current context
+             setInitialStockForEdit(product.stock ?? 0); 
              setIsEditDetailDialogOpen(true);
              requestAnimationFrame(() => {
                 toast({ variant: "default", title: "Editando Producto Temporal", description: "Este producto no está en la base de datos. Guarde los cambios para añadirlo." });
@@ -822,27 +809,25 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
  }, [toast]);
 
  const handleEditDetailSubmit = useCallback(async (data: ProductDetail) => {
-     if (!isMountedRef.current || !productToEditDetail) return; // Ensure productToEditDetail is not null
+     if (!isMountedRef.current || !productToEditDetail) return; 
      setIsDbLoading(true);
      try {
-         // Ensure barcode is from productToEditDetail (cannot be changed in dialog)
          const updatedProductData: ProductDetail = {
-             barcode: productToEditDetail.barcode, // Critical: use original barcode
+             barcode: productToEditDetail.barcode, 
              description: data.description.trim(),
              provider: data.provider?.trim() || "Desconocido",
-             stock: data.stock ?? 0, // This stock is general for the product, not warehouse-specific
+             stock: data.stock ?? 0, 
          };
          await addOrUpdateProductToDB(updatedProductData);
          if (!isMountedRef.current) return;
 
-         // Update the item in the counting list if it exists and is for the current warehouse
          setCountingList(prevList => prevList.map(item =>
              item.barcode === updatedProductData.barcode && item.warehouseId === currentWarehouseId
                  ? {
                      ...item,
                      description: updatedProductData.description,
                      provider: updatedProductData.provider,
-                     stock: updatedProductData.stock, // Update stock in counting list as well
+                     stock: updatedProductData.stock, 
                      lastUpdated: new Date().toISOString()
                    }
                  : item
@@ -855,7 +840,7 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
              });
          });
          setIsEditDetailDialogOpen(false);
-         setProductToEditDetail(null); // Clear selection
+         setProductToEditDetail(null); 
      } catch (error: any) {
          if (!isMountedRef.current) return;
           requestAnimationFrame(() => {
@@ -866,7 +851,7 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
              setIsDbLoading(false);
          }
      }
- }, [toast, currentWarehouseId, productToEditDetail]); // Added productToEditDetail dependency
+ }, [toast, currentWarehouseId, productToEditDetail]); 
 
  const handleStartCountByProvider = useCallback(async (productsToCount: ProductDetail[]) => {
      if (!isMountedRef.current) return;
@@ -876,37 +861,28 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
          });
          return;
      }
-     // Convert ProductDetail[] to DisplayProduct[] for the counting list
      const productsWithWarehouseContext: DisplayProduct[] = productsToCount.map(dbProduct => ({
-         ...dbProduct, // Spread all details from ProductDetail
-         warehouseId: currentWarehouseId, // Set current warehouse context
-         stock: dbProduct.stock ?? 0, // Use stock from DB as the base stock for this warehouse item
-         count: 0, // New items for counting start with count 0
+         ...dbProduct, 
+         warehouseId: currentWarehouseId, 
+         stock: dbProduct.stock ?? 0, 
+         count: 0, 
          lastUpdated: new Date().toISOString(),
      }));
 
-     // Replace only the items for the current warehouse, or add if not present
      setCountingList(prevList => {
          const otherWarehouseItems = prevList.filter(item => item.warehouseId !== currentWarehouseId);
-         // Merge: if a product from productsWithWarehouseContext is already in prevList for current warehouse,
-         // it will be overwritten by the new one. Otherwise, it's added.
-         // This effectively "restarts" the count for these items.
          const newList = [...productsWithWarehouseContext, ...otherWarehouseItems];
-          // Optional: sort the combined list if needed, e.g., by lastUpdated or description
           newList.sort((a, b) => {
-                // Prioritize items for the current warehouse at the top
                 if (a.warehouseId === currentWarehouseId && b.warehouseId !== currentWarehouseId) return -1;
                 if (a.warehouseId !== currentWarehouseId && b.warehouseId === currentWarehouseId) return 1;
-                // If both are for the current warehouse, sort by last updated (newest first)
                 if (a.warehouseId === currentWarehouseId && b.warehouseId === currentWarehouseId) {
                     return new Date(b.lastUpdated!).getTime() - new Date(a.lastUpdated!).getTime();
                 }
-                // Otherwise, maintain original order or apply other sorting for other warehouses
                 return 0;
             });
          return newList;
      });
-     setActiveSection("Contador"); // Switch to contador view
+     setActiveSection("Contador"); 
       requestAnimationFrame(() => {
          toast({ title: "Conteo por Proveedor Iniciado", description: `Cargados ${productsToCount.length} productos para ${getWarehouseName(currentWarehouseId)}.` });
       });
@@ -933,10 +909,9 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
 
    const handleWarehouseChange = useCallback((newWarehouseId: string) => {
          if (newWarehouseId !== currentWarehouseId) {
-             setIsDbLoading(true); // Show loading while list for new warehouse is fetched/set
+             setIsDbLoading(true); 
              setCurrentWarehouseId(newWarehouseId);
-             setSearchTerm(""); // Clear search term when changing warehouse
-             // Data for the new warehouse will be loaded by the useEffect watching currentWarehouseId
+             setSearchTerm(""); 
          }
    }, [currentWarehouseId, setCurrentWarehouseId]);
 
@@ -950,8 +925,7 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
                  return prevWarehouses;
              }
              const updatedWarehouses = [...prevWarehouses, newWarehouse];
-             // Automatically switch to the newly added warehouse
-             handleWarehouseChange(newWarehouse.id); // This will trigger loading for the new warehouse
+             handleWarehouseChange(newWarehouse.id); 
              requestAnimationFrame(() => {
                  toast({title: "Almacén Agregado", description: `Cambiado al nuevo almacén: ${newWarehouse.name}`});
               });
@@ -961,15 +935,14 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
 
    const handleUpdateWarehouses = useCallback((updatedWarehouses: { id: string; name: string }[]) => {
          setWarehouses(updatedWarehouses);
-         // If current warehouse was deleted or no warehouses exist, handle appropriately
          if (!updatedWarehouses.some(w => w.id === currentWarehouseId)) {
-             const newCurrentId = updatedWarehouses[0]?.id || 'main'; // Default to first or 'main'
+             const newCurrentId = updatedWarehouses[0]?.id || 'main'; 
              if (newCurrentId !== currentWarehouseId) {
-                 handleWarehouseChange(newCurrentId); // Switch to a valid warehouse
+                 handleWarehouseChange(newCurrentId); 
                   requestAnimationFrame(() => {
                      toast({title: "Almacén Actualizado", description: `Almacén actual cambiado a ${getWarehouseName(newCurrentId)}.`});
                   });
-             } else if (updatedWarehouses.length === 0) { // No warehouses left, add default
+             } else if (updatedWarehouses.length === 0) { 
                   const defaultWarehouse = { id: 'main', name: 'Almacén Principal' };
                   setWarehouses([defaultWarehouse]);
                   handleWarehouseChange(defaultWarehouse.id);
@@ -982,7 +955,6 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
 
    const getCurrentValueForDialog = useCallback((type: 'count' | 'stock') => {
         if (!openModifyDialog?.product || !isMountedRef.current) return 0;
-        // Find the product in the *current* counting list to ensure we get the live value
         const currentItem = countingList.find(
           p => p.barcode === openModifyDialog.product!.barcode && p.warehouseId === currentWarehouseId
         );
@@ -993,12 +965,10 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
     if (!isMountedRef.current) return;
     setIsDbLoading(true);
     try {
-      await clearAllDatabases(); // This clears IndexedDB (products and history)
-      // Also clear all warehouse-specific counting lists from localStorage
+      await clearAllDatabases(); 
       warehouses.forEach(warehouse => {
         localStorage.removeItem(`${LOCAL_STORAGE_COUNTING_LIST_KEY_PREFIX}${warehouse.id}`);
       });
-      // Reset current counting list in state
       setCountingList([]);
       requestAnimationFrame(() => {
           toast({ title: "Base de Datos Borrada", description: "Todos los productos, el historial de conteos y las listas de inventario locales han sido eliminados." });
@@ -1013,22 +983,20 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
       }
        setIsClearAllDataConfirmOpen(false);
     }
-  }, [toast, warehouses]); // Add warehouses dependency
+  }, [toast, warehouses]); 
 
 
   const handleCameraScanSuccess = useCallback((scannedBarcode: string) => {
     if (scannedBarcode) {
-      setJustScannedBarcode(scannedBarcode); // Store the scanned barcode
-      setIsCameraScannerActive(false); // Close the camera scanner UI
-      // The useEffect watching justScannedBarcode will handle adding the product
+      setJustScannedBarcode(scannedBarcode); 
+      setIsCameraScannerActive(false); 
     }
-  }, [setIsCameraScannerActive, setJustScannedBarcode]); // Dependencies
+  }, [setIsCameraScannerActive, setJustScannedBarcode]); 
 
-  // Effect to process barcode scanned by camera
   useEffect(() => {
-    if (justScannedBarcode && !isCameraScannerActive) { // Ensure camera is closed before processing
+    if (justScannedBarcode && !isCameraScannerActive) { 
       handleAddProduct(justScannedBarcode);
-      setJustScannedBarcode(null); // Reset after processing
+      setJustScannedBarcode(null); 
     }
   }, [justScannedBarcode, isCameraScannerActive, handleAddProduct, setJustScannedBarcode]);
 
@@ -1039,71 +1007,64 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
       title: "Error de Escáner",
       description: error.message || "No se pudo escanear el código de barras.",
     });
-    setIsCameraScannerActive(false); // Close scanner on error as well
+    setIsCameraScannerActive(false); 
   },[toast, setIsCameraScannerActive]);
+
+
+  const sectionItems = [
+    { name: 'Contador', icon: AppWindow, label: `Contador (${getWarehouseName(currentWarehouseId)})` },
+    { name: 'Base de Datos', icon: Database, label: 'Base de Datos' },
+    { name: 'Almacenes', icon: Boxes, label: 'Almacenes' },
+    { name: 'Historial', icon: HistoryIcon, label: 'Historial' },
+    { name: 'Informes', icon: BarChart, label: 'Informes' },
+  ];
 
 
   // --- Main Component Render ---
   return (
-    <div className="container mx-auto p-4">
-       <div className="flex flex-col md:flex-row justify-between items-center mb-4 gap-4">
-         <h1 className="text-2xl font-bold text-gray-700 dark:text-gray-200">StockCounter Pro</h1>
-         <div className="flex flex-col sm:flex-row items-center gap-2 w-full md:w-auto">
-            <Select value={activeSection} onValueChange={handleSectionChange}>
-                <SelectTrigger className="w-full sm:w-auto min-w-[180px] max-w-[250px] bg-white dark:bg-gray-800 border-gray-300 dark:border-gray-600">
-                    <SelectValue placeholder="Seleccionar Sección" />
+    <div className="flex h-screen bg-background text-foreground">
+       {/* Sidebar */}
+      <aside className="w-60 flex-shrink-0 border-r bg-card p-4 flex flex-col space-y-4">
+        <h2 className="text-xl font-semibold px-2 text-center">StockCounter Pro</h2>
+        <nav className="flex-grow space-y-1">
+          {sectionItems.map((item) => (
+            <Button
+              key={item.name}
+              variant={activeSection === item.name ? 'secondary' : 'ghost'}
+              className="w-full justify-start"
+              onClick={() => handleSectionChange(item.name)}
+            >
+              <item.icon className="mr-2 h-4 w-4" />
+              {item.label}
+            </Button>
+          ))}
+        </nav>
+        {/* Warehouse Selector */}
+        <div className="mt-auto pt-4 border-t border-border">
+          {warehouses.length > 0 && (
+            <div className="space-y-2">
+              <Label htmlFor="warehouse-select-sidebar" className="px-2 text-sm font-medium text-muted-foreground">Almacén Activo:</Label>
+              <Select value={currentWarehouseId} onValueChange={handleWarehouseChange} name="warehouse-select-sidebar">
+                <SelectTrigger className="w-full bg-background border-border">
+                  <SelectValue placeholder="Seleccionar Almacén" />
                 </SelectTrigger>
                 <SelectContent>
-                    <SelectItem value="Contador">
-                        <div className="flex items-center gap-2">
-                            <AppWindow className="h-4 w-4"/> Contador ({getWarehouseName(currentWarehouseId)})
-                         </div>
+                  {warehouses.map((warehouse) => (
+                    <SelectItem key={warehouse.id} value={warehouse.id}>
+                      {warehouse.name}
                     </SelectItem>
-                    <SelectItem value="Base de Datos">
-                         <div className="flex items-center gap-2">
-                            <Database className="h-4 w-4"/> Base de Datos
-                        </div>
-                    </SelectItem>
-                    <SelectItem value="Almacenes">
-                          <div className="flex items-center gap-2">
-                            <Boxes className="h-4 w-4"/> Almacenes
-                         </div>
-                    </SelectItem>
-                    <SelectItem value="Historial">
-                          <div className="flex items-center gap-2">
-                            <HistoryIcon className="h-4 w-4"/> Historial
-                         </div>
-                    </SelectItem>
-                    <SelectItem value="Informes">
-                          <div className="flex items-center gap-2">
-                              <BarChart className="h-4 w-4" /> Informes
-                          </div>
-                    </SelectItem>
+                  ))}
                 </SelectContent>
-            </Select>
-            {warehouses.length > 0 && (
-               <div className="flex items-center gap-2 w-full sm:w-auto">
-                   <WarehouseIcon className="h-5 w-5 text-gray-600 dark:text-gray-400"/>
-                    <Select value={currentWarehouseId} onValueChange={handleWarehouseChange}>
-                        <SelectTrigger className="w-full sm:w-auto min-w-[180px] max-w-[250px] bg-white dark:bg-gray-800 border-gray-300 dark:border-gray-600">
-                            <SelectValue placeholder="Seleccionar Almacén" />
-                        </SelectTrigger>
-                        <SelectContent>
-                            {warehouses.map((warehouse) => (
-                            <SelectItem key={warehouse.id} value={warehouse.id}>
-                                {warehouse.name}
-                            </SelectItem>
-                            ))}
-                        </SelectContent>
-                    </Select>
-               </div>
-            )}
-         </div>
-      </div>
+              </Select>
+            </div>
+          )}
+        </div>
+      </aside>
 
-      <div className="w-full md:w-[800px] lg:w-[1000px] mx-auto">
+      {/* Main Content */}
+      <main className="flex-1 p-6 overflow-y-auto">
         {activeSection === 'Contador' && (
-            <div id="contador-content">
+            <div id="contador-content" className="flex flex-col h-full">
                 <BarcodeEntry
                     barcode={barcode}
                     setBarcode={setBarcode}
@@ -1120,7 +1081,7 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
                      onScanSuccess={handleCameraScanSuccess}
                      onScanError={handleCameraScanError}
                      onClose={() => setIsCameraScannerActive(false)}
-                     className="z-60" // Ensure it's above other elements
+                     className="z-50" 
                    />
                  )}
                  <div className="relative mb-4">
@@ -1135,18 +1096,20 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
                         disabled={isDbLoading || isRefreshingStock}
                     />
                 </div>
-               <CountingListTable
-                    countingList={filteredCountingList}
-                    warehouseName={getWarehouseName(currentWarehouseId)}
-                    isLoading={isDbLoading}
-                    onDeleteRequest={handleDeleteRequest}
-                    onOpenStockDialog={(product) => handleOpenModifyDialog(product, 'stock')}
-                    onOpenQuantityDialog={(product) => handleOpenModifyDialog(product, 'count')}
-                    onDecrement={handleDecrement}
-                    onIncrement={handleIncrement}
-                    onEditDetailRequest={handleOpenEditDetailDialog}
-                    tableHeightClass="h-[calc(100vh-360px)] md:h-[calc(100vh-330px)]"
-                />
+                <div className="flex-1 overflow-hidden">
+                   <CountingListTable
+                        countingList={filteredCountingList}
+                        warehouseName={getWarehouseName(currentWarehouseId)}
+                        isLoading={isDbLoading}
+                        onDeleteRequest={handleDeleteRequest}
+                        onOpenStockDialog={(product) => handleOpenModifyDialog(product, 'stock')}
+                        onOpenQuantityDialog={(product) => handleOpenModifyDialog(product, 'count')}
+                        onDecrement={handleDecrement}
+                        onIncrement={handleIncrement}
+                        onEditDetailRequest={handleOpenEditDetailDialog}
+                        tableHeightClass="h-full"
+                    />
+                </div>
 
                <div className="mt-4 flex flex-wrap justify-center md:justify-end gap-2">
                     <Button
@@ -1220,7 +1183,7 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
                     />
                 </div>
             )}
-      </div>
+      </main>
 
       <ModifyValueDialog
           isOpen={!!openModifyDialog}
@@ -1245,9 +1208,7 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
                const product = countingList.find(p => p.barcode === confirmQuantityProductBarcode && p.warehouseId === currentWarehouseId);
                const stock = product?.stock ?? 0;
                const description = product?.description ?? confirmQuantityProductBarcode;
-
-               // Simplified logic: Only show specific warning if count is increasing *above* current stock
-               // and stock exists. Otherwise, use a generic confirmation.
+                
                if ((confirmQuantityAction === 'set' || confirmQuantityAction === 'increment') && stock > 0 && confirmQuantityNewValue > stock) {
                    return `La cantidad contada (${confirmQuantityNewValue}) ahora SUPERA el stock del sistema (${stock}) para "${description}". ¿Confirmar?`;
                }
@@ -1316,7 +1277,6 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
                try {
                    await deleteProductFromDB(barcode);
                    if (!isMountedRef.current) return;
-                   // Also remove from current counting list if present
                    setCountingList(prevList => prevList.filter(p => !(p.barcode === barcode && p.warehouseId === currentWarehouseId)));
                     requestAnimationFrame(() => {
                        toast({title: "Producto Eliminado (DB)", description: `Producto ${barcode} eliminado de la base de datos.`});
@@ -1332,17 +1292,15 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
                     if (isMountedRef.current) {
                         setIsDbLoading(false);
                     }
-                    // Ensure these are also reset if a separate delete confirmation was used (now integrated)
                     setIsDeleteDialogOpen(false);
                     setProductToDelete(null);
                }
            }}
          isProcessing={isDbLoading}
          initialStock={initialStockForEdit}
-         context="countingList" // Or determine context dynamically if needed
+         context="countingList" 
          warehouseName={getWarehouseName(currentWarehouseId)}
       />
     </div>
   );
 }
-

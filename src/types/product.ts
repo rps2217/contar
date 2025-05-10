@@ -49,6 +49,16 @@ export interface CountingHistoryEntry {
   products: DisplayProduct[]; // A snapshot of the counting list at the time of saving
 }
 
+
+/**
+ * Represents a warehouse.
+ */
+export interface Warehouse {
+  id: string;
+  name: string;
+}
+
+
 // Note: The original `Product` type has been removed to favor the more specific
 // `ProductDetail` and `InventoryItem` types for better clarity in a multi-warehouse context.
 // `DisplayProduct` serves as the combined view needed for UI components like the counting list.

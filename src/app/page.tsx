@@ -23,7 +23,7 @@ import {
 import { WarehouseManagement } from "@/components/warehouse-management";
 import { format, isValid, parseISO } from 'date-fns';
 import { es } from 'date-fns/locale';
-import { Minus, Plus, Trash, RefreshCw, Warehouse as WarehouseIcon, Search, Check, AppWindow, Database, Boxes, Loader2, History as HistoryIcon, CalendarIcon, Save, Edit, Download, BarChart, Settings, AlertTriangle, Camera, XCircle, PanelLeftClose, PanelRightOpen, User, ShieldAlert, Filter } from "lucide-react";
+import { Minus, Plus, Trash, RefreshCw, Warehouse as WarehouseIcon, Search, Check, AppWindow, Database, Boxes, Loader2, History as HistoryIcon, CalendarIcon, Save, Edit, Download, BarChart, Settings, AlertTriangle, Camera, XCircle, Menu as MenuIcon, User, ShieldAlert, Filter, PanelLeftClose, PanelRightOpen } from "lucide-react";
 import React, { useCallback, useEffect, useRef, useState, useMemo } from "react";
 import { playBeep } from '@/lib/helpers';
 import { BarcodeEntry } from '@/components/barcode-entry';
@@ -47,7 +47,8 @@ import { DiscrepancyReportViewer } from '@/components/discrepancy-report-viewer'
 import { ExpirationControl } from '@/components/expiration-control';
 import Papa from 'papaparse';
 import BarcodeScannerCamera from '@/components/barcode-scanner-camera';
-import { useIsMobile } from '@/hooks/use-mobile';
+import { SidebarLayout } from '@/components/sidebar-layout';
+import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet";
 
 
 // --- Constants ---
@@ -66,7 +67,6 @@ export default function Home() {
   const { toast } = useToast();
   const barcodeInputRef = useRef<HTMLInputElement>(null);
   const isMountedRef = useRef(false);
-  const isMobile = useIsMobile();
 
   // --- LocalStorage Hooks ---
   const [warehouses, setWarehouses] = useLocalStorage<Array<{ id: string; name: string }>>(
@@ -111,6 +111,7 @@ export default function Home() {
   const [isClearAllDataConfirmOpen, setIsClearAllDataConfirmOpen] = useState(false);
   const [isCameraScannerActive, setIsCameraScannerActive] = useState(false);
   const [justScannedBarcode, setJustScannedBarcode] = useState<string | null>(null);
+  const [mobileSheetOpen, setMobileSheetOpen] = useState(false);
 
 
   // --- Effects ---
@@ -342,7 +343,7 @@ export default function Home() {
     if(isMountedRef.current) setBarcode("");
     requestAnimationFrame(() => barcodeInputRef.current?.focus());
     return () => clearTimeout(clearLastScannedTimeout);
-  }, [barcode, currentWarehouseId, getWarehouseName, lastScannedBarcode, toast, countingList, showDiscrepancyToastIfNeeded, setBarcode]);
+  }, [barcode, currentWarehouseId, getWarehouseName, lastScannedBarcode, toast, countingList, showDiscrepancyToastIfNeeded]);
 
 
 const modifyProductValue = useCallback(async (barcodeToUpdate: string, type: 'count' | 'stock', change: number) => {
@@ -1052,14 +1053,14 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
       setJustScannedBarcode(scannedBarcode);
       setIsCameraScannerActive(false);
     }
-  }, [setIsCameraScannerActive, setJustScannedBarcode]);
+  }, []); // Removed dependencies to ensure stable reference
 
   useEffect(() => {
     if (justScannedBarcode && !isCameraScannerActive && isMountedRef.current) {
-      handleAddProduct(justScannedBarcode);
+      handleAddProduct(justScannedBarcode); // handleAddProduct should also be stable or wrapped in useCallback
       setJustScannedBarcode(null);
     }
-  }, [justScannedBarcode, isCameraScannerActive, handleAddProduct, setJustScannedBarcode]);
+  }, [justScannedBarcode, isCameraScannerActive, handleAddProduct]); // Added handleAddProduct as it's used
 
 
   const handleCameraScanError = useCallback((error: Error) => {
@@ -1071,7 +1072,7 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
         });
         setIsCameraScannerActive(false);
     }
-  },[toast, setIsCameraScannerActive]);
+  },[toast]);
 
 
   const sectionItems = useMemo(() => [
@@ -1083,106 +1084,63 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
     { name: 'Informes', icon: BarChart, label: 'Informes' },
   ], [getWarehouseName, currentWarehouseId]);
 
+  const sidebarProps = {
+    activeSection,
+    sectionItems,
+    currentUserId: currentUserId || "",
+    setCurrentUserId,
+    showUserIdInput,
+    setShowUserIdInput,
+    warehouses,
+    currentWarehouseId,
+    handleWarehouseChange,
+    getWarehouseName,
+    isDbLoading, // pass this down if needed by SidebarLayout
+  };
+
 
   // --- Main Component Render ---
   return (
-    <div className="flex h-screen bg-background text-foreground">
-      {/* Sidebar */}
-      <aside className={cn(
-        "flex-shrink-0 border-r bg-card p-4 flex flex-col space-y-4 transition-all duration-300 ease-in-out",
-        isMobile ? "hidden" : (isSidebarCollapsed ? "w-20" : "w-60")
-      )}>
-        <div className={cn(
-          "flex items-center",
-          isSidebarCollapsed ? "justify-center" : "justify-between mb-2"
-        )}>
-          {!isSidebarCollapsed && <h2 className="text-xl font-semibold px-2 truncate">StockCounter Pro</h2>}
-          <Button
-            variant="ghost"
-            size="icon"
-            onClick={() => setIsSidebarCollapsed(!isSidebarCollapsed)}
-            aria-label={isSidebarCollapsed ? "Expandir barra lateral" : "Colapsar barra lateral"}
-            title={isSidebarCollapsed ? "Expandir barra lateral" : "Colapsar barra lateral"}
-          >
-            {isSidebarCollapsed ? <PanelRightOpen className="h-5 w-5" /> : <PanelLeftClose className="h-5 w-5" />}
-          </Button>
-        </div>
-
-        <nav className={cn(
-          "flex-grow space-y-1",
-          isSidebarCollapsed ? "hidden md:block" : "block"
-        )}>
-          {sectionItems.map((item) => (
-            <Button
-              key={item.name}
-              variant={activeSection === item.name ? 'secondary' : 'ghost'}
-              className={cn(
-                "w-full flex items-center gap-2 py-2.5 h-auto text-sm",
-                 isSidebarCollapsed ? "md:justify-center md:px-0" : "justify-start"
-              )}
-              onClick={() => handleSectionChange(item.name)}
-              title={item.label}
-            >
-              <item.icon className={cn("h-5 w-5 flex-shrink-0",
-                !isSidebarCollapsed && "mr-1",
-                isSidebarCollapsed && "md:mr-0"
-              )} />
-              {!isSidebarCollapsed && <span className="truncate">{item.label}</span>}
+    <div className="flex flex-col md:flex-row h-screen bg-background text-foreground">
+      {/* Mobile Header & Sheet */}
+      <div className="md:hidden p-4 border-b flex items-center justify-between bg-card sticky top-0 z-20">
+        <Sheet open={mobileSheetOpen} onOpenChange={setMobileSheetOpen}>
+          <SheetTrigger asChild>
+            <Button variant="outline" size="icon" aria-label="Abrir menú">
+              <MenuIcon className="h-5 w-5" />
             </Button>
-          ))}
-        </nav>
+          </SheetTrigger>
+          <SheetContent side="left" className="p-0 pt-4 w-[280px] sm:w-[320px] bg-card flex flex-col">
+            <SidebarLayout
+              {...sidebarProps}
+              isMobileView={true}
+              isCollapsed={false} // Mobile sheet is never collapsed
+              onSectionChange={(section) => {
+                handleSectionChange(section);
+                setMobileSheetOpen(false); // Close sheet on navigation
+              }}
+            />
+          </SheetContent>
+        </Sheet>
+        <h2 className="text-xl font-semibold truncate ml-4">StockCounter Pro</h2>
+        <div className="w-8"></div> {/* Spacer to balance menu icon if needed */}
+      </div>
 
-        <div className={cn(
-            "mt-auto pt-4 border-t border-border",
-            isSidebarCollapsed && "hidden"
-        )}>
-           <div className="space-y-2 mb-4">
-                <Label htmlFor="user-id-display" className="px-2 text-sm font-medium text-muted-foreground">
-                    Usuario Actual:
-                </Label>
-                <div className="flex items-center gap-2 px-2">
-                    <User className="h-4 w-4 text-muted-foreground" />
-                    <span id="user-id-display" className="text-sm truncate" title={currentUserId || undefined}>
-                        {currentUserId || 'Cargando...'}
-                    </span>
-                    <Button variant="ghost" size="icon" className="h-6 w-6" onClick={() => setShowUserIdInput(!showUserIdInput)} title="Cambiar ID de Usuario">
-                        <Edit className="h-3.5 w-3.5" />
-                    </Button>
-                </div>
-                {showUserIdInput && (
-                    <div className="px-2 space-y-1">
-                        <Input
-                            type="text"
-                            value={currentUserId || ""}
-                            onChange={(e) => setCurrentUserId(e.target.value)}
-                            placeholder="Ingresar ID de Usuario"
-                            className="h-8 text-sm"
-                        />
-                         <p className="text-xs text-muted-foreground">Este ID se usa para el historial. No es una autenticación real.</p>
-                    </div>
-                )}
-            </div>
-          {warehouses.length > 0 && (
-            <div className="space-y-2">
-              <Label htmlFor="warehouse-select-sidebar" className="px-2 text-sm font-medium text-muted-foreground">Almacén Activo:</Label>
-              <Select value={currentWarehouseId} onValueChange={handleWarehouseChange} name="warehouse-select-sidebar">
-                <SelectTrigger className="w-full bg-background border-border">
-                  <SelectValue placeholder="Seleccionar Almacén" />
-                </SelectTrigger>
-                <SelectContent>
-                  {warehouses.map((warehouse) => (
-                    <SelectItem key={warehouse.id} value={warehouse.id}>
-                      {warehouse.name}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-          )}
-        </div>
+      {/* Desktop Sidebar */}
+      <aside className={cn(
+        "hidden md:flex flex-shrink-0 border-r bg-card flex-col transition-all duration-300 ease-in-out",
+        isSidebarCollapsed ? "w-20" : "w-60"
+      )}>
+        <SidebarLayout
+          {...sidebarProps}
+          isMobileView={false}
+          isCollapsed={isSidebarCollapsed}
+          onSectionChange={handleSectionChange}
+          onToggleCollapse={() => setIsSidebarCollapsed(!isSidebarCollapsed)}
+        />
       </aside>
 
-      {/* Main Content */}
+      {/* Main Content Area */}
       <main className="flex-1 p-6 overflow-y-auto">
         {activeSection === 'Contador' && (
             <div id="contador-content" className="flex flex-col h-full">

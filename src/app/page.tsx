@@ -84,9 +84,10 @@ export default function Home() {
     false
   );
   // Simulated userId for multi-user context preparation
-  const [currentUserId, setCurrentUserId] = useLocalStorage<string>(
+  // Initialize with null to prevent hydration mismatch, generate client-side in useEffect
+  const [currentUserId, setCurrentUserId] = useLocalStorage<string | null>(
     LOCAL_STORAGE_USER_ID_KEY,
-    `user_${Math.random().toString(36).substr(2, 9)}` // Generate a random-ish default user ID
+    null
   );
   const [showUserIdInput, setShowUserIdInput] = useState(false);
 
@@ -119,10 +120,8 @@ export default function Home() {
 
   useEffect(() => {
     isMountedRef.current = true;
-    // Check if a userId exists, if not, prompt user or generate one
-    if (!getLocalStorageItem(LOCAL_STORAGE_USER_ID_KEY, '')) {
-        // For simplicity, we auto-generate one if not present.
-        // In a real multi-user app, this would be part of login.
+    // Generate userId client-side if it's null (not found in localStorage or initial state)
+    if (currentUserId === null) {
         const newUserId = `user_${Math.random().toString(36).substring(2, 11)}`;
         setCurrentUserId(newUserId);
         toast({title: "ID de Usuario", description: `ID de usuario generado: ${newUserId}. Puedes cambiarlo en la barra lateral.`});
@@ -130,7 +129,7 @@ export default function Home() {
     return () => {
       isMountedRef.current = false;
     };
-  }, [setCurrentUserId, toast]);
+  }, [currentUserId, setCurrentUserId, toast]);
 
   useEffect(() => {
     if (!currentWarehouseId || !isMountedRef.current) {
@@ -686,7 +685,7 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
         const currentWHName = getWarehouseName(currentWarehouseId);
         const historyEntry: CountingHistoryEntry = {
             id: new Date().toISOString(),
-            userId: currentUserId, // Associate with current user
+            userId: currentUserId || undefined, // Associate with current user, ensure it's string or undefined
             timestamp: new Date().toISOString(),
             warehouseId: currentWarehouseId,
             warehouseName: currentWHName,
@@ -696,7 +695,7 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
         await saveCountingHistory(historyEntry);
          if (!hideToast) {
             requestAnimationFrame(() => {
-                toast({ title: "Historial Guardado", description: `Conteo para ${currentWHName} (Usuario: ${currentUserId}) guardado.` });
+                toast({ title: "Historial Guardado", description: `Conteo para ${currentWHName} (Usuario: ${currentUserId || 'N/A'}) guardado.` });
             });
         }
     } catch (error: any) {
@@ -1089,8 +1088,8 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
                 </Label>
                 <div className="flex items-center gap-2 px-2">
                     <User className="h-4 w-4 text-muted-foreground" />
-                    <span id="user-id-display" className="text-sm truncate" title={currentUserId}>
-                        {currentUserId}
+                    <span id="user-id-display" className="text-sm truncate" title={currentUserId || undefined}>
+                        {currentUserId || 'Cargando...'}
                     </span>
                     <Button variant="ghost" size="icon" className="h-6 w-6" onClick={() => setShowUserIdInput(!showUserIdInput)} title="Cambiar ID de Usuario">
                         <Edit className="h-3.5 w-3.5" />
@@ -1100,7 +1099,7 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
                     <div className="px-2 space-y-1">
                         <Input
                             type="text"
-                            value={currentUserId}
+                            value={currentUserId || ""}
                             onChange={(e) => setCurrentUserId(e.target.value)}
                             placeholder="Ingresar ID de Usuario"
                             className="h-8 text-sm"
@@ -1239,7 +1238,7 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
                 <div id="history-content">
                     <CountingHistoryViewer
                         getWarehouseName={getWarehouseName}
-                        currentUserId={currentUserId} // Pass currentUserId
+                        currentUserId={currentUserId || undefined} // Pass currentUserId
                     />
                 </div>
             )}
@@ -1372,4 +1371,5 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
     </div>
   );
 }
+
 

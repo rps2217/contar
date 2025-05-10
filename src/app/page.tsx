@@ -6,7 +6,7 @@ import { useToast } from "@/hooks/use-toast";
 import { cn, getLocalStorageItem, setLocalStorageItem, debounce } from "@/lib/utils";
 import {
     AlertDialogAction, AlertDialogCancel, AlertDialogContent,
-    AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle
+    AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle as UIDialogTitle // Renamed to avoid conflict
 } from "@/components/ui/alert-dialog";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
@@ -48,7 +48,7 @@ import { ExpirationControl } from '@/components/expiration-control';
 import Papa from 'papaparse';
 import BarcodeScannerCamera from '@/components/barcode-scanner-camera';
 import { SidebarLayout } from '@/components/sidebar-layout';
-import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet";
+import { Sheet, SheetContent, SheetTrigger, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 
 
 // --- Constants ---
@@ -1110,7 +1110,10 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
               <MenuIcon className="h-5 w-5" />
             </Button>
           </SheetTrigger>
-          <SheetContent side="left" className="p-0 pt-4 w-[280px] sm:w-[320px] bg-card flex flex-col">
+          <SheetContent side="left" className="p-0 w-[280px] sm:w-[320px] bg-card flex flex-col">
+            <SheetHeader className="sr-only">
+              <SheetTitle>Menú Principal</SheetTitle>
+            </SheetHeader>
             <SidebarLayout
               {...sidebarProps}
               isMobileView={true}

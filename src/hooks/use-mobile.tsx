@@ -1,19 +1,23 @@
-import * as React from "react"
+import { useState, useEffect } from 'react';
 
-const MOBILE_BREAKPOINT = 768
+const MOBILE_BREAKPOINT = 768; // md breakpoint in Tailwind
 
 export function useIsMobile() {
-  const [isMobile, setIsMobile] = React.useState<boolean | undefined>(undefined)
+  const [isMobile, setIsMobile] = useState(false); // Default to false (desktop) on server
 
-  React.useEffect(() => {
-    const mql = window.matchMedia(`(max-width: ${MOBILE_BREAKPOINT - 1}px)`)
-    const onChange = () => {
-      setIsMobile(window.innerWidth < MOBILE_BREAKPOINT)
-    }
-    mql.addEventListener("change", onChange)
-    setIsMobile(window.innerWidth < MOBILE_BREAKPOINT)
-    return () => mql.removeEventListener("change", onChange)
-  }, [])
+  useEffect(() => {
+    // This effect runs only on the client
+    const mql = window.matchMedia(`(max-width: ${MOBILE_BREAKPOINT - 1}px)`);
+    
+    const handler = (event: MediaQueryListEvent | MediaQueryList) => {
+      setIsMobile(event.matches);
+    };
 
-  return !!isMobile
+    handler(mql); // Initial check for the media query state
+    mql.addEventListener('change', handler);
+
+    return () => mql.removeEventListener('change', handler);
+  }, []);
+
+  return isMobile;
 }

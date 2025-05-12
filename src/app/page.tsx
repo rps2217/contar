@@ -125,7 +125,8 @@ export default function Home() {
         const newUserId = `user_${Math.random().toString(36).substring(2, 11)}`;
         setLocalStorageItem(LOCAL_STORAGE_USER_ID_KEY, newUserId);
         setCurrentUserId(newUserId);
-        if(isMountedRef.current) { // Check if component is still mounted before toasting
+        // Only toast if component is still mounted
+        if (isMountedRef.current) {
           toast({title: "ID de Usuario", description: `ID de usuario generado: ${newUserId}. Puedes cambiarlo en la barra lateral.`});
         }
     }
@@ -165,7 +166,7 @@ export default function Home() {
         if(isMountedRef.current) setCountingList(loadedList.filter(item => item.warehouseId === currentWarehouseId));
     } else {
         if (savedList === null || (Array.isArray(savedList) && savedList.length > 0)) {
-             console.warn(`Invalid data structure in localStorage for warehouse ${currentWarehouseId}. Clearing.`);
+             // console.warn(`Invalid data structure in localStorage for warehouse ${currentWarehouseId}. Clearing.`);
         }
         if(typeof window !== 'undefined') localStorage.removeItem(savedListKey);
         if(isMountedRef.current) setCountingList([]);
@@ -240,7 +241,7 @@ export default function Home() {
     }
 
      if (trimmedBarcode === lastScannedBarcode) {
-         console.log("Duplicate scan prevented for barcode:", trimmedBarcode);
+         // console.log("Duplicate scan prevented for barcode:", trimmedBarcode);
          if(isMountedRef.current) setBarcode("");
          requestAnimationFrame(() => barcodeInputRef.current?.focus());
          return;
@@ -357,7 +358,7 @@ const modifyProductValue = useCallback(async (barcodeToUpdate: string, type: 'co
     setCountingList(prevList => {
         const productIndex = prevList.findIndex(p => p.barcode === barcodeToUpdate && p.warehouseId === currentWarehouseId);
         if (productIndex === -1) {
-             console.warn(`Product ${barcodeToUpdate} not found in list for warehouse ${currentWarehouseId} during modifyProductValue.`);
+             // console.warn(`Product ${barcodeToUpdate} not found in list for warehouse ${currentWarehouseId} during modifyProductValue.`);
              return prevList;
         }
 
@@ -368,7 +369,9 @@ const modifyProductValue = useCallback(async (barcodeToUpdate: string, type: 'co
         finalValue = Math.max(0, originalValue + change);
         const productStock = product.stock ?? 0;
 
-        needsConfirmation = type === 'count' && finalValue > productStock && originalValue <= productStock && productStock > 0;
+        if (type === 'count') {
+          needsConfirmation = finalValue > productStock && originalValue <= productStock && productStock > 0;
+        }
 
 
         if (needsConfirmation) {
@@ -417,7 +420,7 @@ const modifyProductValue = useCallback(async (barcodeToUpdate: string, type: 'co
                                  description: `Stock de ${newDbProduct.description} establecido a ${newDbProduct.stock} en la base de datos.`
                              });
                       } else {
-                           console.warn(`Cannot update stock in DB for ${barcodeToUpdate} as it's not found in current list either.`);
+                           // console.warn(`Cannot update stock in DB for ${barcodeToUpdate} as it's not found in current list either.`);
                       }
                 }
             } catch (error) {
@@ -464,7 +467,9 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
         finalValue = Math.max(0, calculatedValue);
         const productStock = product.stock ?? 0;
 
-        needsConfirmation = type === 'count' && finalValue > productStock && originalValue <= productStock && productStock > 0;
+        if (type === 'count') {
+            needsConfirmation = finalValue > productStock && originalValue <= productStock && productStock > 0;
+        }
 
 
         if (needsConfirmation) {
@@ -658,7 +663,7 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
             StockSistema: p.stock ?? 0,
             CantidadContada: p.count ?? 0,
             UltimaActualizacion: p.lastUpdated ? format(new Date(p.lastUpdated), 'yyyy-MM-dd HH:mm:ss') : 'N/A',
-            FechaVencimiento: p.expirationDate ? format(parseISO(p.expirationDate), 'yyyy-MM-dd') : 'N/A',
+            FechaVencimiento: p.expirationDate && isValid(parseISO(p.expirationDate)) ? format(parseISO(p.expirationDate), 'yyyy-MM-dd') : 'N/A',
         }));
 
         const csv = Papa.unparse(dataToExport, { header: true });
@@ -697,7 +702,7 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
     const currentListForWarehouse = countingList.filter(p => p.warehouseId === currentWarehouseId);
 
     if (currentListForWarehouse.length === 0) {
-        if (!hideToast) {
+        if (!hideToast && isMountedRef.current) {
              requestAnimationFrame(() => {
                  if(isMountedRef.current) toast({ title: "Vacío", description: "No hay productos en el inventario actual para guardar en el historial." });
             });
@@ -714,18 +719,18 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
             timestamp: new Date().toISOString(),
             warehouseId: currentWarehouseId,
             warehouseName: currentWHName,
-            products: JSON.parse(JSON.stringify(currentListForWarehouse))
+            products: JSON.parse(JSON.stringify(currentListForWarehouse)) // Deep copy
         };
 
         await saveCountingHistory(historyEntry);
-         if (!hideToast) {
+         if (!hideToast && isMountedRef.current) {
             requestAnimationFrame(() => {
                 if(isMountedRef.current) toast({ title: "Historial Guardado", description: `Conteo para ${currentWHName} (Usuario: ${currentUserId || 'N/A'}) guardado.` });
             });
         }
     } catch (error: any) {
         console.error("Error saving counting history:", error);
-         if (!hideToast) {
+         if (!hideToast && isMountedRef.current) {
              requestAnimationFrame(() => {
                  if(isMountedRef.current) toast({ variant: "destructive", title: "Error al Guardar Historial", description: error.message || "Ocurrió un error inesperado." });
              });
@@ -784,7 +789,7 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
                          updatedCurrentWarehouseList.push({
                              ...dbProduct,
                              warehouseId: currentWarehouseId,
-                             count: 0,
+                             count: 0, // New items added from DB to counting list start with count 0
                              lastUpdated: new Date().toISOString(),
                          });
                      }
@@ -829,15 +834,16 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
          if (dbProduct) {
              if (!isMountedRef.current) return;
              setProductToEditDetail(dbProduct);
-             setInitialStockForEdit(dbProduct.stock ?? 0);
+             setInitialStockForEdit(dbProduct.stock ?? 0); // Stock from DB
              setIsEditDetailDialogOpen(true);
          } else {
              if (!isMountedRef.current) return;
+             // If product not in DB, use current list item's data as placeholder
              const placeholderDetail: ProductDetail = {
                  barcode: product.barcode,
                  description: product.description,
                  provider: product.provider,
-                 stock: product.stock ?? 0,
+                 stock: product.stock ?? 0, // Use current list stock as initial if not in DB
                  expirationDate: product.expirationDate,
              };
              setProductToEditDetail(placeholderDetail);
@@ -858,29 +864,30 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
             setIsDbLoading(false);
          }
      }
- }, [toast]);
+ }, [toast]); // Removed initialStockForEdit from deps, it's set inside
 
  const handleEditDetailSubmit = useCallback(async (data: ProductDetail) => {
      if (!isMountedRef.current || !productToEditDetail) return;
      if(isMountedRef.current) setIsDbLoading(true);
      try {
          const updatedProductData: ProductDetail = {
-             barcode: productToEditDetail.barcode,
+             barcode: productToEditDetail.barcode, // Barcode is key, should not change here
              description: data.description.trim(),
              provider: data.provider?.trim() || "Desconocido",
-             stock: data.stock ?? 0,
+             stock: data.stock ?? 0, // This is the stock for the DB
              expirationDate: data.expirationDate || undefined,
          };
-         await addOrUpdateProductToDB(updatedProductData);
+         await addOrUpdateProductToDB(updatedProductData); // Update DB
          if (!isMountedRef.current) return;
 
+          // Update the counting list if the item is present
          setCountingList(prevList => prevList.map(item =>
              item.barcode === updatedProductData.barcode && item.warehouseId === currentWarehouseId
-                 ? {
+                 ? { // Update matching item in current warehouse list
                      ...item,
                      description: updatedProductData.description,
                      provider: updatedProductData.provider,
-                     stock: updatedProductData.stock,
+                     stock: updatedProductData.stock, // Sync stock in counting list
                      expirationDate: updatedProductData.expirationDate,
                      lastUpdated: new Date().toISOString()
                    }
@@ -910,42 +917,69 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
  }, [toast, currentWarehouseId, productToEditDetail]);
 
  const handleStartCountByProvider = useCallback(async (productsToCount: ProductDetail[]) => {
-     if (!isMountedRef.current) return;
-     if (!productsToCount || productsToCount.length === 0) {
-         requestAnimationFrame(() => {
-            if(isMountedRef.current) toast({ title: "Vacío", description: "No hay productos para este proveedor." });
-         });
-         return;
-     }
-     const productsWithWarehouseContext: DisplayProduct[] = productsToCount.map(dbProduct => ({
-         ...dbProduct,
-         warehouseId: currentWarehouseId,
-         stock: dbProduct.stock ?? 0,
-         count: 0,
-         lastUpdated: new Date().toISOString(),
-         expirationDate: dbProduct.expirationDate || undefined,
-     }));
-
-     if(isMountedRef.current) {
-        setCountingList(prevList => {
-            const otherWarehouseItems = prevList.filter(item => item.warehouseId !== currentWarehouseId);
-            const newList = [...productsWithWarehouseContext, ...otherWarehouseItems];
-             newList.sort((a, b) => {
-                   if (a.warehouseId === currentWarehouseId && b.warehouseId !== currentWarehouseId) return -1;
-                   if (a.warehouseId !== currentWarehouseId && b.warehouseId === currentWarehouseId) return 1;
-                   if (a.warehouseId === currentWarehouseId && b.warehouseId === currentWarehouseId) {
-                       return new Date(b.lastUpdated!).getTime() - new Date(a.lastUpdated!).getTime();
-                   }
-                   return 0;
-               });
-            return newList;
+    if (!isMountedRef.current) return;
+    if (!productsToCount || productsToCount.length === 0) {
+        requestAnimationFrame(() => {
+           if(isMountedRef.current) toast({ title: "Vacío", description: "No hay productos para este proveedor." });
         });
-        setActiveSection("Contador");
-      }
-      requestAnimationFrame(() => {
-         if(isMountedRef.current) toast({ title: "Conteo por Proveedor Iniciado", description: `Cargados ${productsToCount.length} productos para ${getWarehouseName(currentWarehouseId)}.` });
-      });
- }, [toast, setActiveSection, currentWarehouseId, getWarehouseName]);
+        return;
+    }
+   const productsWithWarehouseContext: DisplayProduct[] = productsToCount.map(dbProduct => ({
+       ...dbProduct,
+       warehouseId: currentWarehouseId,
+       stock: dbProduct.stock ?? 0,
+       count: 0, // Reset count for new counting session by provider
+       lastUpdated: new Date().toISOString(),
+       expirationDate: dbProduct.expirationDate || undefined,
+   }));
+
+   if(isMountedRef.current) {
+     setCountingList(prevList => {
+         const otherWarehouseItems = prevList.filter(item => item.warehouseId !== currentWarehouseId);
+         
+         // Create a map of the new products for efficient lookup
+         const newProductsMap = new Map(productsWithWarehouseContext.map(p => [p.barcode, p]));
+         
+         // Get existing items for the current warehouse, update them if they are in the new list
+         let itemsForCurrentWarehouse = prevList
+             .filter(item => item.warehouseId === currentWarehouseId)
+             .map(existingItem => {
+                 if (newProductsMap.has(existingItem.barcode)) {
+                     // If item exists in new list, use the new item's data (count is reset)
+                     const updatedItem = newProductsMap.get(existingItem.barcode)!;
+                     newProductsMap.delete(existingItem.barcode); // Remove from map as it's processed
+                     return updatedItem;
+                 }
+                 // If not in the new provider list, decide whether to keep or remove.
+                 // For "start count by provider", typically we only want provider's products.
+                 // However, to avoid data loss of manually scanned items, we might keep them OR clear them.
+                 // Current logic: keep them. If want to replace entirely:
+                 // return null; and then filter out nulls.
+                 // For now, let's assume we replace the current list for this warehouse with ONLY provider products
+                 return null; 
+             })
+             .filter(item => item !== null) as DisplayProduct[]; // Filter out items not part of provider list (if logic above is changed to return null)
+
+         // Add all products from the provider list (as newProductsMap now only contains those not used for updates)
+         itemsForCurrentWarehouse = [...Array.from(newProductsMap.values())]; //This effectively replaces the list for the current warehouse
+         
+         const newList = [...itemsForCurrentWarehouse, ...otherWarehouseItems];
+           newList.sort((a, b) => { // Keep sorting logic
+                 if (a.warehouseId === currentWarehouseId && b.warehouseId !== currentWarehouseId) return -1;
+                 if (a.warehouseId !== currentWarehouseId && b.warehouseId === currentWarehouseId) return 1;
+                 if (a.warehouseId === currentWarehouseId && b.warehouseId === currentWarehouseId) {
+                     return new Date(b.lastUpdated!).getTime() - new Date(a.lastUpdated!).getTime();
+                 }
+                 return 0;
+             });
+         return newList;
+     });
+     setActiveSection("Contador");
+     }
+     requestAnimationFrame(() => {
+        if(isMountedRef.current) toast({ title: "Conteo por Proveedor Iniciado", description: `Cargados ${productsToCount.length} productos para ${getWarehouseName(currentWarehouseId)}.` });
+     });
+}, [toast, setActiveSection, currentWarehouseId, getWarehouseName]);
 
 
   const filteredCountingList = useMemo(() => {
@@ -969,9 +1003,9 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
 
    const handleWarehouseChange = useCallback((newWarehouseId: string) => {
          if (newWarehouseId !== currentWarehouseId) {
-             if(isMountedRef.current) setIsDbLoading(true);
+             if(isMountedRef.current) setIsDbLoading(true); // To show loading while new list is prepared
              if(isMountedRef.current) setCurrentWarehouseId(newWarehouseId);
-             if(isMountedRef.current) setSearchTerm("");
+             if(isMountedRef.current) setSearchTerm(""); // Clear search term for new warehouse
          }
    }, [currentWarehouseId, setCurrentWarehouseId]);
 
@@ -986,7 +1020,7 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
                     return prevWarehouses;
                 }
                 const updatedWarehouses = [...prevWarehouses, newWarehouse];
-                handleWarehouseChange(newWarehouse.id);
+                handleWarehouseChange(newWarehouse.id); // Switch to the new warehouse
                 requestAnimationFrame(() => {
                     if(isMountedRef.current) toast({title: "Almacén Agregado", description: `Cambiado al nuevo almacén: ${newWarehouse.name}`});
                  });
@@ -998,13 +1032,13 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
    const handleUpdateWarehouses = useCallback((updatedWarehouses: { id: string; name: string }[]) => {
         if(isMountedRef.current) setWarehouses(updatedWarehouses);
          if (!updatedWarehouses.some(w => w.id === currentWarehouseId)) {
-             const newCurrentId = updatedWarehouses[0]?.id || 'main';
-             if (newCurrentId !== currentWarehouseId) {
+             const newCurrentId = updatedWarehouses[0]?.id || 'main'; // Fallback to first or 'main'
+             if (newCurrentId !== currentWarehouseId) { // Only change if current is no longer valid
                  handleWarehouseChange(newCurrentId);
                   requestAnimationFrame(() => {
                      if(isMountedRef.current) toast({title: "Almacén Actualizado", description: `Almacén actual cambiado a ${getWarehouseName(newCurrentId)}.`});
                   });
-             } else if (updatedWarehouses.length === 0) {
+             } else if (updatedWarehouses.length === 0) { // If all warehouses deleted, restore 'main'
                   const defaultWarehouse = { id: 'main', name: 'Almacén Principal' };
                   if(isMountedRef.current) setWarehouses([defaultWarehouse]);
                   handleWarehouseChange(defaultWarehouse.id);
@@ -1027,11 +1061,12 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
     if (!isMountedRef.current) return;
     if(isMountedRef.current) setIsDbLoading(true);
     try {
-      await clearAllDatabases();
+      await clearAllDatabases(); // Clears IndexedDB stores
+      // Clear localStorage for all known warehouses
       warehouses.forEach(warehouse => {
         if(typeof window !== 'undefined') localStorage.removeItem(`${LOCAL_STORAGE_COUNTING_LIST_KEY_PREFIX}${warehouse.id}`);
       });
-      if(isMountedRef.current) setCountingList([]);
+      if(isMountedRef.current) setCountingList([]); // Clear current in-memory list
       requestAnimationFrame(() => {
           if(isMountedRef.current) toast({ title: "Base de Datos Borrada", description: "Todos los productos, el historial de conteos y las listas de inventario locales han sido eliminados." });
       });
@@ -1045,20 +1080,20 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
       }
        if(isMountedRef.current) setIsClearAllDataConfirmOpen(false);
     }
-  }, [toast, warehouses]);
+  }, [toast, warehouses]); // warehouses dependency is important here for clearing all lists
 
 
   const handleCameraScanSuccess = useCallback((scannedBarcode: string) => {
     if (scannedBarcode && isMountedRef.current) {
-      setJustScannedBarcode(scannedBarcode);
-      setIsCameraScannerActive(false);
+      setJustScannedBarcode(scannedBarcode); // Trigger effect to add product
+      setIsCameraScannerActive(false); // Close scanner on success
     }
   }, []); // Removed dependencies to ensure stable reference
 
   useEffect(() => {
     if (justScannedBarcode && !isCameraScannerActive && isMountedRef.current) {
       handleAddProduct(justScannedBarcode); // handleAddProduct should also be stable or wrapped in useCallback
-      setJustScannedBarcode(null);
+      setJustScannedBarcode(null); // Reset for next scan
     }
   }, [justScannedBarcode, isCameraScannerActive, handleAddProduct]); // Added handleAddProduct as it's used
 
@@ -1070,7 +1105,7 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
           title: "Error de Escáner",
           description: error.message || "No se pudo escanear el código de barras.",
         });
-        setIsCameraScannerActive(false);
+        setIsCameraScannerActive(false); // Close scanner on error
     }
   },[toast]);
 
@@ -1188,7 +1223,7 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
                         onDecrement={handleDecrement}
                         onIncrement={handleIncrement}
                         onEditDetailRequest={handleOpenEditDetailDialog}
-                        tableHeightClass="h-full"
+                        tableHeightClass="h-full" // Adjust height as needed, or make it dynamic
                     />
                 </div>
 
@@ -1367,6 +1402,7 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
                try {
                    await deleteProductFromDB(barcode);
                    if (!isMountedRef.current) return;
+                   // Also remove from current counting list if present
                    setCountingList(prevList => prevList.filter(p => !(p.barcode === barcode && p.warehouseId === currentWarehouseId)));
                     requestAnimationFrame(() => {
                        if(isMountedRef.current) toast({title: "Producto Eliminado (DB)", description: `Producto ${barcode} eliminado de la base de datos.`});
@@ -1383,16 +1419,17 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
                } finally {
                     if (isMountedRef.current) {
                         setIsDbLoading(false);
-                        setIsDeleteDialogOpen(false); 
-                        setProductToDelete(null);
+                        // setIsDeleteDialogOpen(false); // This was likely a typo and should be removed or conditional
+                        // setProductToDelete(null);
                     }
                }
            }}
          isProcessing={isDbLoading}
          initialStock={initialStockForEdit}
-         context="countingList"
+         context="countingList" // Or 'database' depending on where it's called from
          warehouseName={getWarehouseName(currentWarehouseId)}
       />
     </div>
   );
 }
+

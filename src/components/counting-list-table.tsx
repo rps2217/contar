@@ -50,12 +50,12 @@ export const CountingListTable: React.FC<CountingListTableProps> = ({
           </TableRow>
         </TableHeader>
         <TableBody>
-          {countingList.map((product, index) => {
+          {countingList.map((product) => { // Removed index from map
              const lastUpdatedDate = product.lastUpdated ? new Date(product.lastUpdated) : null;
              const isValidLastUpdate = lastUpdatedDate && isValid(lastUpdatedDate);
              const expirationDate = product.expirationDate ? parseISO(product.expirationDate) : null;
-             const isValidExpiration = expirationDate && isValid(expirationDate);
-             const uniqueKey = `${product.barcode}-${product.warehouseId || 'unknown'}-${index}`;
+             const isValidExpiration = expirationDate && isValid(expirationDate);             
+             const uniqueKey = `${product.barcode}-${product.warehouseId || 'unknown'}`; // Removed index
             return (
                 <TableRow
                 key={uniqueKey}
@@ -63,7 +63,7 @@ export const CountingListTable: React.FC<CountingListTableProps> = ({
                     "hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors duration-150",
                     product.count === product.stock && product.stock !== 0 ? "bg-green-50 dark:bg-green-900/30" : ""
                 )}
-                aria-rowindex={index + 1}
+                aria-rowindex={countingList.indexOf(product) + 1} // Use indexOf for aria-rowindex if needed
                 >
                 <TableCell
                     className="px-4 py-3 font-medium text-gray-900 dark:text-gray-100"
@@ -195,3 +195,4 @@ export const CountingListTable: React.FC<CountingListTableProps> = ({
     </ScrollArea>
   );
 };
+

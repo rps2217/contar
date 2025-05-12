@@ -5,7 +5,7 @@ import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { getAllProductsFromDB, addOrUpdateProductToDB } from '@/lib/database';
 import type { ProductDetail } from '@/types/product';
 import { useToast } from "@/hooks/use-toast";
-import { format, parseISO, differenceInDays, addDays, isValid } from 'date-fns';
+import { format, parseISO, differenceInDays, isValid as isValidDate, endOfDay } from 'date-fns';
 import { es } from 'date-fns/locale';
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -31,8 +31,8 @@ const EXPIRATION_THRESHOLD_SOON_DAYS = 30; // Products expiring in 30 days or le
 const EXPIRATION_THRESHOLD_VERY_SOON_DAYS = 7; // Products expiring in 7 days or less are "very soon"
 
 export const ExpirationControl: React.FC = () => {
-  const [products, setProducts] = useState<ProductDetail[]>([]);
-  const [isLoading, setIsLoading] = useState(true);
+  const [products, setProducts] = useState<ProductDetail[]>([]); // Initialize with empty array
+  const [isLoading, setIsLoading] = useState(false); // Initially not loading
   const [error, setError] = useState<string | null>(null);
   const { toast } = useToast();
 
@@ -41,8 +41,8 @@ export const ExpirationControl: React.FC = () => {
   const [selectedProduct, setSelectedProduct] = useState<ProductDetail | null>(null);
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
-
   const [dateFilter, setDateFilter] = useState<{ from?: Date; to?: Date } | undefined>(undefined);
+  const [hasUserInteracted, setHasUserInteracted] = useState(false);
 
 
   const loadProducts = useCallback(async () => {
@@ -54,39 +54,54 @@ export const ExpirationControl: React.FC = () => {
     } catch (err: any) {
       console.error("Error loading products for expiration control:", err);
       setError("No se pudo cargar la información de productos.");
-      toast({
-        variant: "destructive",
-        title: "Error al Cargar Productos",
-        description: err.message || "Ocurrió un error desconocido.",
-      });
+      if (typeof window !== 'undefined') { // Ensure toast is called client-side
+        toast({
+          variant: "destructive",
+          title: "Error al Cargar Productos",
+          description: err.message || "Ocurrió un error desconocido.",
+        });
+      }
     } finally {
       setIsLoading(false);
     }
   }, [toast]);
 
   useEffect(() => {
-    loadProducts();
-  }, [loadProducts]);
+    const filtersAreActive =
+      searchTerm !== "" ||
+      filterStatus !== "all" ||
+      (dateFilter?.from !== undefined || dateFilter?.to !== undefined);
+
+    if (filtersAreActive) {
+      if (!hasUserInteracted) {
+        setHasUserInteracted(true);
+      }
+      loadProducts();
+    } else {
+      // If filters are reset to default and user had previously interacted
+      if (hasUserInteracted) {
+        setProducts([]); // Clear products to achieve "clean" state
+      }
+    }
+  }, [searchTerm, filterStatus, dateFilter, loadProducts, hasUserInteracted]);
+
 
   const getExpirationStatus = useCallback((expirationDate?: string): { status: "expired" | "very_soon" | "soon" | "valid" | "no_date"; daysLeft?: number; label: string; colorClass: string } => {
     if (!expirationDate) {
-      return { status: "no_date", label: "Sin Fecha", colorClass: "text-gray-500 dark:text-gray-400" };
+      return { status: "no_date", label: "Sin Fecha", colorClass: "text-muted-foreground" };
     }
     const today = new Date();
-    today.setHours(0,0,0,0); // Normalize today to start of day
-    
+    today.setHours(0,0,0,0);
+
     let expDate: Date;
     try {
-        expDate = parseISO(expirationDate); // Assumes YYYY-MM-DD
-         if (!isValid(expDate)) {
-            console.warn(`Invalid date string encountered: ${expirationDate}`);
+        expDate = parseISO(expirationDate);
+         if (!isValidDate(expDate)) {
             return { status: "no_date", label: "Fecha Inválida", colorClass: "text-orange-500 dark:text-orange-400" };
         }
     } catch(e) {
-        console.warn(`Error parsing date string: ${expirationDate}`, e);
         return { status: "no_date", label: "Error Fecha", colorClass: "text-orange-500 dark:text-orange-400" };
     }
-
 
     const days = differenceInDays(expDate, today);
 
@@ -103,11 +118,16 @@ export const ExpirationControl: React.FC = () => {
   }, []);
 
   const filteredAndSortedProducts = useMemo(() => {
+    if (!hasUserInteracted && products.length === 0 && searchTerm === "" && filterStatus === "all" && !dateFilter) {
+        return []; // Initial clean state, don't process if no interaction and products not loaded yet
+    }
+
     const lowerSearchTerm = searchTerm.toLowerCase();
     
-    return products
+    return products // products might be empty if filters are reset
       .map(p => ({ ...p, expirationInfo: getExpirationStatus(p.expirationDate) }))
       .filter(p => {
+        // If products are empty (e.g., after reset), this filter won't run on any items
         const matchesSearch = !searchTerm ||
                               p.description.toLowerCase().includes(lowerSearchTerm) ||
                               p.barcode.includes(lowerSearchTerm) ||
@@ -124,38 +144,34 @@ export const ExpirationControl: React.FC = () => {
         let matchesDateRange = true;
         if (dateFilter?.from && p.expirationDate) {
             const expDate = parseISO(p.expirationDate);
-            if (!isValid(expDate)) { // If date is invalid, don't match range
-                matchesDateRange = p.expirationInfo.status === "no_date"; // only show if filter is no_date
+            if (!isValidDate(expDate)) {
+                matchesDateRange = p.expirationInfo.status === "no_date";
             } else {
                 matchesDateRange = expDate >= dateFilter.from;
                 if (dateFilter.to && matchesDateRange) {
                     matchesDateRange = expDate <= endOfDay(dateFilter.to);
                 }
             }
-        } else if (dateFilter?.from && !p.expirationDate) { // Product has no date, but filter is active
+        } else if (dateFilter?.from && !p.expirationDate) {
             matchesDateRange = false;
         }
-
 
         return matchesSearch && matchesStatus && matchesDateRange;
       })
       .sort((a, b) => {
-        // Primary sort: by days left (soonest first, then valid, then no_date)
         if (a.expirationInfo.status === "no_date" && b.expirationInfo.status !== "no_date") return 1;
         if (a.expirationInfo.status !== "no_date" && b.expirationInfo.status === "no_date") return -1;
         if (a.expirationInfo.status === "no_date" && b.expirationInfo.status === "no_date") return 0;
 
-        // Both have dates
-        const daysA = a.expirationInfo.daysLeft ?? Infinity; // Treat undefined days (valid far out) as very large
+        const daysA = a.expirationInfo.daysLeft ?? Infinity;
         const daysB = b.expirationInfo.daysLeft ?? Infinity;
         
         if (daysA !== daysB) {
-            return daysA - daysB; // Sort by days left, ascending (expired first)
+            return daysA - daysB;
         }
-        // Secondary sort: by description if days are equal
         return a.description.localeCompare(b.description);
       });
-  }, [products, searchTerm, filterStatus, getExpirationStatus, dateFilter]);
+  }, [products, searchTerm, filterStatus, getExpirationStatus, dateFilter, hasUserInteracted]);
 
   const handleEditProduct = useCallback((product: ProductDetail) => {
     setSelectedProduct(product);
@@ -166,22 +182,31 @@ export const ExpirationControl: React.FC = () => {
     setIsProcessing(true);
     try {
       await addOrUpdateProductToDB(data);
-      toast({ title: "Producto Actualizado", description: `Se actualizó la fecha de vencimiento para ${data.description}.` });
+       if (typeof window !== 'undefined') {
+        toast({ title: "Producto Actualizado", description: `Se actualizó la fecha de vencimiento para ${data.description}.` });
+      }
       setIsEditModalOpen(false);
       setSelectedProduct(null);
-      await loadProducts(); // Reload products to reflect changes
+      // Reload products only if filters were active, to reflect changes in the current view
+      const filtersAreActive = searchTerm !== "" || filterStatus !== "all" || (dateFilter?.from || dateFilter?.to);
+      if (filtersAreActive) {
+          await loadProducts();
+      } else {
+          setProducts([]); // Keep list clean if no filters are active
+      }
     } catch (error: any) {
-      toast({ variant: "destructive", title: "Error al Actualizar", description: error.message });
+       if (typeof window !== 'undefined') {
+        toast({ variant: "destructive", title: "Error al Actualizar", description: error.message });
+      }
     } finally {
       setIsProcessing(false);
     }
-  }, [toast, loadProducts]);
+  }, [toast, loadProducts, searchTerm, filterStatus, dateFilter]);
 
   return (
     <div className="p-4 md:p-6 space-y-6">
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
         <h2 className="text-2xl font-bold">Control de Vencimientos</h2>
-        {/* Add any high-level actions here if needed, e.g., export report */}
       </div>
 
       <div className="flex flex-col md:flex-row gap-4 p-4 border rounded-lg bg-card dark:bg-gray-800 shadow-sm items-center">
@@ -207,7 +232,7 @@ export const ExpirationControl: React.FC = () => {
             <SelectValue placeholder="Filtrar estado" />
           </SelectTrigger>
           <SelectContent>
-            <SelectItem value="all">Todos</SelectItem>
+            <SelectItem value="all">Todos los Estados</SelectItem>
             <SelectItem value="expired">Vencidos</SelectItem>
             <SelectItem value="soon">Próximos a Vencer</SelectItem>
             <SelectItem value="valid">Válidos</SelectItem>
@@ -257,12 +282,18 @@ export const ExpirationControl: React.FC = () => {
            <AlertCircle className="h-4 w-4" /> <AlertTitle>Error</AlertTitle> <AlertDescription>{error}</AlertDescription>
          </Alert>
       )}
-      {!isLoading && !error && products.length === 0 && (
-        <p className="text-center text-muted-foreground py-10">No hay productos en la base de datos.</p>
+      
+      {/* Message display logic */}
+      {!isLoading && !error && !hasUserInteracted && products.length === 0 && (
+         <p className="text-center text-muted-foreground py-10">Utilice los filtros para buscar productos y ver su estado de vencimiento.</p>
       )}
-      {!isLoading && !error && products.length > 0 && filteredAndSortedProducts.length === 0 && (
+      {!isLoading && !error && hasUserInteracted && products.length === 0 && (
+          <p className="text-center text-muted-foreground py-10">No hay productos en la base de datos que coincidan con su búsqueda o la base de datos está vacía.</p>
+      )}
+       {!isLoading && !error && hasUserInteracted && products.length > 0 && filteredAndSortedProducts.length === 0 && (
           <p className="text-center text-muted-foreground py-10">No se encontraron productos con los filtros aplicados.</p>
       )}
+
 
       {!isLoading && !error && filteredAndSortedProducts.length > 0 && (
         <ScrollArea className="h-[calc(100vh-350px)] border rounded-lg shadow-sm bg-card dark:bg-gray-800">
@@ -287,7 +318,7 @@ export const ExpirationControl: React.FC = () => {
                   <TableCell className="px-3 py-2">{item.provider || 'N/A'}</TableCell>
                   <TableCell className="px-3 py-2 text-center tabular-nums">{item.stock ?? 0}</TableCell>
                   <TableCell className="px-3 py-2 text-center tabular-nums">
-                    {item.expirationDate ? format(parseISO(item.expirationDate), 'dd/MM/yyyy', {locale: es}) : 'N/A'}
+                    {item.expirationDate && isValidDate(parseISO(item.expirationDate)) ? format(parseISO(item.expirationDate), 'dd/MM/yyyy', {locale: es}) : 'N/A'}
                   </TableCell>
                   <TableCell className={cn("px-3 py-2 text-center tabular-nums", item.expirationInfo.colorClass)}>
                     {item.expirationInfo.label}
@@ -317,7 +348,7 @@ export const ExpirationControl: React.FC = () => {
             setSelectedDetail={setSelectedProduct}
             onSubmit={handleEditSubmit}
             isProcessing={isProcessing}
-            context="expiration" // Specific context for expiration editing
+            context="expiration" 
             />
         )}
     </div>

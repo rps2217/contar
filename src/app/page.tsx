@@ -23,7 +23,7 @@ import {
 import { WarehouseManagement } from "@/components/warehouse-management";
 import { format, isValid, parseISO } from 'date-fns';
 import { es } from 'date-fns/locale';
-import { Minus, Plus, Trash, RefreshCw, Warehouse as WarehouseIcon, Search, Check, AppWindow, Database, Boxes, Loader2, History as HistoryIcon, CalendarIcon, Save, Edit, Download, BarChart, Settings, AlertTriangle, Camera, XCircle, Menu as MenuIcon, User, ShieldAlert, Filter, PanelLeftClose, PanelRightOpen } from "lucide-react";
+import { Minus, Plus, Trash, RefreshCw, Search, AppWindow, Database, Boxes, Loader2, History as HistoryIcon, CalendarIcon, Save, Edit, Download, BarChart, Settings, AlertTriangle, XCircle, Menu as MenuIcon, User, ShieldAlert, Filter, PanelLeftClose, PanelRightOpen } from "lucide-react";
 import React, { useCallback, useEffect, useRef, useState, useMemo } from "react";
 import { playBeep } from '@/lib/helpers';
 import { BarcodeEntry } from '@/components/barcode-entry';
@@ -46,7 +46,6 @@ import { CountingHistoryViewer } from '@/components/counting-history-viewer';
 import { DiscrepancyReportViewer } from '@/components/discrepancy-report-viewer';
 import { ExpirationControl } from '@/components/expiration-control';
 import Papa from 'papaparse';
-import BarcodeScannerCamera from '@/components/barcode-scanner-camera';
 import { SidebarLayout } from '@/components/sidebar-layout';
 import { Sheet, SheetContent, SheetTrigger, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 
@@ -109,8 +108,6 @@ export default function Home() {
   const [productToEditDetail, setProductToEditDetail] = useState<ProductDetail | null>(null);
   const [initialStockForEdit, setInitialStockForEdit] = useState<number>(0);
   const [isClearAllDataConfirmOpen, setIsClearAllDataConfirmOpen] = useState(false);
-  const [isCameraScannerActive, setIsCameraScannerActive] = useState(false);
-  const [justScannedBarcode, setJustScannedBarcode] = useState<string | null>(null);
   const [mobileSheetOpen, setMobileSheetOpen] = useState(false);
 
 
@@ -1083,33 +1080,6 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
   }, [toast, warehouses]); // warehouses dependency is important here for clearing all lists
 
 
-  const handleCameraScanSuccess = useCallback((scannedBarcode: string) => {
-    if (scannedBarcode && isMountedRef.current) {
-      setJustScannedBarcode(scannedBarcode); // Trigger effect to add product
-      setIsCameraScannerActive(false); // Close scanner on success
-    }
-  }, []); // Removed dependencies to ensure stable reference
-
-  useEffect(() => {
-    if (justScannedBarcode && !isCameraScannerActive && isMountedRef.current) {
-      handleAddProduct(justScannedBarcode); // handleAddProduct should also be stable or wrapped in useCallback
-      setJustScannedBarcode(null); // Reset for next scan
-    }
-  }, [justScannedBarcode, isCameraScannerActive, handleAddProduct]); // Added handleAddProduct as it's used
-
-
-  const handleCameraScanError = useCallback((error: Error) => {
-    if(isMountedRef.current) {
-        toast({
-          variant: "destructive",
-          title: "Error de Escáner",
-          description: error.message || "No se pudo escanear el código de barras.",
-        });
-        setIsCameraScannerActive(false); // Close scanner on error
-    }
-  },[toast]);
-
-
   const sectionItems = useMemo(() => [
     { name: 'Contador', icon: AppWindow, label: `Contador (${getWarehouseName(currentWarehouseId)})`},
     { name: 'Base de Datos', icon: Database, label: 'Base de Datos' },
@@ -1190,16 +1160,7 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
                     isLoading={isDbLoading || isRefreshingStock || isSavingToHistory}
                     isRefreshingStock={isRefreshingStock}
                     inputRef={barcodeInputRef}
-                    onToggleCameraScanner={() => setIsCameraScannerActive(prev => !prev)}
-                    isCameraScannerActive={isCameraScannerActive}
                 />
-                 {isCameraScannerActive && (
-                   <BarcodeScannerCamera
-                     onScanSuccess={handleCameraScanSuccess}
-                     onScanError={handleCameraScanError}
-                     onClose={() => setIsCameraScannerActive(false)}
-                   />
-                 )}
                  <div className="relative mb-4">
                     <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
                     <Input
@@ -1432,4 +1393,3 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
     </div>
   );
 }
-

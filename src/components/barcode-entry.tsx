@@ -2,7 +2,7 @@
 import React from 'react';
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
-import { RefreshCw, Camera, XCircle } from "lucide-react";
+import { RefreshCw } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 interface BarcodeEntryProps {
@@ -13,8 +13,6 @@ interface BarcodeEntryProps {
   isLoading: boolean; 
   isRefreshingStock: boolean; 
   inputRef: React.RefObject<HTMLInputElement>;
-  onToggleCameraScanner: () => void;
-  isCameraScannerActive: boolean;
 }
 
 export const BarcodeEntry: React.FC<BarcodeEntryProps> = ({
@@ -25,8 +23,6 @@ export const BarcodeEntry: React.FC<BarcodeEntryProps> = ({
   isLoading,
   isRefreshingStock,
   inputRef,
-  onToggleCameraScanner,
-  isCameraScannerActive,
 }) => {
   const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
     if (e.key === "Enter") {
@@ -53,24 +49,9 @@ export const BarcodeEntry: React.FC<BarcodeEntryProps> = ({
         ref={inputRef}
         onKeyDown={handleKeyDown}
         aria-label="Código de barras"
-        disabled={isAnyLoadingActive || isCameraScannerActive} // Disable input if camera is active
+        disabled={isAnyLoadingActive}
       />
       <div className="flex w-full sm:w-auto items-center gap-2 mt-2 sm:mt-0"> {/* Button group */}
-        <Button
-          onClick={onToggleCameraScanner}
-          variant={isCameraScannerActive ? "destructive" : "default"} // Primary when inactive, destructive when active
-          size="icon"
-          className={cn(
-            "h-10 w-10", // Standard icon button size
-            !isCameraScannerActive && "bg-purple-600 hover:bg-purple-700 text-white", // Purple for open camera
-            isCameraScannerActive && "bg-red-600 hover:bg-red-700 text-white" // Red for close camera (XCircle)
-          )}
-          disabled={isAnyLoadingActive}
-          aria-label={isCameraScannerActive ? "Cerrar Escáner de Cámara" : "Abrir Escáner de Cámara"}
-          title={isCameraScannerActive ? "Cerrar Escáner de Cámara" : "Abrir Escáner de Cámara"}
-        >
-          {isCameraScannerActive ? <XCircle className="h-5 w-5" /> : <Camera className="h-5 w-5" />}
-        </Button>
         <Button
           onClick={onAddProduct}
           variant="outline" // Make "Add" button secondary
@@ -79,7 +60,7 @@ export const BarcodeEntry: React.FC<BarcodeEntryProps> = ({
             "text-teal-600 border-teal-500 hover:bg-teal-50 dark:text-teal-400 dark:border-teal-600 dark:hover:bg-teal-900/50"
           )}
           aria-label="Agregar producto al almacén actual"
-          disabled={isAnyLoadingActive || !barcode.trim() || isCameraScannerActive} // Disable if camera active
+          disabled={isAnyLoadingActive || !barcode.trim()}
         >
           Agregar
         </Button>

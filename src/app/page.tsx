@@ -23,7 +23,7 @@ import {
 import { WarehouseManagement } from "@/components/warehouse-management";
 import { format, isValid, parseISO } from 'date-fns';
 import { es } from 'date-fns/locale';
-import { Minus, Plus, Trash, RefreshCw, Search, AppWindow, Database, Boxes, Loader2, History as HistoryIcon, CalendarIcon, Save, Edit, Download, BarChart, Settings, AlertTriangle, XCircle, Menu as MenuIcon, User, ShieldAlert, Filter, PanelLeftClose, PanelRightOpen } from "lucide-react";
+import { Minus, Plus, Trash, RefreshCw, Search, AppWindow, Database, Boxes, Loader2, History as HistoryIcon, CalendarIcon, Save, Edit, Download, BarChart, Settings, AlertTriangle, XCircle, Menu as MenuIcon, User, ShieldAlert, Filter, PanelLeftClose, PanelRightOpen, PackageSearch, CalendarClock, BookOpenText, Users2, ClipboardList } from "lucide-react";
 import React, { useCallback, useEffect, useRef, useState, useMemo } from "react";
 import { playBeep } from '@/lib/helpers';
 import { BarcodeEntry } from '@/components/barcode-entry';
@@ -156,7 +156,7 @@ export default function Home() {
         return;
     }
     if(isMountedRef.current) setIsDbLoading(true);
-    const savedListKey = `${LOCAL_STORAGE_COUNTING_LIST_KEY_PREFIX}${currentWarehouseId}`;
+    const savedListKey = `${LOCAL_STORAGE_COUNTING_LIST_KEY_PREFIX}${currentWarehouseId}_${currentUserId}`;
     let savedList: DisplayProduct[] = getLocalStorageItem<DisplayProduct[]>(savedListKey, []);
 
     if (Array.isArray(savedList) && savedList.every(item => typeof item?.barcode === 'string')) {
@@ -178,13 +178,13 @@ export default function Home() {
         if(isMountedRef.current) setCountingList([]);
     }
     if(isMountedRef.current) setIsDbLoading(false);
- }, [currentWarehouseId]);
+ }, [currentWarehouseId, currentUserId]);
 
  const debouncedSaveCountingList = useMemo(
     () =>
-      debounce((list: DisplayProduct[], warehouseId: string) => {
-        if (!warehouseId || !isMountedRef.current) return;
-        const key = `${LOCAL_STORAGE_COUNTING_LIST_KEY_PREFIX}${warehouseId}`;
+      debounce((list: DisplayProduct[], warehouseId: string, userId: string | null) => {
+        if (!warehouseId || !isMountedRef.current || !userId) return;
+        const key = `${LOCAL_STORAGE_COUNTING_LIST_KEY_PREFIX}${warehouseId}_${userId}`;
         const listToSave = list.filter(item => item.warehouseId === warehouseId);
         setLocalStorageItem(key, listToSave);
       }, LOCAL_STORAGE_SAVE_DEBOUNCE_MS),
@@ -192,13 +192,13 @@ export default function Home() {
   );
 
   useEffect(() => {
-    if (!isDbLoading && isMountedRef.current && currentWarehouseId) {
-      debouncedSaveCountingList(countingList, currentWarehouseId);
+    if (!isDbLoading && isMountedRef.current && currentWarehouseId && currentUserId) {
+      debouncedSaveCountingList(countingList, currentWarehouseId, currentUserId);
     }
     return () => {
        debouncedSaveCountingList.clear?.();
     };
-  }, [countingList, currentWarehouseId, isDbLoading, debouncedSaveCountingList]);
+  }, [countingList, currentWarehouseId, isDbLoading, debouncedSaveCountingList, currentUserId]);
 
 
   // --- Helper Functions ---
@@ -329,7 +329,7 @@ export default function Home() {
                     toast({
                         variant: "destructive",
                         title: "Producto Desconocido",
-                        description: `Producto ${trimmedBarcode} no encontrado. Agregado temporalmente. Edita en 'Base de Datos'.`,
+                        description: `Producto ${trimmedBarcode} no encontrado. Agregado temporalmente. Edita en 'Catálogo de Productos'.`,
                         duration: 7000,
                     });
                 }
@@ -363,6 +363,9 @@ const modifyProductValue = useCallback(async (barcodeToUpdate: string, type: 'co
     setCountingList(prevList => {
         const productIndex = prevList.findIndex(p => p.barcode === barcodeToUpdate && p.warehouseId === currentWarehouseId);
         if (productIndex === -1) {
+             if(isMountedRef.current) {
+                toast({ variant: "destructive", title: "Error", description: `Producto ${barcodeToUpdate} no encontrado en la lista para ${getWarehouseName(currentWarehouseId)}.`});
+            }
              return prevList;
         }
 
@@ -434,7 +437,7 @@ const modifyProductValue = useCallback(async (barcodeToUpdate: string, type: 'co
                     description: `No se pudo actualizar el stock en la base de datos para ${productDescription}.`
                 });
             }
-        } else if (type === 'count' ) {
+        } else if (type === 'count' && productForToast ) { // Ensure productForToast is not null
              if (!showDiscrepancyToastIfNeeded(productForToast, finalValue)) {
                 if(isMountedRef.current) toast({
                     title: "Cantidad Modificada",
@@ -531,7 +534,7 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
                      description: `No se pudo actualizar el stock en la base de datos para ${productDescription}.`
                  });
              }
-         } else if (type === 'count') {
+         } else if (type === 'count' && productForToast) { // Ensure productForToast is not null
              const actionText = sumValue ? "sumada a" : "establecida en";
              if (!showDiscrepancyToastIfNeeded(productForToast, finalValue)) {
                  if(isMountedRef.current) toast({
@@ -1063,7 +1066,7 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
     try {
       await clearAllDatabases(); 
       warehouses.forEach(warehouse => {
-        if(typeof window !== 'undefined') localStorage.removeItem(`${LOCAL_STORAGE_COUNTING_LIST_KEY_PREFIX}${warehouse.id}`);
+        if(typeof window !== 'undefined') localStorage.removeItem(`${LOCAL_STORAGE_COUNTING_LIST_KEY_PREFIX}${warehouse.id}_${currentUserId}`);
       });
       if(isMountedRef.current) setCountingList([]); 
       requestAnimationFrame(() => {
@@ -1080,14 +1083,14 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
       }
        focusBarcodeIfCounting();
     }
-  }, [toast, warehouses, focusBarcodeIfCounting]); 
+  }, [toast, warehouses, currentUserId, focusBarcodeIfCounting]); 
 
 
   const sectionItems = useMemo(() => [
-    { name: 'Contador', icon: AppWindow, label: `Contador (${getWarehouseName(currentWarehouseId)})`},
-    { name: 'Base de Datos', icon: Database, label: 'Base de Datos' },
+    { name: 'Contador', icon: ClipboardList, label: `Contador (${getWarehouseName(currentWarehouseId)})`},
+    { name: 'Catálogo de Productos', icon: PackageSearch, label: 'Catálogo de Productos' },
     { name: 'Almacenes', icon: Boxes, label: 'Almacenes' },
-    { name: 'Control de Vencimiento', icon: ShieldAlert, label: 'Control de Vencimiento' },
+    { name: 'Gestión de Vencimientos', icon: CalendarClock, label: 'Gestión de Vencimientos' },
     { name: 'Historial', icon: HistoryIcon, label: 'Historial' },
     { name: 'Informes', icon: BarChart, label: 'Informes' },
   ], [getWarehouseName, currentWarehouseId]);
@@ -1229,7 +1232,7 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
             </div>
         )}
 
-         {activeSection === 'Base de Datos' && (
+         {activeSection === 'Catálogo de Productos' && (
             <div id="database-content">
                <ProductDatabase
                   onStartCountByProvider={handleStartCountByProvider}
@@ -1248,7 +1251,7 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
              </div>
            )}
 
-            {activeSection === 'Control de Vencimiento' && (
+            {activeSection === 'Gestión de Vencimientos' && (
                  <div id="expiration-control-content">
                     <ExpirationControl />
                  </div>
@@ -1430,4 +1433,3 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
     </div>
   );
 }
-

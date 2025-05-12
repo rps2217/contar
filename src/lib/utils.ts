@@ -81,7 +81,7 @@ export const setLocalStorageItem = <T>(key: string, value: T): void => {
 export const debounce = <F extends (...args: any[]) => any>(func: F, waitFor: number) => {
   let timeoutId: NodeJS.Timeout | null = null;
 
-  return (...args: Parameters<F>): Promise<ReturnType<F>> => {
+  const debounced = (...args: Parameters<F>): Promise<ReturnType<F>> => {
     return new Promise((resolve) => {
       if (timeoutId) {
         clearTimeout(timeoutId);
@@ -93,4 +93,13 @@ export const debounce = <F extends (...args: any[]) => any>(func: F, waitFor: nu
       }, waitFor);
     });
   };
+
+  debounced.clear = () => {
+    if (timeoutId) {
+      clearTimeout(timeoutId);
+      timeoutId = null;
+    }
+  };
+
+  return debounced;
 };

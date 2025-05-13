@@ -2,7 +2,7 @@
 "use client";
 
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
-import { getAllProductsFromDB, addOrUpdateProductToDB } from '@/lib/database'; // Removed deleteProductFromDB
+import { getAllProductsFromDB, addOrUpdateProductToDB, getProductFromDB } from '@/lib/database';
 import type { ProductDetail } from '@/types/product';
 import { useToast } from "@/hooks/use-toast";
 import { format, parseISO, differenceInDays, isValid as isValidDate, endOfDay } from 'date-fns';
@@ -32,8 +32,8 @@ const EXPIRATION_THRESHOLD_SOON_DAYS = 30; // Products expiring in 30 days or le
 const EXPIRATION_THRESHOLD_VERY_SOON_DAYS = 7; // Products expiring in 7 days or less are "very soon"
 
 export const ExpirationControl: React.FC = () => {
-  const [products, setProducts] = useState<ProductDetail[]>([]);
-  const [isLoading, setIsLoading] = useState(false);
+  const [products, setProducts] = useState<ProductDetail[]>([]); // List of products being managed for expiration
+  const [isLoading, setIsLoading] = useState(false); // For general loading states, like initial load or refresh
   const [error, setError] = useState<string | null>(null);
   const { toast } = useToast();
 
@@ -43,39 +43,11 @@ export const ExpirationControl: React.FC = () => {
   const [filterStatus, setFilterStatus] = useState<"all" | "expired" | "soon" | "valid" | "no_date">("all");
   const [selectedProduct, setSelectedProduct] = useState<ProductDetail | null>(null);
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
-  const [isProcessing, setIsProcessing] = useState(false);
+  const [isProcessing, setIsProcessing] = useState(false); // For processing actions like saving edits
   const [dateFilter, setDateFilter] = useState<{ from?: Date; to?: Date } | undefined>(undefined);
-  const [hasUserInteracted, setHasUserInteracted] = useState(false);
   const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false);
   const [productToDelete, setProductToDelete] = useState<ProductDetail | null>(null);
 
-
-  const loadProducts = useCallback(async () => {
-    setIsLoading(true);
-    setError(null);
-    try {
-      const dbProducts = await getAllProductsFromDB();
-      setProducts(dbProducts);
-    } catch (err: any) {
-      console.error("Error loading products for expiration control:", err);
-      setError("No se pudo cargar la información de productos.");
-      if (typeof window !== 'undefined') {
-        toast({
-          variant: "destructive",
-          title: "Error al Cargar Productos",
-          description: err.message || "Ocurrió un error desconocido.",
-        });
-      }
-    } finally {
-      setIsLoading(false);
-    }
-  }, [toast]);
-
-  useEffect(() => {
-    if (hasUserInteracted || searchTerm || filterStatus !== "all" || dateFilter) {
-      loadProducts();
-    }
-  }, [loadProducts, hasUserInteracted, searchTerm, filterStatus, dateFilter]);
 
   useEffect(() => {
     if (barcodeInputRef.current) {
@@ -115,29 +87,52 @@ export const ExpirationControl: React.FC = () => {
     return { status: "valid", daysLeft: days, label: `Válido (${days} días)`, colorClass: "text-green-600 dark:text-green-400" };
   }, []);
 
-  const handleBarcodeSubmit = useCallback(() => {
-    if (!barcodeInput.trim()) {
-      toast({ title: "Código Vacío", description: "Por favor, ingrese un código de barras." });
-      return;
+  const handleBarcodeSubmit = useCallback(async () => {
+    const trimmedBarcode = barcodeInput.trim();
+    if (!trimmedBarcode) {
+        toast({ title: "Código Vacío", description: "Por favor, ingrese un código de barras." });
+        barcodeInputRef.current?.focus();
+        return;
     }
-    if (!hasUserInteracted) setHasUserInteracted(true); 
 
-    const foundProduct = products.find(p => p.barcode === barcodeInput.trim());
-    if (foundProduct) {
-      setSelectedProduct(foundProduct);
-      setIsEditModalOpen(true);
+    const existingProductInList = products.find(p => p.barcode === trimmedBarcode);
+
+    if (existingProductInList) {
+        setSelectedProduct(existingProductInList);
+        setIsEditModalOpen(true);
     } else {
-      toast({ variant: "default", title: "Producto no encontrado", description: `El producto con código ${barcodeInput.trim()} no existe en la base de datos.` });
+        setIsLoading(true); 
+        try {
+            const dbProduct = await getProductFromDB(trimmedBarcode);
+            if (dbProduct) { // Exact match found in main DB
+                setProducts(prevProducts => {
+                    if (prevProducts.some(p => p.barcode === dbProduct.barcode)) {
+                        // If somehow already added (e.g. very fast double scan), select it for editing
+                        const alreadyInList = prevProducts.find(p => p.barcode === dbProduct.barcode);
+                        if(alreadyInList) setSelectedProduct(alreadyInList);
+                        return prevProducts;
+                    }
+                    const newProductForList = { ...dbProduct }; // Create a new object
+                    return [newProductForList, ...prevProducts]; 
+                });
+                setSelectedProduct(dbProduct); 
+                setIsEditModalOpen(true);
+                toast({ title: "Producto Agregado", description: `${dbProduct.description} agregado para gestión de vencimientos.` });
+            } else {
+                toast({ variant: "default", title: "Producto no encontrado", description: `El producto con código ${trimmedBarcode} no existe en la base de datos principal.` });
+            }
+        } catch (error: any) {
+            toast({ variant: "destructive", title: "Error de Base de Datos", description: `Error al buscar producto: ${error.message}` });
+        } finally {
+            setIsLoading(false);
+        }
     }
     setBarcodeInput("");
     barcodeInputRef.current?.focus();
-  }, [barcodeInput, products, toast, hasUserInteracted]);
+  }, [barcodeInput, products, toast, setProducts, setSelectedProduct, setIsEditModalOpen, setIsLoading]);
+
 
   const filteredAndSortedProducts = useMemo(() => {
-    if (!hasUserInteracted && products.length === 0 && searchTerm === "" && filterStatus === "all" && !dateFilter) {
-        return [];
-    }
-
     const lowerSearchTerm = searchTerm.toLowerCase();
     
     return products
@@ -170,8 +165,6 @@ export const ExpirationControl: React.FC = () => {
         } else if (dateFilter?.from && !p.expirationDate && filterStatus !== 'no_date') { 
             matchesDateRange = false;
         }
-
-
         return matchesSearch && matchesStatus && matchesDateRange;
       })
       .sort((a, b) => {
@@ -189,7 +182,7 @@ export const ExpirationControl: React.FC = () => {
         }
         return a.description.localeCompare(b.description);
       });
-  }, [products, searchTerm, filterStatus, getExpirationStatus, dateFilter, hasUserInteracted]);
+  }, [products, searchTerm, filterStatus, getExpirationStatus, dateFilter]);
 
   const handleEditProduct = useCallback((product: ProductDetail) => {
     setSelectedProduct(product);
@@ -199,13 +192,19 @@ export const ExpirationControl: React.FC = () => {
   const handleEditSubmit = useCallback(async (data: ProductDetail) => {
     setIsProcessing(true);
     try {
-      await addOrUpdateProductToDB(data);
+      await addOrUpdateProductToDB(data); // Updates the main DB
+
+      setProducts(prevProducts => // Updates the local list in ExpirationControl
+        prevProducts.map(p =>
+          p.barcode === data.barcode ? { ...p, ...data } : p
+        )
+      );
+
        if (typeof window !== 'undefined') {
         toast({ title: "Producto Actualizado", description: `Se actualizó la información para ${data.description}.` });
       }
       setIsEditModalOpen(false);
       setSelectedProduct(null);
-      await loadProducts(); 
     } catch (error: any) {
        if (typeof window !== 'undefined') {
         toast({ variant: "destructive", title: "Error al Actualizar", description: error.message });
@@ -214,7 +213,7 @@ export const ExpirationControl: React.FC = () => {
       setIsProcessing(false);
       barcodeInputRef.current?.focus();
     }
-  }, [toast, loadProducts]);
+  }, [toast, setProducts, setIsProcessing]);
 
   const handleDeleteRequest = useCallback((product: ProductDetail) => {
     setProductToDelete(product);
@@ -225,7 +224,6 @@ export const ExpirationControl: React.FC = () => {
     if (!productToDelete) return;
     setIsProcessing(true);
     try {
-      // Only remove from the local list in this module
       setProducts(prev => prev.filter(p => p.barcode !== productToDelete.barcode));
       toast({
         title: 'Producto Eliminado (Gestión Vencimientos)',
@@ -233,7 +231,7 @@ export const ExpirationControl: React.FC = () => {
       });
       setIsDeleteDialogOpen(false);
       setProductToDelete(null);
-    } catch (error: any) { // Should not error if only updating local state
+    } catch (error: any) { 
       toast({
         variant: 'destructive',
         title: 'Error al Eliminar de la Lista',
@@ -243,7 +241,39 @@ export const ExpirationControl: React.FC = () => {
       setIsProcessing(false);
       barcodeInputRef.current?.focus();
     }
-  }, [productToDelete, toast]);
+  }, [productToDelete, toast, setProducts, setIsProcessing]);
+
+  const refreshProductDetailsInList = useCallback(async () => {
+    if (products.length === 0) {
+        toast({ title: "Lista Vacía", description: "No hay productos en la lista para recargar." });
+        return;
+    }
+    setIsLoading(true);
+    setError(null);
+    try {
+        const updatedProductsPromises = products.map(async (pInList) => {
+            const dbProduct = await getProductFromDB(pInList.barcode);
+            // Ensure a new object is created for React state updates if changed
+            return dbProduct ? { ...dbProduct } : { ...pInList }; 
+        });
+        const updatedProducts = await Promise.all(updatedProductsPromises);
+        setProducts(updatedProducts);
+        toast({ title: "Detalles Recargados", description: "Se actualizaron los detalles de los productos en la lista." });
+    } catch (err: any) {
+        console.error("Error refreshing product details:", err);
+        setError("No se pudo recargar la información de productos.");
+        if (typeof window !== 'undefined') {
+            toast({
+                variant: "destructive",
+                title: "Error al Recargar",
+                description: err.message || "Ocurrió un error desconocido.",
+            });
+        }
+    } finally {
+        setIsLoading(false);
+    }
+  }, [products, toast, setProducts, setIsLoading, setError]);
+
 
   return (
     <div className="p-4 md:p-6 space-y-6">
@@ -255,7 +285,7 @@ export const ExpirationControl: React.FC = () => {
         <Input
           ref={barcodeInputRef}
           type="text" 
-          placeholder="Ingresar código de barras para buscar/editar..."
+          placeholder="Ingresar código para agregar/editar vencimiento..."
           value={barcodeInput}
           onChange={(e) => setBarcodeInput(e.target.value)}
           onKeyDown={(e) => { if (e.key === 'Enter') handleBarcodeSubmit(); }}
@@ -269,10 +299,10 @@ export const ExpirationControl: React.FC = () => {
             "h-10 px-5 py-2", 
             "text-teal-600 border-teal-500 hover:bg-teal-50 dark:text-teal-400 dark:border-teal-600 dark:hover:bg-teal-900/50"
           )}
-          aria-label="Buscar producto por código"
-          disabled={!barcodeInput.trim()}
+          aria-label="Buscar/Agregar producto por código"
+          disabled={!barcodeInput.trim() || isLoading}
         >
-          Buscar/Editar
+          Buscar/Agregar
         </Button>
       </div>
 
@@ -281,9 +311,9 @@ export const ExpirationControl: React.FC = () => {
             <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
             <Input
               type="search"
-              placeholder="Buscar por producto, código, proveedor, fecha..."
+              placeholder="Buscar en lista de vencimientos..."
               value={searchTerm}
-              onChange={(e) => { setSearchTerm(e.target.value); if (!hasUserInteracted) setHasUserInteracted(true); }}
+              onChange={(e) => setSearchTerm(e.target.value)}
               className="pl-8 w-full h-10"
               aria-label="Buscar productos por vencimiento"
             />
@@ -293,7 +323,7 @@ export const ExpirationControl: React.FC = () => {
               </Button>
             )}
         </div>
-        <Select value={filterStatus} onValueChange={(value) => { setFilterStatus(value as any); if (!hasUserInteracted) setHasUserInteracted(true); }}>
+        <Select value={filterStatus} onValueChange={(value) => setFilterStatus(value as any)}>
           <SelectTrigger className="w-full md:w-[180px] h-10">
             <Filter className="mr-2 h-4 w-4" />
             <SelectValue placeholder="Filtrar estado" />
@@ -312,7 +342,6 @@ export const ExpirationControl: React.FC = () => {
                 id="date-filter-popover"
                 variant={"outline"}
                 className={cn("w-full md:w-[260px] h-10 justify-start text-left font-normal", !dateFilter && "text-muted-foreground")}
-                onClick={() => { if (!hasUserInteracted) setHasUserInteracted(true); }}
               >
                 <CalendarIcon className="mr-2 h-4 w-4" />
                 {dateFilter?.from ? (
@@ -337,15 +366,15 @@ export const ExpirationControl: React.FC = () => {
               </div>
             </PopoverContent>
           </Popover>
-         <Button onClick={() => loadProducts()} variant="outline" className="h-10" title="Forzar recarga de productos">
-            <PackageSearch className="mr-2 h-4 w-4" /> Recargar
+         <Button onClick={refreshProductDetailsInList} variant="outline" className="h-10" title="Recargar detalles de productos en lista">
+            <PackageSearch className="mr-2 h-4 w-4" /> Recargar Detalles
          </Button>
       </div>
 
-      {isLoading && (
+      {isLoading && !isProcessing && (
         <div className="flex justify-center items-center py-10">
           <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
-          <span className="ml-2 text-muted-foreground">Cargando productos...</span>
+          <span className="ml-2 text-muted-foreground">Cargando...</span>
         </div>
       )}
       {error && !isLoading && (
@@ -354,16 +383,12 @@ export const ExpirationControl: React.FC = () => {
          </Alert>
       )}
       
-      {!isLoading && !error && !hasUserInteracted && products.length === 0 && (
-         <p className="text-center text-muted-foreground py-10">Utilice los filtros o ingrese un código para buscar productos y ver su estado de vencimiento.</p>
+      {!isLoading && !error && products.length === 0 && (
+         <p className="text-center text-muted-foreground py-10">Agregue productos mediante el código de barras para gestionar sus vencimientos. Los productos deben existir en la base de datos principal.</p>
       )}
-      {!isLoading && !error && hasUserInteracted && products.length === 0 && (
-          <p className="text-center text-muted-foreground py-10">No hay productos en la base de datos que coincidan con su búsqueda o la base de datos está vacía.</p>
+      {!isLoading && !error && products.length > 0 && filteredAndSortedProducts.length === 0 && (
+          <p className="text-center text-muted-foreground py-10">No se encontraron productos con los filtros aplicados en su lista de gestión de vencimientos.</p>
       )}
-       {!isLoading && !error && hasUserInteracted && products.length > 0 && filteredAndSortedProducts.length === 0 && (
-          <p className="text-center text-muted-foreground py-10">No se encontraron productos con los filtros aplicados.</p>
-      )}
-
 
       {!isLoading && !error && filteredAndSortedProducts.length > 0 && (
         <ScrollArea className="h-[calc(100vh-450px)] md:h-[calc(100vh-420px)] border rounded-lg shadow-sm bg-card dark:bg-gray-800">
@@ -433,7 +458,6 @@ export const ExpirationControl: React.FC = () => {
             isProcessing={isProcessing}
             context="expiration"
             initialStock={selectedProduct.stock} 
-            // onDelete is not passed here, so the dialog won't show DB delete for expiration context
             />
         )}
          <ConfirmationDialog
@@ -463,3 +487,4 @@ export const ExpirationControl: React.FC = () => {
     </div>
   );
 };
+

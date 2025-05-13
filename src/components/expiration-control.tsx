@@ -2,7 +2,7 @@
 "use client";
 
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
-import { getAllProductsFromDB, addOrUpdateProductToDB, deleteProductFromDB } from '@/lib/database';
+import { getAllProductsFromDB, addOrUpdateProductToDB } from '@/lib/database'; // Removed deleteProductFromDB
 import type { ProductDetail } from '@/types/product';
 import { useToast } from "@/hooks/use-toast";
 import { format, parseISO, differenceInDays, isValid as isValidDate, endOfDay } from 'date-fns';
@@ -225,19 +225,19 @@ export const ExpirationControl: React.FC = () => {
     if (!productToDelete) return;
     setIsProcessing(true);
     try {
-      await deleteProductFromDB(productToDelete.barcode);
-      toast({
-        title: 'Producto Eliminado',
-        description: `El producto "${productToDelete.description}" ha sido eliminado de la base de datos.`,
-      });
+      // Only remove from the local list in this module
       setProducts(prev => prev.filter(p => p.barcode !== productToDelete.barcode));
+      toast({
+        title: 'Producto Eliminado (Gestión Vencimientos)',
+        description: `El producto "${productToDelete.description}" ha sido eliminado de esta lista de gestión. No se ha eliminado de la base de datos principal.`,
+      });
       setIsDeleteDialogOpen(false);
       setProductToDelete(null);
-    } catch (error: any) {
+    } catch (error: any) { // Should not error if only updating local state
       toast({
         variant: 'destructive',
-        title: 'Error al Eliminar',
-        description: `No se pudo eliminar el producto: ${error.message}`,
+        title: 'Error al Eliminar de la Lista',
+        description: `No se pudo eliminar el producto de esta lista: ${error.message}`,
       });
     } finally {
       setIsProcessing(false);
@@ -411,7 +411,7 @@ export const ExpirationControl: React.FC = () => {
                       variant="ghost"
                       size="icon"
                       onClick={(e) => { e.stopPropagation(); handleDeleteRequest(item); }}
-                      title="Eliminar Producto de la Base de Datos"
+                      title="Eliminar Producto de esta Lista"
                       className="h-8 w-8 text-red-600 hover:text-red-700"
                     >
                       <Trash className="h-4 w-4" />
@@ -433,24 +433,25 @@ export const ExpirationControl: React.FC = () => {
             isProcessing={isProcessing}
             context="expiration"
             initialStock={selectedProduct.stock} 
+            // onDelete is not passed here, so the dialog won't show DB delete for expiration context
             />
         )}
          <ConfirmationDialog
             isOpen={isDeleteDialogOpen}
             onOpenChange={setIsDeleteDialogOpen}
-            title="Confirmar Eliminación"
+            title="Confirmar Eliminación de Lista"
             description={
               productToDelete ? (
                 <>
-                  ¿Estás seguro de que deseas eliminar permanentemente el producto
+                  ¿Estás seguro de que deseas eliminar el producto
                   <span className="font-semibold"> "{productToDelete.description}" (Código: {productToDelete.barcode})</span>
-                  de la base de datos? Esta acción no se puede deshacer.
+                  de la lista de gestión de vencimientos? Esto no lo eliminará de la base de datos principal.
                 </>
               ) : (
-                '¿Estás seguro de que deseas eliminar este producto?'
+                '¿Estás seguro de que deseas eliminar este producto de la lista?'
               )
             }
-            confirmText="Sí, Eliminar Producto"
+            confirmText="Sí, Eliminar de Lista"
             onConfirm={confirmProductDelete}
             onCancel={() => {
               setIsDeleteDialogOpen(false);
@@ -462,5 +463,3 @@ export const ExpirationControl: React.FC = () => {
     </div>
   );
 };
-
-    

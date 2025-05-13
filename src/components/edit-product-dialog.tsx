@@ -35,6 +35,8 @@ const editProductSchema = z.object({
   ),
   expirationDate: z.string().optional().refine(val => {
     if (!val) return true; // Optional field
+    // Check for YYYY-MM-DD format specifically if direct input is allowed
+    // or rely on date picker to provide valid ISO string
     return /^\d{4}-\d{2}-\d{2}$/.test(val) || isValid(parseISO(val));
   }, { message: "Formato de fecha inválido. Use YYYY-MM-DD." }),
 });
@@ -88,7 +90,8 @@ export const EditProductDialog: React.FC<EditProductDialogProps> = ({
         barcode: selectedDetail.barcode,
         description: selectedDetail.description,
         provider: selectedDetail.provider || "",
-        stock: context === 'database' ? (selectedDetail.stock ?? 0) : initialStock,
+        // Use initialStock for countingList context, otherwise use DB stock for other contexts
+        stock: context === 'countingList' ? initialStock : (selectedDetail.stock ?? 0),
         expirationDate: selectedDetail.expirationDate || "",
       });
     } else {
@@ -96,7 +99,7 @@ export const EditProductDialog: React.FC<EditProductDialogProps> = ({
         barcode: "",
         description: "",
         provider: "",
-        stock: 0,
+        stock: 0, // Default stock for new products
         expirationDate: "",
       });
     }
@@ -125,6 +128,7 @@ export const EditProductDialog: React.FC<EditProductDialogProps> = ({
       "Completa la información para agregar un nuevo producto, su stock inicial y fecha de vencimiento." :
       (context === 'expiration' ? "Modifica la fecha de vencimiento del producto." :
       `Modifica los detalles del producto, el stock para el almacén "${warehouseName}" y su fecha de vencimiento.`);
+  
   const stockLabel = context === 'database' || context === 'expiration' ? `Stock (Base de Datos)` : `Stock (${warehouseName})`;
 
 
@@ -187,8 +191,13 @@ export const EditProductDialog: React.FC<EditProductDialogProps> = ({
                 <FormItem>
                   <FormLabel>{stockLabel}</FormLabel>
                   <FormControl>
-                    <Input type="number" inputMode="numeric" placeholder="Stock" {...field} onChange={e => field.onChange(parseInt(e.target.value) || 0)} 
-                     disabled={context === 'expiration'} // Disable stock editing in expiration context
+                    <Input 
+                      type="number" 
+                      inputMode="numeric" 
+                      placeholder="Stock" 
+                      {...field} 
+                      onChange={e => field.onChange(parseInt(e.target.value) || 0)} 
+                      disabled={context === 'expiration'} // Disable stock editing in expiration context
                     />
                   </FormControl>
                   <FormMessage />
@@ -211,7 +220,7 @@ export const EditProductDialog: React.FC<EditProductDialogProps> = ({
                               !field.value && "text-muted-foreground"
                             )}
                           >
-                            {field.value ? (
+                            {field.value && isValid(parseISO(field.value)) ? ( // Check if date is valid before formatting
                               format(parseISO(field.value), "PPP", { locale: es })
                             ) : (
                               <span>Seleccionar fecha</span>
@@ -223,7 +232,7 @@ export const EditProductDialog: React.FC<EditProductDialogProps> = ({
                       <PopoverContent className="w-auto p-0" align="start">
                         <Calendar
                           mode="single"
-                          selected={field.value ? parseISO(field.value) : undefined}
+                          selected={field.value && isValid(parseISO(field.value)) ? parseISO(field.value) : undefined}
                           onSelect={(date) => field.onChange(date ? format(date, "yyyy-MM-dd") : "")}
                           disabled={(date) =>
                             date < new Date("1900-01-01") 

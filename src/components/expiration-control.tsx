@@ -1,7 +1,7 @@
 // src/components/expiration-control.tsx
 "use client";
 
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { getAllProductsFromDB, addOrUpdateProductToDB } from '@/lib/database';
 import type { ProductDetail } from '@/types/product';
 import { useToast } from "@/hooks/use-toast";
@@ -20,7 +20,7 @@ import {
 } from "@/components/ui/table";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Loader2, AlertCircle, Search, Edit, CalendarIcon, Filter, X } from "lucide-react";
+import { Loader2, AlertCircle, Search, Edit, CalendarIcon, Filter, X, PackageSearch } from "lucide-react";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { EditProductDialog } from '@/components/edit-product-dialog';
 import { cn } from "@/lib/utils";
@@ -31,11 +31,13 @@ const EXPIRATION_THRESHOLD_SOON_DAYS = 30; // Products expiring in 30 days or le
 const EXPIRATION_THRESHOLD_VERY_SOON_DAYS = 7; // Products expiring in 7 days or less are "very soon"
 
 export const ExpirationControl: React.FC = () => {
-  const [products, setProducts] = useState<ProductDetail[]>([]); // Initialize with empty array
-  const [isLoading, setIsLoading] = useState(false); // Initially not loading
+  const [products, setProducts] = useState<ProductDetail[]>([]);
+  const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const { toast } = useToast();
 
+  const [barcodeInput, setBarcodeInput] = useState("");
+  const barcodeInputRef = useRef<HTMLInputElement>(null);
   const [searchTerm, setSearchTerm] = useState("");
   const [filterStatus, setFilterStatus] = useState<"all" | "expired" | "soon" | "valid" | "no_date">("all");
   const [selectedProduct, setSelectedProduct] = useState<ProductDetail | null>(null);
@@ -54,7 +56,7 @@ export const ExpirationControl: React.FC = () => {
     } catch (err: any) {
       console.error("Error loading products for expiration control:", err);
       setError("No se pudo cargar la información de productos.");
-      if (typeof window !== 'undefined') { // Ensure toast is called client-side
+      if (typeof window !== 'undefined') {
         toast({
           variant: "destructive",
           title: "Error al Cargar Productos",
@@ -67,23 +69,18 @@ export const ExpirationControl: React.FC = () => {
   }, [toast]);
 
   useEffect(() => {
-    const filtersAreActive =
-      searchTerm !== "" ||
-      filterStatus !== "all" ||
-      (dateFilter?.from !== undefined || dateFilter?.to !== undefined);
-
-    if (filtersAreActive) {
-      if (!hasUserInteracted) {
-        setHasUserInteracted(true);
-      }
+    // Initial load or load when filters change after interaction
+    if (hasUserInteracted || searchTerm || filterStatus !== "all" || dateFilter) {
       loadProducts();
-    } else {
-      // If filters are reset to default and user had previously interacted
-      if (hasUserInteracted) {
-        setProducts([]); // Clear products to achieve "clean" state
-      }
     }
-  }, [searchTerm, filterStatus, dateFilter, loadProducts, hasUserInteracted]);
+  }, [loadProducts, hasUserInteracted, searchTerm, filterStatus, dateFilter]);
+
+  // Focus barcode input on initial load or when section becomes active
+  useEffect(() => {
+    if (barcodeInputRef.current) {
+      barcodeInputRef.current.focus();
+    }
+  }, []);
 
 
   const getExpirationStatus = useCallback((expirationDate?: string): { status: "expired" | "very_soon" | "soon" | "valid" | "no_date"; daysLeft?: number; label: string; colorClass: string } => {
@@ -117,17 +114,34 @@ export const ExpirationControl: React.FC = () => {
     return { status: "valid", daysLeft: days, label: `Válido (${days} días)`, colorClass: "text-green-600 dark:text-green-400" };
   }, []);
 
+  const handleBarcodeSubmit = useCallback(() => {
+    if (!barcodeInput.trim()) {
+      toast({ title: "Código Vacío", description: "Por favor, ingrese un código de barras." });
+      return;
+    }
+    if (!hasUserInteracted) setHasUserInteracted(true); // Trigger load if first interaction
+
+    const foundProduct = products.find(p => p.barcode === barcodeInput.trim());
+    if (foundProduct) {
+      setSelectedProduct(foundProduct);
+      setIsEditModalOpen(true);
+    } else {
+      toast({ variant: "default", title: "Producto no encontrado", description: `El producto con código ${barcodeInput.trim()} no existe en la base de datos.` });
+    }
+    setBarcodeInput("");
+    barcodeInputRef.current?.focus();
+  }, [barcodeInput, products, toast, hasUserInteracted]);
+
   const filteredAndSortedProducts = useMemo(() => {
     if (!hasUserInteracted && products.length === 0 && searchTerm === "" && filterStatus === "all" && !dateFilter) {
-        return []; // Initial clean state, don't process if no interaction and products not loaded yet
+        return [];
     }
 
     const lowerSearchTerm = searchTerm.toLowerCase();
     
-    return products // products might be empty if filters are reset
+    return products
       .map(p => ({ ...p, expirationInfo: getExpirationStatus(p.expirationDate) }))
       .filter(p => {
-        // If products are empty (e.g., after reset), this filter won't run on any items
         const matchesSearch = !searchTerm ||
                               p.description.toLowerCase().includes(lowerSearchTerm) ||
                               p.barcode.includes(lowerSearchTerm) ||
@@ -145,24 +159,27 @@ export const ExpirationControl: React.FC = () => {
         if (dateFilter?.from && p.expirationDate) {
             const expDate = parseISO(p.expirationDate);
             if (!isValidDate(expDate)) {
-                matchesDateRange = p.expirationInfo.status === "no_date";
+                matchesDateRange = p.expirationInfo.status === "no_date"; // include if no_date is selected and it has no valid date
             } else {
                 matchesDateRange = expDate >= dateFilter.from;
                 if (dateFilter.to && matchesDateRange) {
                     matchesDateRange = expDate <= endOfDay(dateFilter.to);
                 }
             }
-        } else if (dateFilter?.from && !p.expirationDate) {
+        } else if (dateFilter?.from && !p.expirationDate && filterStatus !== 'no_date') { // If filtering by date and product has no date, exclude unless 'no_date' filter active
             matchesDateRange = false;
         }
+
 
         return matchesSearch && matchesStatus && matchesDateRange;
       })
       .sort((a, b) => {
         if (a.expirationInfo.status === "no_date" && b.expirationInfo.status !== "no_date") return 1;
         if (a.expirationInfo.status !== "no_date" && b.expirationInfo.status === "no_date") return -1;
-        if (a.expirationInfo.status === "no_date" && b.expirationInfo.status === "no_date") return 0;
-
+        if (a.expirationInfo.status === "no_date" && b.expirationInfo.status === "no_date") {
+             return a.description.localeCompare(b.description);
+        }
+        
         const daysA = a.expirationInfo.daysLeft ?? Infinity;
         const daysB = b.expirationInfo.daysLeft ?? Infinity;
         
@@ -183,25 +200,20 @@ export const ExpirationControl: React.FC = () => {
     try {
       await addOrUpdateProductToDB(data);
        if (typeof window !== 'undefined') {
-        toast({ title: "Producto Actualizado", description: `Se actualizó la fecha de vencimiento para ${data.description}.` });
+        toast({ title: "Producto Actualizado", description: `Se actualizó la información para ${data.description}.` });
       }
       setIsEditModalOpen(false);
       setSelectedProduct(null);
-      // Reload products only if filters were active, to reflect changes in the current view
-      const filtersAreActive = searchTerm !== "" || filterStatus !== "all" || (dateFilter?.from || dateFilter?.to);
-      if (filtersAreActive) {
-          await loadProducts();
-      } else {
-          setProducts([]); // Keep list clean if no filters are active
-      }
+      await loadProducts(); // Reload all products to reflect changes
     } catch (error: any) {
        if (typeof window !== 'undefined') {
         toast({ variant: "destructive", title: "Error al Actualizar", description: error.message });
       }
     } finally {
       setIsProcessing(false);
+      barcodeInputRef.current?.focus();
     }
-  }, [toast, loadProducts, searchTerm, filterStatus, dateFilter]);
+  }, [toast, loadProducts]);
 
   return (
     <div className="p-4 md:p-6 space-y-6">
@@ -209,6 +221,33 @@ export const ExpirationControl: React.FC = () => {
         <h2 className="text-2xl font-bold">Control de Vencimientos</h2>
       </div>
 
+      {/* Barcode Input like Contador */}
+      <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
+        <Input
+          ref={barcodeInputRef}
+          type="text" // Allow any text, validation happens on submit
+          placeholder="Ingresar código de barras para buscar/editar..."
+          value={barcodeInput}
+          onChange={(e) => setBarcodeInput(e.target.value)}
+          onKeyDown={(e) => { if (e.key === 'Enter') handleBarcodeSubmit(); }}
+          className="sm:mr-2 flex-grow bg-yellow-100 dark:bg-yellow-900 border-teal-300 dark:border-teal-700 focus:ring-teal-500 focus:border-teal-500 rounded-md shadow-sm h-10"
+          aria-label="Ingresar código de barras"
+        />
+        <Button
+          onClick={handleBarcodeSubmit}
+          variant="outline"
+          className={cn(
+            "h-10 px-5 py-2", 
+            "text-teal-600 border-teal-500 hover:bg-teal-50 dark:text-teal-400 dark:border-teal-600 dark:hover:bg-teal-900/50"
+          )}
+          aria-label="Buscar producto por código"
+          disabled={!barcodeInput.trim()}
+        >
+          Buscar/Editar
+        </Button>
+      </div>
+
+      {/* Global Filters */}
       <div className="flex flex-col md:flex-row gap-4 p-4 border rounded-lg bg-card dark:bg-gray-800 shadow-sm items-center">
         <div className="relative flex-grow w-full md:w-auto">
             <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
@@ -216,7 +255,7 @@ export const ExpirationControl: React.FC = () => {
               type="search"
               placeholder="Buscar por producto, código, proveedor, fecha..."
               value={searchTerm}
-              onChange={(e) => setSearchTerm(e.target.value)}
+              onChange={(e) => { setSearchTerm(e.target.value); if (!hasUserInteracted) setHasUserInteracted(true); }}
               className="pl-8 w-full h-10"
               aria-label="Buscar productos por vencimiento"
             />
@@ -226,7 +265,7 @@ export const ExpirationControl: React.FC = () => {
               </Button>
             )}
         </div>
-        <Select value={filterStatus} onValueChange={(value) => setFilterStatus(value as any)}>
+        <Select value={filterStatus} onValueChange={(value) => { setFilterStatus(value as any); if (!hasUserInteracted) setHasUserInteracted(true); }}>
           <SelectTrigger className="w-full md:w-[180px] h-10">
             <Filter className="mr-2 h-4 w-4" />
             <SelectValue placeholder="Filtrar estado" />
@@ -245,6 +284,7 @@ export const ExpirationControl: React.FC = () => {
                 id="date-filter-popover"
                 variant={"outline"}
                 className={cn("w-full md:w-[260px] h-10 justify-start text-left font-normal", !dateFilter && "text-muted-foreground")}
+                onClick={() => { if (!hasUserInteracted) setHasUserInteracted(true); }}
               >
                 <CalendarIcon className="mr-2 h-4 w-4" />
                 {dateFilter?.from ? (
@@ -269,6 +309,9 @@ export const ExpirationControl: React.FC = () => {
               </div>
             </PopoverContent>
           </Popover>
+         <Button onClick={() => loadProducts()} variant="outline" className="h-10" title="Forzar recarga de productos">
+            <PackageSearch className="mr-2 h-4 w-4" /> Recargar
+         </Button>
       </div>
 
       {isLoading && (
@@ -283,9 +326,8 @@ export const ExpirationControl: React.FC = () => {
          </Alert>
       )}
       
-      {/* Message display logic */}
       {!isLoading && !error && !hasUserInteracted && products.length === 0 && (
-         <p className="text-center text-muted-foreground py-10">Utilice los filtros para buscar productos y ver su estado de vencimiento.</p>
+         <p className="text-center text-muted-foreground py-10">Utilice los filtros o ingrese un código para buscar productos y ver su estado de vencimiento.</p>
       )}
       {!isLoading && !error && hasUserInteracted && products.length === 0 && (
           <p className="text-center text-muted-foreground py-10">No hay productos en la base de datos que coincidan con su búsqueda o la base de datos está vacía.</p>
@@ -296,9 +338,9 @@ export const ExpirationControl: React.FC = () => {
 
 
       {!isLoading && !error && filteredAndSortedProducts.length > 0 && (
-        <ScrollArea className="h-[calc(100vh-350px)] border rounded-lg shadow-sm bg-card dark:bg-gray-800">
+        <ScrollArea className="h-[calc(100vh-450px)] md:h-[calc(100vh-420px)] border rounded-lg shadow-sm bg-card dark:bg-gray-800">
           <Table>
-            <TableCaption>Lista de productos y sus fechas de vencimiento.</TableCaption>
+            <TableCaption>Lista de productos y sus fechas de vencimiento. Haga clic en un producto para editar.</TableCaption>
             <TableHeader className="sticky top-0 bg-muted/50 z-10 shadow-sm">
               <TableRow>
                 <TableHead className="px-3 py-2 text-xs font-medium uppercase tracking-wider">Código</TableHead>
@@ -312,7 +354,11 @@ export const ExpirationControl: React.FC = () => {
             </TableHeader>
             <TableBody>
               {filteredAndSortedProducts.map((item) => (
-                <TableRow key={item.barcode} className="text-sm hover:bg-muted/10 transition-colors">
+                <TableRow 
+                  key={item.barcode} 
+                  className="text-sm hover:bg-muted/10 transition-colors cursor-pointer"
+                  onClick={() => handleEditProduct(item)}
+                >
                   <TableCell className="px-3 py-2 font-mono">{item.barcode}</TableCell>
                   <TableCell className="px-3 py-2">{item.description}</TableCell>
                   <TableCell className="px-3 py-2">{item.provider || 'N/A'}</TableCell>
@@ -327,7 +373,7 @@ export const ExpirationControl: React.FC = () => {
                     <Button
                       variant="ghost"
                       size="icon"
-                      onClick={() => handleEditProduct(item)}
+                      onClick={(e) => { e.stopPropagation(); handleEditProduct(item);}} // Prevent row click
                       title="Editar Fecha de Vencimiento"
                       className="h-8 w-8"
                     >
@@ -348,7 +394,8 @@ export const ExpirationControl: React.FC = () => {
             setSelectedDetail={setSelectedProduct}
             onSubmit={handleEditSubmit}
             isProcessing={isProcessing}
-            context="expiration" 
+            context="expiration"
+            initialStock={selectedProduct.stock} // Pass DB stock for context
             />
         )}
     </div>

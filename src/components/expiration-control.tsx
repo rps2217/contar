@@ -2,7 +2,7 @@
 "use client";
 
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
-import { getAllProductsFromDB, addOrUpdateProductToDB } from '@/lib/database';
+import { getAllProductsFromDB, addOrUpdateProductToDB, deleteProductFromDB } from '@/lib/database';
 import type { ProductDetail } from '@/types/product';
 import { useToast } from "@/hooks/use-toast";
 import { format, parseISO, differenceInDays, isValid as isValidDate, endOfDay } from 'date-fns';
@@ -20,9 +20,10 @@ import {
 } from "@/components/ui/table";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Loader2, AlertCircle, Search, Edit, CalendarIcon, Filter, X, PackageSearch } from "lucide-react";
+import { Loader2, AlertCircle, Search, Edit, CalendarIcon, Filter, X, PackageSearch, Trash } from "lucide-react";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { EditProductDialog } from '@/components/edit-product-dialog';
+import { ConfirmationDialog } from '@/components/confirmation-dialog';
 import { cn } from "@/lib/utils";
 import { Popover, PopoverTrigger, PopoverContent } from '@/components/ui/popover';
 import { Calendar } from '@/components/ui/calendar';
@@ -45,6 +46,8 @@ export const ExpirationControl: React.FC = () => {
   const [isProcessing, setIsProcessing] = useState(false);
   const [dateFilter, setDateFilter] = useState<{ from?: Date; to?: Date } | undefined>(undefined);
   const [hasUserInteracted, setHasUserInteracted] = useState(false);
+  const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false);
+  const [productToDelete, setProductToDelete] = useState<ProductDetail | null>(null);
 
 
   const loadProducts = useCallback(async () => {
@@ -69,13 +72,11 @@ export const ExpirationControl: React.FC = () => {
   }, [toast]);
 
   useEffect(() => {
-    // Initial load or load when filters change after interaction
     if (hasUserInteracted || searchTerm || filterStatus !== "all" || dateFilter) {
       loadProducts();
     }
   }, [loadProducts, hasUserInteracted, searchTerm, filterStatus, dateFilter]);
 
-  // Focus barcode input on initial load or when section becomes active
   useEffect(() => {
     if (barcodeInputRef.current) {
       barcodeInputRef.current.focus();
@@ -119,7 +120,7 @@ export const ExpirationControl: React.FC = () => {
       toast({ title: "Código Vacío", description: "Por favor, ingrese un código de barras." });
       return;
     }
-    if (!hasUserInteracted) setHasUserInteracted(true); // Trigger load if first interaction
+    if (!hasUserInteracted) setHasUserInteracted(true); 
 
     const foundProduct = products.find(p => p.barcode === barcodeInput.trim());
     if (foundProduct) {
@@ -159,14 +160,14 @@ export const ExpirationControl: React.FC = () => {
         if (dateFilter?.from && p.expirationDate) {
             const expDate = parseISO(p.expirationDate);
             if (!isValidDate(expDate)) {
-                matchesDateRange = p.expirationInfo.status === "no_date"; // include if no_date is selected and it has no valid date
+                matchesDateRange = p.expirationInfo.status === "no_date"; 
             } else {
                 matchesDateRange = expDate >= dateFilter.from;
                 if (dateFilter.to && matchesDateRange) {
                     matchesDateRange = expDate <= endOfDay(dateFilter.to);
                 }
             }
-        } else if (dateFilter?.from && !p.expirationDate && filterStatus !== 'no_date') { // If filtering by date and product has no date, exclude unless 'no_date' filter active
+        } else if (dateFilter?.from && !p.expirationDate && filterStatus !== 'no_date') { 
             matchesDateRange = false;
         }
 
@@ -204,7 +205,7 @@ export const ExpirationControl: React.FC = () => {
       }
       setIsEditModalOpen(false);
       setSelectedProduct(null);
-      await loadProducts(); // Reload all products to reflect changes
+      await loadProducts(); 
     } catch (error: any) {
        if (typeof window !== 'undefined') {
         toast({ variant: "destructive", title: "Error al Actualizar", description: error.message });
@@ -215,17 +216,45 @@ export const ExpirationControl: React.FC = () => {
     }
   }, [toast, loadProducts]);
 
+  const handleDeleteRequest = useCallback((product: ProductDetail) => {
+    setProductToDelete(product);
+    setIsDeleteDialogOpen(true);
+  }, []);
+
+  const confirmProductDelete = useCallback(async () => {
+    if (!productToDelete) return;
+    setIsProcessing(true);
+    try {
+      await deleteProductFromDB(productToDelete.barcode);
+      toast({
+        title: 'Producto Eliminado',
+        description: `El producto "${productToDelete.description}" ha sido eliminado de la base de datos.`,
+      });
+      setProducts(prev => prev.filter(p => p.barcode !== productToDelete.barcode));
+      setIsDeleteDialogOpen(false);
+      setProductToDelete(null);
+    } catch (error: any) {
+      toast({
+        variant: 'destructive',
+        title: 'Error al Eliminar',
+        description: `No se pudo eliminar el producto: ${error.message}`,
+      });
+    } finally {
+      setIsProcessing(false);
+      barcodeInputRef.current?.focus();
+    }
+  }, [productToDelete, toast]);
+
   return (
     <div className="p-4 md:p-6 space-y-6">
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
         <h2 className="text-2xl font-bold">Control de Vencimientos</h2>
       </div>
 
-      {/* Barcode Input like Contador */}
       <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
         <Input
           ref={barcodeInputRef}
-          type="text" // Allow any text, validation happens on submit
+          type="text" 
           placeholder="Ingresar código de barras para buscar/editar..."
           value={barcodeInput}
           onChange={(e) => setBarcodeInput(e.target.value)}
@@ -247,7 +276,6 @@ export const ExpirationControl: React.FC = () => {
         </Button>
       </div>
 
-      {/* Global Filters */}
       <div className="flex flex-col md:flex-row gap-4 p-4 border rounded-lg bg-card dark:bg-gray-800 shadow-sm items-center">
         <div className="relative flex-grow w-full md:w-auto">
             <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
@@ -373,11 +401,20 @@ export const ExpirationControl: React.FC = () => {
                     <Button
                       variant="ghost"
                       size="icon"
-                      onClick={(e) => { e.stopPropagation(); handleEditProduct(item);}} // Prevent row click
+                      onClick={(e) => { e.stopPropagation(); handleEditProduct(item);}} 
                       title="Editar Fecha de Vencimiento"
-                      className="h-8 w-8"
+                      className="h-8 w-8 text-blue-600 hover:text-blue-700"
                     >
                       <Edit className="h-4 w-4" />
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      onClick={(e) => { e.stopPropagation(); handleDeleteRequest(item); }}
+                      title="Eliminar Producto de la Base de Datos"
+                      className="h-8 w-8 text-red-600 hover:text-red-700"
+                    >
+                      <Trash className="h-4 w-4" />
                     </Button>
                   </TableCell>
                 </TableRow>
@@ -395,9 +432,35 @@ export const ExpirationControl: React.FC = () => {
             onSubmit={handleEditSubmit}
             isProcessing={isProcessing}
             context="expiration"
-            initialStock={selectedProduct.stock} // Pass DB stock for context
+            initialStock={selectedProduct.stock} 
             />
         )}
+         <ConfirmationDialog
+            isOpen={isDeleteDialogOpen}
+            onOpenChange={setIsDeleteDialogOpen}
+            title="Confirmar Eliminación"
+            description={
+              productToDelete ? (
+                <>
+                  ¿Estás seguro de que deseas eliminar permanentemente el producto
+                  <span className="font-semibold"> "{productToDelete.description}" (Código: {productToDelete.barcode})</span>
+                  de la base de datos? Esta acción no se puede deshacer.
+                </>
+              ) : (
+                '¿Estás seguro de que deseas eliminar este producto?'
+              )
+            }
+            confirmText="Sí, Eliminar Producto"
+            onConfirm={confirmProductDelete}
+            onCancel={() => {
+              setIsDeleteDialogOpen(false);
+              setProductToDelete(null);
+            }}
+            isDestructive={true}
+            isProcessing={isProcessing}
+        />
     </div>
   );
 };
+
+    

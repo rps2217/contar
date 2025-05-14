@@ -140,7 +140,11 @@ export default function Home() {
         setLocalStorageItem(LOCAL_STORAGE_USER_ID_KEY, newUserId);
         setCurrentUserId(newUserId);
         if (isMountedRef.current) {
-          toast({title: "ID de Usuario", description: `ID de usuario generado: ${newUserId}. Puedes cambiarlo en la barra lateral.`});
+          requestAnimationFrame(() => {
+             if (isMountedRef.current) {
+                toast({title: "ID de Usuario", description: `ID de usuario generado: ${newUserId}. Puedes cambiarlo en la barra lateral.`});
+             }
+          });
         }
     }
     focusBarcodeIfCounting(); // Initial focus if starting in Contador section
@@ -222,11 +226,15 @@ export default function Home() {
 
     if (stockToCheck > 0 && countToCheck !== stockToCheck) {
         if(isMountedRef.current){
-            toast({
-                title: "Alerta de Discrepancia",
-                description: `${product.description}: Contado ${countToCheck}, Stock ${stockToCheck}.`,
-                variant: "default",
-                duration: 6000,
+            requestAnimationFrame(() => {
+                if(isMountedRef.current) {
+                    toast({
+                        title: "Alerta de Discrepancia",
+                        description: `${product.description}: Contado ${countToCheck}, Stock ${stockToCheck}.`,
+                        variant: "default",
+                        duration: 6000,
+                    });
+                }
             });
         }
         return true;
@@ -244,31 +252,39 @@ export default function Home() {
     const trimmedBarcode = rawBarcode.trim().replace(/\r?\n|\r$/g, '');
 
     if (!trimmedBarcode) {
-      if(isMountedRef.current) toast({ variant: "default", title: "Código vacío", description: "Por favor, introduce un código de barras." });
+      if(isMountedRef.current) {
+        requestAnimationFrame(() => {
+            if (isMountedRef.current) {
+                toast({ variant: "default", title: "Código vacío", description: "Por favor, introduce un código de barras." });
+            }
+        });
+      }
       if(isMountedRef.current) setBarcode("");
       focusBarcodeIfCounting();
       return;
     }
     if (!currentWarehouseId) {
-        if(isMountedRef.current) toast({ variant: "destructive", title: "Error", description: "No se ha seleccionado ningún almacén." });
+        if(isMountedRef.current) {
+            requestAnimationFrame(() => {
+                if (isMountedRef.current) {
+                    toast({ variant: "destructive", title: "Error", description: "No se ha seleccionado ningún almacén." });
+                }
+            });
+        }
         return;
     }
 
      if (trimmedBarcode === lastScannedBarcode) {
-         // Potentially a bounce from the scanner, or user double-pressed Enter.
-         // The lastScannedBarcode state with its timeout handles this.
          if(isMountedRef.current) setBarcode("");
          focusBarcodeIfCounting();
          return;
      }
      if(isMountedRef.current) setLastScannedBarcode(trimmedBarcode);
-     // Clear lastScannedBarcode after a short delay to allow for rapid distinct scans
-     // but prevent processing of the *exact same* barcode if it's sent multiple times quickly by the scanner.
      const clearLastScannedTimeout = setTimeout(() => {
          if (isMountedRef.current) setLastScannedBarcode(null);
-     }, 800); // 800ms should be enough to catch most scanner double-sends
+     }, 800);
 
-    let descriptionForToast = ''; // Used for more detailed toasts if needed
+    let descriptionForToast = '';
 
     const existingProductIndex = countingList.findIndex((p) => p.barcode === trimmedBarcode && p.warehouseId === currentWarehouseId);
 
@@ -286,7 +302,7 @@ export default function Home() {
              if(isMountedRef.current) setConfirmQuantityAction('increment');
              if(isMountedRef.current) setConfirmQuantityNewValue(newCount);
              if(isMountedRef.current) setIsConfirmQuantityDialogOpen(true);
-             playBeep(660, 100); // Different beep for confirmation
+             playBeep(660, 100);
         } else {
             const updatedProductData: DisplayProduct = {
                 ...productToUpdate,
@@ -299,18 +315,15 @@ export default function Home() {
                     return [updatedProductData, ...listWithoutOld];
                 });
              }
-            playBeep(880, 100); // Short, high beep for successful increment
-            // Only show discrepancy toast if needed, otherwise no toast for quick scanning
+            playBeep(880, 100);
             showDiscrepancyToastIfNeeded(updatedProductData, newCount);
         }
     } else {
-        // Product not in current counting list
         if(isMountedRef.current) setIsDbLoading(true);
         let newProductForList: DisplayProduct | null = null;
         try {
             const dbProduct = await getProductFromDB(trimmedBarcode);
             if (dbProduct) {
-                // Product found in the main database
                 newProductForList = {
                     ...dbProduct,
                     warehouseId: currentWarehouseId,
@@ -319,18 +332,10 @@ export default function Home() {
                     lastUpdated: new Date().toISOString(),
                     expirationDate: dbProduct.expirationDate || undefined,
                 };
-                playBeep(660, 150); // Medium beep for new known product added
-                // Show discrepancy toast if needed, otherwise no standard "Product Added" toast
-                if (showDiscrepancyToastIfNeeded(newProductForList)) {
-                    // Discrepancy toast is shown by the helper
-                } else if (isMountedRef.current) {
-                   // Optional: A very brief, auto-dismissing toast for "Product Added"
-                   // For rapid scanning, often better to omit this.
-                   // toast({ title: "Agregado", description: `${newProductForList.description.substring(0,20)}...`, duration: 1500 });
-                }
+                playBeep(660, 150);
+                showDiscrepancyToastIfNeeded(newProductForList);
 
             } else {
-                // Product not found in the main database
                 descriptionForToast = `Producto desconocido ${trimmedBarcode}`;
                 newProductForList = {
                     barcode: trimmedBarcode,
@@ -342,14 +347,17 @@ export default function Home() {
                     lastUpdated: new Date().toISOString(),
                     expirationDate: undefined,
                 };
-                playBeep(440, 300); // Low, longer beep for unknown product
+                playBeep(440, 300);
                 if(isMountedRef.current){
-                    // This toast is important as it informs the user about an unknown item
-                    toast({
-                        variant: "destructive",
-                        title: "Producto Desconocido",
-                        description: `Producto ${trimmedBarcode} no encontrado. Agregado temporalmente. Edita en 'Catálogo de Productos'.`,
-                        duration: 7000,
+                     requestAnimationFrame(() => {
+                        if (isMountedRef.current) {
+                            toast({
+                                variant: "destructive",
+                                title: "Producto Desconocido",
+                                description: `Producto ${trimmedBarcode} no encontrado. Agregado temporalmente. Edita en 'Catálogo de Productos'.`,
+                                duration: 7000,
+                            });
+                        }
                     });
                 }
             }
@@ -359,18 +367,23 @@ export default function Home() {
              }
         } catch (error) {
             console.error("Error fetching or adding product from IndexedDB:", error);
-            if(isMountedRef.current) toast({ variant: "destructive", title: "Error de Base de Datos", description: "No se pudo verificar o agregar el producto." });
-            playBeep(440, 300); // Error beep
+            if(isMountedRef.current) {
+                requestAnimationFrame(() => {
+                    if (isMountedRef.current) {
+                        toast({ variant: "destructive", title: "Error de Base de Datos", description: "No se pudo verificar o agregar el producto." });
+                    }
+                });
+            }
+            playBeep(440, 300);
         } finally {
              if (isMountedRef.current) setIsDbLoading(false);
         }
     }
-    if(isMountedRef.current) setBarcode(""); // Clear input field
-    focusBarcodeIfCounting(); // Ensure focus returns to input field
+    if(isMountedRef.current) setBarcode("");
+    focusBarcodeIfCounting();
 
-    // Cleanup timeout for lastScannedBarcode
     return () => clearTimeout(clearLastScannedTimeout);
-  }, [barcode, currentWarehouseId, getWarehouseName, lastScannedBarcode, toast, countingList, showDiscrepancyToastIfNeeded, focusBarcodeIfCounting]);
+  }, [barcode, currentWarehouseId, lastScannedBarcode, toast, countingList, showDiscrepancyToastIfNeeded, focusBarcodeIfCounting]);
 
 
 const modifyProductValue = useCallback(async (barcodeToUpdate: string, type: 'count' | 'stock', change: number) => {
@@ -385,7 +398,11 @@ const modifyProductValue = useCallback(async (barcodeToUpdate: string, type: 'co
         const productIndex = prevList.findIndex(p => p.barcode === barcodeToUpdate && p.warehouseId === currentWarehouseId);
         if (productIndex === -1) {
              if(isMountedRef.current) {
-                toast({ variant: "destructive", title: "Error", description: `Producto ${barcodeToUpdate} no encontrado en la lista para ${getWarehouseName(currentWarehouseId)}.`});
+                requestAnimationFrame(() => {
+                    if (isMountedRef.current) {
+                        toast({ variant: "destructive", title: "Error", description: `Producto ${barcodeToUpdate} no encontrado en la lista para ${getWarehouseName(currentWarehouseId)}.`});
+                    }
+                });
             }
              return prevList;
         }
@@ -428,10 +445,16 @@ const modifyProductValue = useCallback(async (barcodeToUpdate: string, type: 'co
                 if (dbProduct) {
                     const updatedDbProduct: ProductDetail = { ...dbProduct, stock: finalValue };
                     await addOrUpdateProductToDB(updatedDbProduct);
-                    if(isMountedRef.current) toast({
-                         title: `Stock (DB) Actualizado`,
-                         description: `Stock de ${productDescription} actualizado a ${finalValue} en la base de datos.`
-                     });
+                    if(isMountedRef.current) {
+                        requestAnimationFrame(() => {
+                           if (isMountedRef.current) {
+                                toast({
+                                     title: `Stock (DB) Actualizado`,
+                                     description: `Stock de ${productDescription} actualizado a ${finalValue} en la base de datos.`
+                                 });
+                            }
+                        });
+                    }
                 } else {
                       const listProduct = countingList.find(p => p.barcode === barcodeToUpdate && p.warehouseId === currentWarehouseId);
                       if(listProduct) {
@@ -443,38 +466,61 @@ const modifyProductValue = useCallback(async (barcodeToUpdate: string, type: 'co
                                 expirationDate: listProduct.expirationDate,
                             };
                             await addOrUpdateProductToDB(newDbProduct);
-                            if(isMountedRef.current) toast({
-                                 title: `Stock (DB) Establecido`,
-                                 description: `Stock de ${newDbProduct.description} establecido a ${newDbProduct.stock} en la base de datos.`
-                             });
-                      } else {
-                           // console.warn(`Cannot update stock in DB for ${barcodeToUpdate} as it's not found in current list either.`);
+                            if(isMountedRef.current) {
+                                requestAnimationFrame(() => {
+                                   if (isMountedRef.current) {
+                                        toast({
+                                             title: `Stock (DB) Establecido`,
+                                             description: `Stock de ${newDbProduct.description} establecido a ${newDbProduct.stock} en la base de datos.`
+                                         });
+                                    }
+                                });
+                            }
                       }
                 }
             } catch (error) {
-                if(isMountedRef.current) toast({
-                    variant: "destructive",
-                    title: "Error DB",
-                    description: `No se pudo actualizar el stock en la base de datos para ${productDescription}.`
-                });
+                if(isMountedRef.current) {
+                    requestAnimationFrame(() => {
+                        if (isMountedRef.current) {
+                            toast({
+                                variant: "destructive",
+                                title: "Error DB",
+                                description: `No se pudo actualizar el stock en la base de datos para ${productDescription}.`
+                            });
+                        }
+                    });
+                }
             }
-        } else if (type === 'count' && productForToast ) { 
+        } else if (type === 'count' && productForToast ) {
              if (!showDiscrepancyToastIfNeeded(productForToast, finalValue)) {
-                if(isMountedRef.current) toast({
-                    title: "Cantidad Modificada",
-                    description: `Cantidad de ${productDescription} (${getWarehouseName(currentWarehouseId)}) cambiada a ${finalValue}.`,
-                    duration: 3000
-                });
+                if(isMountedRef.current) {
+                    requestAnimationFrame(() => {
+                        if (isMountedRef.current) {
+                            toast({
+                                title: "Cantidad Modificada",
+                                description: `Cantidad de ${productDescription} (${getWarehouseName(currentWarehouseId)}) cambiada a ${finalValue}.`,
+                                duration: 3000
+                            });
+                        }
+                    });
+                }
             }
         }
      }
-  }, [currentWarehouseId, getWarehouseName, toast, countingList, showDiscrepancyToastIfNeeded]);
+     focusBarcodeIfCounting();
+  }, [currentWarehouseId, getWarehouseName, toast, countingList, showDiscrepancyToastIfNeeded, focusBarcodeIfCounting]);
 
 
 const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 'count' | 'stock', newValue: number, sumValue?: boolean) => {
     if (!isMountedRef.current) return;
     if (newValue < 0 || isNaN(newValue)) {
-        if(isMountedRef.current) toast({ variant: "destructive", title: "Valor Inválido", description: "La cantidad o stock debe ser un número positivo." });
+        if(isMountedRef.current) {
+            requestAnimationFrame(() => {
+                if (isMountedRef.current) {
+                    toast({ variant: "destructive", title: "Valor Inválido", description: "La cantidad o stock debe ser un número positivo." });
+                }
+            });
+        }
         return;
     }
 
@@ -527,10 +573,16 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
                  if (dbProduct) {
                      const updatedDbProduct: ProductDetail = { ...dbProduct, stock: finalValue };
                      await addOrUpdateProductToDB(updatedDbProduct);
-                      if(isMountedRef.current) toast({
-                          title: `Stock (DB) Actualizado`,
-                          description: `Stock de ${productDescription} actualizado a ${finalValue} en la base de datos.`
-                      });
+                      if(isMountedRef.current) {
+                        requestAnimationFrame(() => {
+                            if (isMountedRef.current) {
+                                toast({
+                                  title: `Stock (DB) Actualizado`,
+                                  description: `Stock de ${productDescription} actualizado a ${finalValue} en la base de datos.`
+                                });
+                            }
+                        });
+                      }
                  } else {
                        const listProduct = countingList.find(p => p.barcode === barcodeToUpdate && p.warehouseId === currentWarehouseId);
                        if(listProduct) {
@@ -542,31 +594,50 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
                                  expirationDate: listProduct.expirationDate,
                              };
                              await addOrUpdateProductToDB(newDbProduct);
-                              if(isMountedRef.current) toast({
-                                  title: `Stock (DB) Establecido`,
-                                  description: `Stock de ${newDbProduct.description} establecido a ${newDbProduct.stock} en la base de datos.`
-                              });
+                              if(isMountedRef.current) {
+                                requestAnimationFrame(() => {
+                                   if (isMountedRef.current) {
+                                        toast({
+                                            title: `Stock (DB) Establecido`,
+                                            description: `Stock de ${newDbProduct.description} establecido a ${newDbProduct.stock} en la base de datos.`
+                                        });
+                                    }
+                                });
+                              }
                        }
                  }
              } catch (error) {
-                 if(isMountedRef.current) toast({
-                     variant: "destructive",
-                     title: "Error DB",
-                     description: `No se pudo actualizar el stock en la base de datos para ${productDescription}.`
-                 });
+                 if(isMountedRef.current) {
+                    requestAnimationFrame(() => {
+                        if (isMountedRef.current) {
+                            toast({
+                                variant: "destructive",
+                                title: "Error DB",
+                                description: `No se pudo actualizar el stock en la base de datos para ${productDescription}.`
+                            });
+                        }
+                    });
+                 }
              }
-         } else if (type === 'count' && productForToast) { 
+         } else if (type === 'count' && productForToast) {
              const actionText = sumValue ? "sumada a" : "establecida en";
              if (!showDiscrepancyToastIfNeeded(productForToast, finalValue)) {
-                 if(isMountedRef.current) toast({
-                     title: "Cantidad Modificada",
-                     description: `Cantidad de ${productDescription} (${getWarehouseName(currentWarehouseId)}) ${actionText} ${finalValue}.`,
-                     duration: 3000
-                 });
+                 if(isMountedRef.current) {
+                    requestAnimationFrame(() => {
+                        if (isMountedRef.current) {
+                            toast({
+                                title: "Cantidad Modificada",
+                                description: `Cantidad de ${productDescription} (${getWarehouseName(currentWarehouseId)}) ${actionText} ${finalValue}.`,
+                                duration: 3000
+                            });
+                        }
+                    });
+                 }
              }
          }
      }
-}, [currentWarehouseId, getWarehouseName, toast, countingList, showDiscrepancyToastIfNeeded]);
+     focusBarcodeIfCounting();
+}, [currentWarehouseId, getWarehouseName, toast, countingList, showDiscrepancyToastIfNeeded, focusBarcodeIfCounting]);
 
 
   const handleIncrement = useCallback((barcode: string, type: 'count' | 'stock') => {
@@ -604,25 +675,31 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
          if (index === -1) return prevList;
 
          const listCopy = [...prevList];
-         const productToUpdate = listCopy[index];
+         const productToUpdateCopy = { ...listCopy[index] }; // Create a shallow copy
          const finalConfirmedCount = Math.max(0, newValue);
          confirmedValue = finalConfirmedCount;
 
          productAfterConfirm = {
-             ...productToUpdate,
+             ...productToUpdateCopy,
              count: finalConfirmedCount,
              lastUpdated: new Date().toISOString()
          };
          listCopy[index] = productAfterConfirm;
-         return [productAfterConfirm, ...listCopy.filter((_, i) => i !== index)];
+         // Ensure correct reordering: move updated product to the top
+         return [productAfterConfirm, ...listCopy.filter((item, i) => i !== index)];
      });
+
 
     requestAnimationFrame(() => {
         if (productAfterConfirm && confirmedValue !== null && isMountedRef.current) {
             if (!showDiscrepancyToastIfNeeded(productAfterConfirm, confirmedValue)) {
-                toast({
-                    title: "Cantidad Modificada",
-                    description: `Cantidad de ${productDescription} (${getWarehouseName(warehouseId)}) cambiada a ${confirmedValue}.`
+                requestAnimationFrame(() => { // Wrap toast in RAF
+                    if (isMountedRef.current) {
+                        toast({
+                            title: "Cantidad Modificada",
+                            description: `Cantidad de ${productDescription} (${getWarehouseName(warehouseId)}) cambiada a ${confirmedValue}.`
+                        });
+                    }
                 });
             }
         }
@@ -632,7 +709,7 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
      setConfirmQuantityProductBarcode(null);
      setConfirmQuantityAction(null);
      setConfirmQuantityNewValue(null);
-     setOpenModifyDialog(null); 
+     setOpenModifyDialog(null);
     }
     focusBarcodeIfCounting();
  }, [currentWarehouseId, confirmQuantityProductBarcode, confirmQuantityAction, confirmQuantityNewValue, toast, getWarehouseName, countingList, showDiscrepancyToastIfNeeded, focusBarcodeIfCounting]);
@@ -653,11 +730,17 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
      if(isMountedRef.current) setCountingList(prevList => prevList.filter(p => !(p.barcode === productToDelete.barcode && p.warehouseId === warehouseId)));
 
      requestAnimationFrame(() => {
-         if(isMountedRef.current) toast({
-              title: "Producto eliminado (Lista Actual)",
-              description: `${descriptionForToast} (${barcodeForToast}) ha sido eliminado del inventario actual (${getWarehouseName(warehouseId)}).`,
-              variant: "default"
-          });
+         if(isMountedRef.current) {
+            requestAnimationFrame(() => { // Wrap toast in RAF
+                if (isMountedRef.current) {
+                    toast({
+                        title: "Producto eliminado (Lista Actual)",
+                        description: `${descriptionForToast} (${barcodeForToast}) ha sido eliminado del inventario actual (${getWarehouseName(warehouseId)}).`,
+                        variant: "default"
+                    });
+                }
+            });
+          }
       });
     if(isMountedRef.current){
      setIsDeleteDialogOpen(false);
@@ -670,11 +753,17 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
      if (!isMountedRef.current || !currentWarehouseId) return;
      if(isMountedRef.current) setCountingList(prevList => prevList.filter(p => p.warehouseId !== currentWarehouseId));
      requestAnimationFrame(() => {
-         if(isMountedRef.current) toast({
-             title: "Lista Actual Borrada",
-             description: `Se han eliminado todos los productos del inventario para ${getWarehouseName(currentWarehouseId)}.`,
-             variant: "default"
-         });
+         if(isMountedRef.current) {
+            requestAnimationFrame(() => { // Wrap toast in RAF
+                if (isMountedRef.current) {
+                    toast({
+                        title: "Lista Actual Borrada",
+                        description: `Se han eliminado todos los productos del inventario para ${getWarehouseName(currentWarehouseId)}.`,
+                        variant: "default"
+                    });
+                }
+            });
+          }
      });
      if(isMountedRef.current) setIsDeleteListDialogOpen(false);
      focusBarcodeIfCounting();
@@ -683,7 +772,13 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
  const handleExport = useCallback(() => {
      const currentWarehouseList = countingList.filter(p => p.warehouseId === currentWarehouseId);
      if (currentWarehouseList.length === 0) {
-        if(isMountedRef.current) toast({ title: "Vacío", description: "No hay productos en el inventario actual para exportar." });
+        if(isMountedRef.current) {
+            requestAnimationFrame(() => {
+                if (isMountedRef.current) {
+                    toast({ title: "Vacío", description: "No hay productos en el inventario actual para exportar." });
+                }
+            });
+        }
         return;
     }
     try {
@@ -721,10 +816,22 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
         link.click();
         document.body.removeChild(link);
         URL.revokeObjectURL(link.href);
-        if(isMountedRef.current) toast({ title: "Exportado", description: `Inventario para ${getWarehouseName(currentWarehouseId)} exportado a ${fileName}.` });
+        if(isMountedRef.current) {
+            requestAnimationFrame(() => {
+                if (isMountedRef.current) {
+                    toast({ title: "Exportado", description: `Inventario para ${getWarehouseName(currentWarehouseId)} exportado a ${fileName}.` });
+                }
+            });
+        }
     } catch (error) {
         console.error("Error exporting inventory:", error);
-        if(isMountedRef.current) toast({ variant: "destructive", title: "Error de Exportación", description: "No se pudo generar el archivo CSV." });
+        if(isMountedRef.current) {
+            requestAnimationFrame(() => {
+                if (isMountedRef.current) {
+                    toast({ variant: "destructive", title: "Error de Exportación", description: "No se pudo generar el archivo CSV." });
+                }
+            });
+        }
     }
     focusBarcodeIfCounting();
  }, [countingList, currentWarehouseId, toast, getWarehouseName, focusBarcodeIfCounting]);
@@ -737,7 +844,13 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
     if (currentListForWarehouse.length === 0) {
         if (!hideToast && isMountedRef.current) {
              requestAnimationFrame(() => {
-                 if(isMountedRef.current) toast({ title: "Vacío", description: "No hay productos en el inventario actual para guardar en el historial." });
+                 if(isMountedRef.current) {
+                    requestAnimationFrame(() => { // Wrap toast in RAF
+                        if (isMountedRef.current) {
+                            toast({ title: "Vacío", description: "No hay productos en el inventario actual para guardar en el historial." });
+                        }
+                    });
+                  }
             });
         }
         focusBarcodeIfCounting();
@@ -753,20 +866,32 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
             timestamp: new Date().toISOString(),
             warehouseId: currentWarehouseId,
             warehouseName: currentWHName,
-            products: JSON.parse(JSON.stringify(currentListForWarehouse)) 
+            products: JSON.parse(JSON.stringify(currentListForWarehouse))
         };
 
         await saveCountingHistory(historyEntry);
          if (!hideToast && isMountedRef.current) {
             requestAnimationFrame(() => {
-                if(isMountedRef.current) toast({ title: "Historial Guardado", description: `Conteo para ${currentWHName} (Usuario: ${currentUserId || 'N/A'}) guardado.` });
+                if(isMountedRef.current) {
+                    requestAnimationFrame(() => { // Wrap toast in RAF
+                        if (isMountedRef.current) {
+                            toast({ title: "Historial Guardado", description: `Conteo para ${currentWHName} (Usuario: ${currentUserId || 'N/A'}) guardado.` });
+                        }
+                    });
+                }
             });
         }
     } catch (error: any) {
         console.error("Error saving counting history:", error);
          if (!hideToast && isMountedRef.current) {
              requestAnimationFrame(() => {
-                 if(isMountedRef.current) toast({ variant: "destructive", title: "Error al Guardar Historial", description: error.message || "Ocurrió un error inesperado." });
+                 if(isMountedRef.current) {
+                    requestAnimationFrame(() => { // Wrap toast in RAF
+                        if (isMountedRef.current) {
+                            toast({ variant: "destructive", title: "Error al Guardar Historial", description: error.message || "Ocurrió un error inesperado." });
+                        }
+                    });
+                  }
              });
         }
     } finally {
@@ -824,7 +949,7 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
                          updatedCurrentWarehouseList.push({
                              ...dbProduct,
                              warehouseId: currentWarehouseId,
-                             count: 0, 
+                             count: 0,
                              lastUpdated: new Date().toISOString(),
                          });
                      }
@@ -837,13 +962,25 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
          }
 
           requestAnimationFrame(() => {
-              if(isMountedRef.current) toast({ title: "Datos Actualizados", description: `${updatedProductCount} producto(s) actualizado(s) y ${addedProductCount} agregado(s) desde la base de datos para ${getWarehouseName(currentWarehouseId)}.` });
+              if(isMountedRef.current) {
+                requestAnimationFrame(() => { // Wrap toast in RAF
+                    if (isMountedRef.current) {
+                        toast({ title: "Datos Actualizados", description: `${updatedProductCount} producto(s) actualizado(s) y ${addedProductCount} agregado(s) desde la base de datos para ${getWarehouseName(currentWarehouseId)}.` });
+                    }
+                });
+              }
           });
 
      } catch (error) {
          console.error(`Error refreshing stock and details for warehouse ${currentWarehouseId}:`, error);
           requestAnimationFrame(() => {
-              if(isMountedRef.current) toast({ variant: "destructive", title: "Error al Actualizar", description: `No se pudieron actualizar los datos desde la base de datos local para ${getWarehouseName(currentWarehouseId)}. ` });
+              if(isMountedRef.current) {
+                requestAnimationFrame(() => { // Wrap toast in RAF
+                    if (isMountedRef.current) {
+                        toast({ variant: "destructive", title: "Error al Actualizar", description: `No se pudieron actualizar los datos desde la base de datos local para ${getWarehouseName(currentWarehouseId)}. ` });
+                    }
+                });
+              }
           });
      } finally {
          if (isMountedRef.current) {
@@ -871,7 +1008,7 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
          if (dbProduct) {
              if (!isMountedRef.current) return;
              setProductToEditDetail(dbProduct);
-             setInitialStockForEdit(dbProduct.stock ?? 0); 
+             setInitialStockForEdit(dbProduct.stock ?? 0);
              setIsEditDetailDialogOpen(true);
          } else {
              if (!isMountedRef.current) return;
@@ -879,50 +1016,62 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
                  barcode: product.barcode,
                  description: product.description,
                  provider: product.provider,
-                 stock: product.stock ?? 0, 
+                 stock: product.stock ?? 0,
                  expirationDate: product.expirationDate,
              };
              setProductToEditDetail(placeholderDetail);
              setInitialStockForEdit(product.stock ?? 0);
              setIsEditDetailDialogOpen(true);
              requestAnimationFrame(() => {
-                if(isMountedRef.current) toast({ variant: "default", title: "Editando Producto Temporal", description: "Este producto no está en la base de datos. Guarde los cambios para añadirlo." });
+                if(isMountedRef.current) {
+                    requestAnimationFrame(() => { // Wrap toast in RAF
+                        if (isMountedRef.current) {
+                            toast({ variant: "default", title: "Editando Producto Temporal", description: "Este producto no está en la base de datos. Guarde los cambios para añadirlo." });
+                        }
+                    });
+                }
              });
          }
      } catch (error) {
          if (!isMountedRef.current) return;
          console.error("Error fetching product details for edit:", error);
          requestAnimationFrame(() => {
-            if(isMountedRef.current) toast({ variant: "destructive", title: "Error DB", description: "No se pudieron obtener los datos del producto para editar." });
+            if(isMountedRef.current) {
+                requestAnimationFrame(() => { // Wrap toast in RAF
+                    if (isMountedRef.current) {
+                        toast({ variant: "destructive", title: "Error DB", description: "No se pudieron obtener los datos del producto para editar." });
+                    }
+                });
+            }
          });
      } finally {
          if (isMountedRef.current) {
             setIsDbLoading(false);
          }
      }
- }, [toast]); 
+ }, [toast]);
 
  const handleEditDetailSubmit = useCallback(async (data: ProductDetail) => {
      if (!isMountedRef.current || !productToEditDetail) return;
      if(isMountedRef.current) setIsDbLoading(true);
      try {
          const updatedProductData: ProductDetail = {
-             barcode: productToEditDetail.barcode, 
+             barcode: productToEditDetail.barcode,
              description: data.description.trim(),
              provider: data.provider?.trim() || "Desconocido",
-             stock: data.stock ?? 0, 
+             stock: data.stock ?? 0,
              expirationDate: data.expirationDate || undefined,
          };
-         await addOrUpdateProductToDB(updatedProductData); 
+         await addOrUpdateProductToDB(updatedProductData);
          if (!isMountedRef.current) return;
 
          setCountingList(prevList => prevList.map(item =>
              item.barcode === updatedProductData.barcode && item.warehouseId === currentWarehouseId
-                 ? { 
+                 ? {
                      ...item,
                      description: updatedProductData.description,
                      provider: updatedProductData.provider,
-                     stock: updatedProductData.stock, 
+                     stock: updatedProductData.stock,
                      expirationDate: updatedProductData.expirationDate,
                      lastUpdated: new Date().toISOString()
                    }
@@ -930,10 +1079,16 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
          ));
 
          requestAnimationFrame(() => {
-             if(isMountedRef.current) toast({
-                 title: "Producto Actualizado",
-                 description: `${updatedProductData.description} ha sido actualizado en la base de datos.`,
-             });
+             if(isMountedRef.current) {
+                requestAnimationFrame(() => { // Wrap toast in RAF
+                    if (isMountedRef.current) {
+                        toast({
+                            title: "Producto Actualizado",
+                            description: `${updatedProductData.description} ha sido actualizado en la base de datos.`,
+                        });
+                    }
+                });
+             }
          });
          if(isMountedRef.current){
             setIsEditDetailDialogOpen(false);
@@ -942,7 +1097,13 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
      } catch (error: any) {
          if (!isMountedRef.current) return;
           requestAnimationFrame(() => {
-             if(isMountedRef.current) toast({ variant: "destructive", title: "Error al Actualizar", description: `No se pudo actualizar: ${error.message}` });
+             if(isMountedRef.current) {
+                requestAnimationFrame(() => { // Wrap toast in RAF
+                    if (isMountedRef.current) {
+                        toast({ variant: "destructive", title: "Error al Actualizar", description: `No se pudo actualizar: ${error.message}` });
+                    }
+                });
+             }
           });
      } finally {
          if (isMountedRef.current) {
@@ -956,7 +1117,13 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
     if (!isMountedRef.current) return;
     if (!productsToCount || productsToCount.length === 0) {
         requestAnimationFrame(() => {
-           if(isMountedRef.current) toast({ title: "Vacío", description: "No hay productos para este proveedor." });
+           if(isMountedRef.current) {
+            requestAnimationFrame(() => { // Wrap toast in RAF
+                if (isMountedRef.current) {
+                    toast({ title: "Vacío", description: "No hay productos para este proveedor." });
+                }
+            });
+           }
         });
         return;
     }
@@ -964,7 +1131,7 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
        ...dbProduct,
        warehouseId: currentWarehouseId,
        stock: dbProduct.stock ?? 0,
-       count: 0, 
+       count: 0,
        lastUpdated: new Date().toISOString(),
        expirationDate: dbProduct.expirationDate || undefined,
    }));
@@ -978,15 +1145,15 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
              .map(existingItem => {
                  if (newProductsMap.has(existingItem.barcode)) {
                      const updatedItem = newProductsMap.get(existingItem.barcode)!;
-                     newProductsMap.delete(existingItem.barcode); 
+                     newProductsMap.delete(existingItem.barcode);
                      return updatedItem;
                  }
-                 return null; 
+                 return null;
              })
-             .filter(item => item !== null) as DisplayProduct[]; 
-         itemsForCurrentWarehouse = [...Array.from(newProductsMap.values())]; 
+             .filter(item => item !== null) as DisplayProduct[];
+         itemsForCurrentWarehouse = [...Array.from(newProductsMap.values())];
          const newList = [...itemsForCurrentWarehouse, ...otherWarehouseItems];
-           newList.sort((a, b) => { 
+           newList.sort((a, b) => {
                  if (a.warehouseId === currentWarehouseId && b.warehouseId !== currentWarehouseId) return -1;
                  if (a.warehouseId !== currentWarehouseId && b.warehouseId === currentWarehouseId) return 1;
                  if (a.warehouseId === currentWarehouseId && b.warehouseId === currentWarehouseId) {
@@ -999,7 +1166,13 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
      setActiveSection("Contador");
      }
      requestAnimationFrame(() => {
-        if(isMountedRef.current) toast({ title: "Conteo por Proveedor Iniciado", description: `Cargados ${productsToCount.length} productos para ${getWarehouseName(currentWarehouseId)}.` });
+        if(isMountedRef.current) {
+            requestAnimationFrame(() => { // Wrap toast in RAF
+                if (isMountedRef.current) {
+                    toast({ title: "Conteo por Proveedor Iniciado", description: `Cargados ${productsToCount.length} productos para ${getWarehouseName(currentWarehouseId)}.` });
+                }
+            });
+        }
      });
      focusBarcodeIfCounting();
 }, [toast, setActiveSection, currentWarehouseId, getWarehouseName, focusBarcodeIfCounting]);
@@ -1026,9 +1199,9 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
 
    const handleWarehouseChange = useCallback((newWarehouseId: string) => {
          if (newWarehouseId !== currentWarehouseId) {
-             if(isMountedRef.current) setIsDbLoading(true); 
+             if(isMountedRef.current) setIsDbLoading(true);
              if(isMountedRef.current) setCurrentWarehouseId(newWarehouseId);
-             if(isMountedRef.current) setSearchTerm(""); 
+             if(isMountedRef.current) setSearchTerm("");
          }
          focusBarcodeIfCounting();
    }, [currentWarehouseId, setCurrentWarehouseId, focusBarcodeIfCounting]);
@@ -1039,14 +1212,26 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
                 const isDuplicate = prevWarehouses.some(warehouse => warehouse.id === newWarehouse.id);
                 if (isDuplicate) {
                     requestAnimationFrame(() => {
-                       if(isMountedRef.current) toast({ variant: 'destructive', title: 'Error', description: 'ID de almacén ya existe.' });
+                       if(isMountedRef.current) {
+                        requestAnimationFrame(() => { // Wrap toast in RAF
+                            if (isMountedRef.current) {
+                                toast({ variant: 'destructive', title: 'Error', description: 'ID de almacén ya existe.' });
+                            }
+                        });
+                       }
                     });
                     return prevWarehouses;
                 }
                 const updatedWarehouses = [...prevWarehouses, newWarehouse];
-                handleWarehouseChange(newWarehouse.id); 
+                handleWarehouseChange(newWarehouse.id);
                 requestAnimationFrame(() => {
-                    if(isMountedRef.current) toast({title: "Almacén Agregado", description: `Cambiado al nuevo almacén: ${newWarehouse.name}`});
+                    if(isMountedRef.current) {
+                        requestAnimationFrame(() => { // Wrap toast in RAF
+                            if (isMountedRef.current) {
+                                toast({title: "Almacén Agregado", description: `Cambiado al nuevo almacén: ${newWarehouse.name}`});
+                            }
+                        });
+                    }
                  });
                 return updatedWarehouses;
             });
@@ -1056,18 +1241,30 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
    const handleUpdateWarehouses = useCallback((updatedWarehouses: { id: string; name: string }[]) => {
         if(isMountedRef.current) setWarehouses(updatedWarehouses);
          if (!updatedWarehouses.some(w => w.id === currentWarehouseId)) {
-             const newCurrentId = updatedWarehouses[0]?.id || 'main'; 
-             if (newCurrentId !== currentWarehouseId) { 
+             const newCurrentId = updatedWarehouses[0]?.id || 'main';
+             if (newCurrentId !== currentWarehouseId) {
                  handleWarehouseChange(newCurrentId);
                   requestAnimationFrame(() => {
-                     if(isMountedRef.current) toast({title: "Almacén Actualizado", description: `Almacén actual cambiado a ${getWarehouseName(newCurrentId)}.`});
+                     if(isMountedRef.current) {
+                        requestAnimationFrame(() => { // Wrap toast in RAF
+                            if (isMountedRef.current) {
+                                toast({title: "Almacén Actualizado", description: `Almacén actual cambiado a ${getWarehouseName(newCurrentId)}.`});
+                            }
+                        });
+                     }
                   });
-             } else if (updatedWarehouses.length === 0) { 
+             } else if (updatedWarehouses.length === 0) {
                   const defaultWarehouse = { id: 'main', name: 'Almacén Principal' };
                   if(isMountedRef.current) setWarehouses([defaultWarehouse]);
                   handleWarehouseChange(defaultWarehouse.id);
                    requestAnimationFrame(() => {
-                      if(isMountedRef.current) toast({title: "Almacenes Actualizados", description: "Se restauró el almacén principal."});
+                      if(isMountedRef.current) {
+                        requestAnimationFrame(() => { // Wrap toast in RAF
+                            if (isMountedRef.current) {
+                                toast({title: "Almacenes Actualizados", description: "Se restauró el almacén principal."});
+                            }
+                        });
+                      }
                    });
              }
          }
@@ -1085,17 +1282,29 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
     if (!isMountedRef.current) return;
     if(isMountedRef.current) setIsDbLoading(true);
     try {
-      await clearAllDatabases(); 
+      await clearAllDatabases();
       warehouses.forEach(warehouse => {
         if(typeof window !== 'undefined') localStorage.removeItem(`${LOCAL_STORAGE_COUNTING_LIST_KEY_PREFIX}${warehouse.id}_${currentUserId}`);
       });
-      if(isMountedRef.current) setCountingList([]); 
+      if(isMountedRef.current) setCountingList([]);
       requestAnimationFrame(() => {
-          if(isMountedRef.current) toast({ title: "Base de Datos Borrada", description: "Todos los productos, el historial de conteos y las listas de inventario locales han sido eliminados." });
+          if(isMountedRef.current) {
+            requestAnimationFrame(() => { // Wrap toast in RAF
+                if (isMountedRef.current) {
+                    toast({ title: "Base de Datos Borrada", description: "Todos los productos, el historial de conteos y las listas de inventario locales han sido eliminados." });
+                }
+            });
+          }
       });
     } catch (error: any) {
       requestAnimationFrame(() => {
-          if(isMountedRef.current) toast({ variant: "destructive", title: "Error al Borrar", description: `No se pudo borrar la base de datos: ${error.message}` });
+          if(isMountedRef.current) {
+            requestAnimationFrame(() => { // Wrap toast in RAF
+                if (isMountedRef.current) {
+                    toast({ variant: "destructive", title: "Error al Borrar", description: `No se pudo borrar la base de datos: ${error.message}` });
+                }
+            });
+          }
       });
     } finally {
       if (isMountedRef.current) {
@@ -1104,7 +1313,7 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
       }
        focusBarcodeIfCounting();
     }
-  }, [toast, warehouses, currentUserId, focusBarcodeIfCounting]); 
+  }, [toast, warehouses, currentUserId, focusBarcodeIfCounting]);
 
 
   const sectionItems = useMemo(() => [
@@ -1127,7 +1336,7 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
     currentWarehouseId,
     handleWarehouseChange,
     getWarehouseName,
-    isDbLoading, 
+    isDbLoading,
   };
 
 
@@ -1149,16 +1358,16 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
             <SidebarLayout
               {...sidebarProps}
               isMobileView={true}
-              isCollapsed={false} 
+              isCollapsed={false}
               onSectionChange={(section) => {
                 handleSectionChange(section);
-                setMobileSheetOpen(false); 
+                setMobileSheetOpen(false);
               }}
             />
           </SheetContent>
         </Sheet>
         <h2 className="text-xl font-semibold truncate ml-4">StockCounter Pro</h2>
-        <div className="w-8"></div> 
+        <div className="w-8"></div>
       </div>
 
       {/* Desktop Sidebar */}
@@ -1211,7 +1420,7 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
                         onDecrement={handleDecrement}
                         onIncrement={handleIncrement}
                         onEditDetailRequest={handleOpenEditDetailDialog}
-                        tableHeightClass="h-full" 
+                        tableHeightClass="h-full"
                     />
                 </div>
 
@@ -1244,7 +1453,13 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
                                         if(isMountedRef.current) setIsDeleteListDialogOpen(true);
                                     } else {
                                         requestAnimationFrame(() => {
-                                            if(isMountedRef.current) toast({ title: "Vacío", description: "La lista actual ya está vacía." });
+                                            if(isMountedRef.current) {
+                                                requestAnimationFrame(() => { // Wrap toast in RAF
+                                                    if (isMountedRef.current) {
+                                                        toast({ title: "Vacío", description: "La lista actual ya está vacía." });
+                                                    }
+                                                });
+                                            }
                                         });
                                     }
                                 }}
@@ -1280,7 +1495,13 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
                                     if(isMountedRef.current) setIsDeleteListDialogOpen(true);
                                 } else {
                                     requestAnimationFrame(() => {
-                                        if(isMountedRef.current) toast({ title: "Vacío", description: "La lista actual ya está vacía." });
+                                        if(isMountedRef.current) {
+                                            requestAnimationFrame(() => { // Wrap toast in RAF
+                                                if (isMountedRef.current) {
+                                                    toast({ title: "Vacío", description: "La lista actual ya está vacía." });
+                                                }
+                                            });
+                                        }
                                     });
                                 }
                             }}
@@ -1456,7 +1677,7 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
          setIsOpen={(open) => {
             setIsEditDetailDialogOpen(open);
             if (!open) {
-                setProductToEditDetail(null); 
+                setProductToEditDetail(null);
                 focusBarcodeIfCounting();
             }
          }}
@@ -1471,7 +1692,13 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
                    if (!isMountedRef.current) return;
                    setCountingList(prevList => prevList.filter(p => !(p.barcode === barcode && p.warehouseId === currentWarehouseId)));
                     requestAnimationFrame(() => {
-                       if(isMountedRef.current) toast({title: "Producto Eliminado (DB)", description: `Producto ${barcode} eliminado de la base de datos.`});
+                       if(isMountedRef.current) {
+                        requestAnimationFrame(() => { // Wrap toast in RAF
+                            if (isMountedRef.current) {
+                                toast({title: "Producto Eliminado (DB)", description: `Producto ${barcode} eliminado de la base de datos.`});
+                            }
+                        });
+                       }
                     });
                    if(isMountedRef.current) {
                     setIsEditDetailDialogOpen(false);
@@ -1480,7 +1707,13 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
                } catch (error: any) {
                     if (!isMountedRef.current) return;
                     requestAnimationFrame(() => {
-                        if(isMountedRef.current) toast({ variant: "destructive", title: "Error al Eliminar", description: `No se pudo eliminar: ${error.message}` });
+                        if(isMountedRef.current) {
+                            requestAnimationFrame(() => { // Wrap toast in RAF
+                                if (isMountedRef.current) {
+                                    toast({ variant: "destructive", title: "Error al Eliminar", description: `No se pudo eliminar: ${error.message}` });
+                                }
+                            });
+                        }
                     });
                } finally {
                     if (isMountedRef.current) {
@@ -1491,7 +1724,7 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
            }}
          isProcessing={isDbLoading}
          initialStock={initialStockForEdit}
-         context="countingList" 
+         context="countingList"
          warehouseName={getWarehouseName(currentWarehouseId)}
       />
     </div>

@@ -54,6 +54,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { useIsMobile } from '@/hooks/use-mobile';
+import { BarcodeEntry } from '@/components/barcode-entry';
 
 
 // --- Constants ---
@@ -1165,7 +1166,15 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
       <main className="flex-1 p-6 overflow-y-auto">
         {activeSection === 'Contador' && (
             <div id="contador-content" className="flex flex-col h-full">
-                {/* BarcodeEntry and Search Input */}
+                <BarcodeEntry
+                  barcode={barcode}
+                  setBarcode={setBarcode}
+                  onAddProduct={() => handleAddProduct()}
+                  onRefreshStock={handleRefreshStock}
+                  isLoading={isDbLoading || isRefreshingStock}
+                  isRefreshingStock={isRefreshingStock}
+                  inputRef={barcodeInputRef}
+                />
                  <div className="relative mb-4">
                     <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
                     <Input
@@ -1475,3 +1484,4 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
     </div>
   );
 }
+

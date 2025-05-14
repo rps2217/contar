@@ -23,10 +23,9 @@ import {
 import { WarehouseManagement } from "@/components/warehouse-management";
 import { format, isValid, parseISO } from 'date-fns';
 import { es } from 'date-fns/locale';
-import { Minus, Plus, Trash, RefreshCw, Search, AppWindow, Database, Boxes, Loader2, History as HistoryIcon, CalendarIcon, Save, Edit, Download, BarChart, Settings, AlertTriangle, XCircle, Menu as MenuIcon, User, ShieldAlert, Filter, PanelLeftClose, PanelRightOpen, PackageSearch, CalendarClock, BookOpenText, Users2, ClipboardList } from "lucide-react";
+import { Minus, Plus, Trash, RefreshCw, Search, AppWindow, Database, Boxes, Loader2, History as HistoryIcon, CalendarIcon, Save, Edit, Download, BarChart, Settings, AlertTriangle, XCircle, Menu as MenuIcon, User, ShieldAlert, Filter, PanelLeftClose, PanelRightOpen, PackageSearch, CalendarClock, BookOpenText, Users2, ClipboardList, MoreVertical } from "lucide-react";
 import React, { useCallback, useEffect, useRef, useState, useMemo } from "react";
 import { playBeep } from '@/lib/helpers';
-import { BarcodeEntry } from '@/components/barcode-entry';
 import { CountingListTable } from '@/components/counting-list-table';
 import { ModifyValueDialog } from '@/components/modify-value-dialog';
 import { ConfirmationDialog } from '@/components/confirmation-dialog';
@@ -48,6 +47,13 @@ import { ExpirationControl } from '@/components/expiration-control';
 import Papa from 'papaparse';
 import { SidebarLayout } from '@/components/sidebar-layout';
 import { Sheet, SheetContent, SheetTrigger, SheetHeader, SheetTitle } from "@/components/ui/sheet";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import { useIsMobile } from '@/hooks/use-mobile';
 
 
 // --- Constants ---
@@ -109,6 +115,7 @@ export default function Home() {
   const [initialStockForEdit, setInitialStockForEdit] = useState<number>(0);
   const [isClearAllDataConfirmOpen, setIsClearAllDataConfirmOpen] = useState(false);
   const [mobileSheetOpen, setMobileSheetOpen] = useState(false);
+  const isMobile = useIsMobile();
 
 
   // --- Helper Functions ---
@@ -1158,15 +1165,7 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
       <main className="flex-1 p-6 overflow-y-auto">
         {activeSection === 'Contador' && (
             <div id="contador-content" className="flex flex-col h-full">
-                <BarcodeEntry
-                    barcode={barcode}
-                    setBarcode={setBarcode}
-                    onAddProduct={() => handleAddProduct()}
-                    onRefreshStock={handleRefreshStock}
-                    isLoading={isDbLoading || isRefreshingStock || isSavingToHistory}
-                    isRefreshingStock={isRefreshingStock}
-                    inputRef={barcodeInputRef}
-                />
+                {/* BarcodeEntry and Search Input */}
                  <div className="relative mb-4">
                     <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
                     <Input
@@ -1194,40 +1193,83 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
                     />
                 </div>
 
-               <div className="mt-4 flex flex-wrap justify-center md:justify-end gap-2">
-                    <Button
-                        onClick={() => handleSaveToHistory()}
-                        disabled={countingList.filter(p => p.warehouseId === currentWarehouseId).length === 0 || isDbLoading || isSavingToHistory}
-                        variant="outline"
-                        className="flex items-center gap-1 w-full sm:w-auto"
-                    >
-                        {isSavingToHistory ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
-                        {isSavingToHistory ? "Guardando..." : "Guardar Historial"}
-                    </Button>
-                    <Button
-                        onClick={handleExport}
-                        disabled={countingList.filter(p => p.warehouseId === currentWarehouseId).length === 0 || isDbLoading}
-                        variant="outline"
-                        className="flex items-center gap-1 w-full sm:w-auto"
-                    >
-                        <Download className="h-4 w-4" /> Exportar
-                    </Button>
-                    <Button
-                        onClick={() => {
-                            if (countingList.filter(p => p.warehouseId === currentWarehouseId).length > 0) {
-                                if(isMountedRef.current) setIsDeleteListDialogOpen(true);
-                            } else {
-                                requestAnimationFrame(() => {
-                                    if(isMountedRef.current) toast({ title: "Vacío", description: "La lista actual ya está vacía." });
-                                });
-                            }
-                        }}
-                        disabled={countingList.filter(p => p.warehouseId === currentWarehouseId).length === 0 || isDbLoading}
-                        variant="destructive"
-                         className="flex items-center gap-1 w-full sm:w-auto"
-                    >
-                        <Trash className="h-4 w-4" /> Borrar Lista
-                    </Button>
+               <div className="mt-4 flex flex-col sm:flex-row sm:justify-end items-stretch sm:items-center gap-2">
+                {isMobile ? (
+                    <DropdownMenu>
+                        <DropdownMenuTrigger asChild>
+                            <Button variant="outline" className="w-full">
+                                <MoreVertical className="h-4 w-4 mr-2" />
+                                <span>Acciones</span>
+                            </Button>
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent align="end" className="w-[calc(100vw-4rem)] sm:w-56">
+                            <DropdownMenuItem
+                                onSelect={() => handleSaveToHistory()}
+                                disabled={countingList.filter(p => p.warehouseId === currentWarehouseId).length === 0 || isDbLoading || isSavingToHistory}
+                            >
+                                {isSavingToHistory ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <Save className="h-4 w-4 mr-2" />}
+                                {isSavingToHistory ? "Guardando..." : "Guardar Historial"}
+                            </DropdownMenuItem>
+                            <DropdownMenuItem
+                                onSelect={handleExport}
+                                disabled={countingList.filter(p => p.warehouseId === currentWarehouseId).length === 0 || isDbLoading}
+                            >
+                                <Download className="h-4 w-4 mr-2" /> Exportar
+                            </DropdownMenuItem>
+                            <DropdownMenuItem
+                                onSelect={() => {
+                                    if (countingList.filter(p => p.warehouseId === currentWarehouseId).length > 0) {
+                                        if(isMountedRef.current) setIsDeleteListDialogOpen(true);
+                                    } else {
+                                        requestAnimationFrame(() => {
+                                            if(isMountedRef.current) toast({ title: "Vacío", description: "La lista actual ya está vacía." });
+                                        });
+                                    }
+                                }}
+                                disabled={countingList.filter(p => p.warehouseId === currentWarehouseId).length === 0 || isDbLoading}
+                                className="text-destructive focus:text-destructive dark:focus:text-red-400"
+                            >
+                                <Trash className="h-4 w-4 mr-2" /> Borrar Lista
+                            </DropdownMenuItem>
+                        </DropdownMenuContent>
+                    </DropdownMenu>
+                ) : (
+                    <>
+                        <Button
+                            onClick={() => handleSaveToHistory()}
+                            disabled={countingList.filter(p => p.warehouseId === currentWarehouseId).length === 0 || isDbLoading || isSavingToHistory}
+                            variant="outline"
+                            className="flex items-center gap-1 w-full sm:w-auto"
+                        >
+                            {isSavingToHistory ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
+                            {isSavingToHistory ? "Guardando..." : "Guardar Historial"}
+                        </Button>
+                        <Button
+                            onClick={handleExport}
+                            disabled={countingList.filter(p => p.warehouseId === currentWarehouseId).length === 0 || isDbLoading}
+                            variant="outline"
+                            className="flex items-center gap-1 w-full sm:w-auto"
+                        >
+                            <Download className="h-4 w-4" /> Exportar
+                        </Button>
+                        <Button
+                            onClick={() => {
+                                if (countingList.filter(p => p.warehouseId === currentWarehouseId).length > 0) {
+                                    if(isMountedRef.current) setIsDeleteListDialogOpen(true);
+                                } else {
+                                    requestAnimationFrame(() => {
+                                        if(isMountedRef.current) toast({ title: "Vacío", description: "La lista actual ya está vacía." });
+                                    });
+                                }
+                            }}
+                            disabled={countingList.filter(p => p.warehouseId === currentWarehouseId).length === 0 || isDbLoading}
+                            variant="destructive"
+                             className="flex items-center gap-1 w-full sm:w-auto"
+                        >
+                            <Trash className="h-4 w-4" /> Borrar Lista
+                        </Button>
+                    </>
+                )}
                 </div>
             </div>
         )}

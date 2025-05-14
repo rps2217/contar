@@ -1,12 +1,12 @@
 // src/app/page.tsx
 "use client";
 
-import type { DisplayProduct, ProductDetail, CountingHistoryEntry } from '@/types/product';
+import type { DisplayProduct, ProductDetail, CountingHistoryEntry, Warehouse } from '@/types/product';
 import { useToast } from "@/hooks/use-toast";
 import { cn, getLocalStorageItem, setLocalStorageItem, debounce } from "@/lib/utils";
 import {
     AlertDialogAction, AlertDialogCancel, AlertDialogContent,
-    AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle as UIDialogTitle // Renamed to avoid conflict
+    AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle as UIDialogTitle
 } from "@/components/ui/alert-dialog";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
@@ -23,7 +23,7 @@ import {
 import { WarehouseManagement } from "@/components/warehouse-management";
 import { format, isValid, parseISO } from 'date-fns';
 import { es } from 'date-fns/locale';
-import { Minus, Plus, Trash, RefreshCw, Search, AppWindow, Database, Boxes, Loader2, History as HistoryIcon, CalendarIcon, Save, Edit, Download, BarChart, Settings, AlertTriangle, XCircle, Menu as MenuIcon, User, ShieldAlert, Filter, PanelLeftClose, PanelRightOpen, PackageSearch, CalendarClock, BookOpenText, Users2, ClipboardList, MoreVertical } from "lucide-react";
+import { Minus, Plus, Trash, RefreshCw, Search, Boxes, Loader2, History as HistoryIcon, CalendarIcon, Save, Edit, Download, BarChart, Settings, AlertTriangle, XCircle, Menu as MenuIcon, User, ShieldAlert, Filter, PanelLeftClose, PanelRightOpen, PackageSearch, CalendarClock, BookOpenText, Users2, ClipboardList, MoreVertical, Warehouse as WarehouseIconLucide } from "lucide-react";
 import React, { useCallback, useEffect, useRef, useState, useMemo } from "react";
 import { playBeep } from '@/lib/helpers';
 import { CountingListTable } from '@/components/counting-list-table';
@@ -75,7 +75,7 @@ export default function Home() {
   const isMountedRef = useRef(false);
 
   // --- LocalStorage Hooks ---
-  const [warehouses, setWarehouses] = useLocalStorage<Array<{ id: string; name: string }>>(
+  const [warehouses, setWarehouses] = useLocalStorage<Array<Warehouse>>(
       LOCAL_STORAGE_WAREHOUSES_KEY,
       [{ id: 'main', name: 'Almacén Principal' }]
   );
@@ -255,16 +255,20 @@ export default function Home() {
     }
 
      if (trimmedBarcode === lastScannedBarcode) {
+         // Potentially a bounce from the scanner, or user double-pressed Enter.
+         // The lastScannedBarcode state with its timeout handles this.
          if(isMountedRef.current) setBarcode("");
          focusBarcodeIfCounting();
          return;
      }
      if(isMountedRef.current) setLastScannedBarcode(trimmedBarcode);
+     // Clear lastScannedBarcode after a short delay to allow for rapid distinct scans
+     // but prevent processing of the *exact same* barcode if it's sent multiple times quickly by the scanner.
      const clearLastScannedTimeout = setTimeout(() => {
          if (isMountedRef.current) setLastScannedBarcode(null);
-     }, 800);
+     }, 800); // 800ms should be enough to catch most scanner double-sends
 
-    let descriptionForToast = '';
+    let descriptionForToast = ''; // Used for more detailed toasts if needed
 
     const existingProductIndex = countingList.findIndex((p) => p.barcode === trimmedBarcode && p.warehouseId === currentWarehouseId);
 
@@ -282,7 +286,7 @@ export default function Home() {
              if(isMountedRef.current) setConfirmQuantityAction('increment');
              if(isMountedRef.current) setConfirmQuantityNewValue(newCount);
              if(isMountedRef.current) setIsConfirmQuantityDialogOpen(true);
-             playBeep(660, 100);
+             playBeep(660, 100); // Different beep for confirmation
         } else {
             const updatedProductData: DisplayProduct = {
                 ...productToUpdate,
@@ -295,17 +299,18 @@ export default function Home() {
                     return [updatedProductData, ...listWithoutOld];
                 });
              }
-            playBeep(880, 100);
-            if (!showDiscrepancyToastIfNeeded(updatedProductData, newCount)) {
-                if(isMountedRef.current) toast({ title: "Cantidad aumentada", description: `${descriptionForToast} cantidad aumentada a ${newCount}.` });
-            }
+            playBeep(880, 100); // Short, high beep for successful increment
+            // Only show discrepancy toast if needed, otherwise no toast for quick scanning
+            showDiscrepancyToastIfNeeded(updatedProductData, newCount);
         }
     } else {
+        // Product not in current counting list
         if(isMountedRef.current) setIsDbLoading(true);
         let newProductForList: DisplayProduct | null = null;
         try {
             const dbProduct = await getProductFromDB(trimmedBarcode);
             if (dbProduct) {
+                // Product found in the main database
                 newProductForList = {
                     ...dbProduct,
                     warehouseId: currentWarehouseId,
@@ -314,13 +319,18 @@ export default function Home() {
                     lastUpdated: new Date().toISOString(),
                     expirationDate: dbProduct.expirationDate || undefined,
                 };
-                playBeep(660, 150);
-                const discrepancyShown = showDiscrepancyToastIfNeeded(newProductForList);
-                let message = `${newProductForList.description} agregado al inventario (${getWarehouseName(currentWarehouseId)}).`;
-                if (discrepancyShown && newProductForList.stock > 0) message += " Se detectó una discrepancia inicial."
-                if(isMountedRef.current) toast({ title: "Producto agregado", description: message });
+                playBeep(660, 150); // Medium beep for new known product added
+                // Show discrepancy toast if needed, otherwise no standard "Product Added" toast
+                if (showDiscrepancyToastIfNeeded(newProductForList)) {
+                    // Discrepancy toast is shown by the helper
+                } else if (isMountedRef.current) {
+                   // Optional: A very brief, auto-dismissing toast for "Product Added"
+                   // For rapid scanning, often better to omit this.
+                   // toast({ title: "Agregado", description: `${newProductForList.description.substring(0,20)}...`, duration: 1500 });
+                }
 
             } else {
+                // Product not found in the main database
                 descriptionForToast = `Producto desconocido ${trimmedBarcode}`;
                 newProductForList = {
                     barcode: trimmedBarcode,
@@ -332,8 +342,9 @@ export default function Home() {
                     lastUpdated: new Date().toISOString(),
                     expirationDate: undefined,
                 };
-                playBeep(440, 300);
+                playBeep(440, 300); // Low, longer beep for unknown product
                 if(isMountedRef.current){
+                    // This toast is important as it informs the user about an unknown item
                     toast({
                         variant: "destructive",
                         title: "Producto Desconocido",
@@ -349,13 +360,15 @@ export default function Home() {
         } catch (error) {
             console.error("Error fetching or adding product from IndexedDB:", error);
             if(isMountedRef.current) toast({ variant: "destructive", title: "Error de Base de Datos", description: "No se pudo verificar o agregar el producto." });
-            playBeep(440, 300);
+            playBeep(440, 300); // Error beep
         } finally {
              if (isMountedRef.current) setIsDbLoading(false);
         }
     }
-    if(isMountedRef.current) setBarcode("");
-    focusBarcodeIfCounting();
+    if(isMountedRef.current) setBarcode(""); // Clear input field
+    focusBarcodeIfCounting(); // Ensure focus returns to input field
+
+    // Cleanup timeout for lastScannedBarcode
     return () => clearTimeout(clearLastScannedTimeout);
   }, [barcode, currentWarehouseId, getWarehouseName, lastScannedBarcode, toast, countingList, showDiscrepancyToastIfNeeded, focusBarcodeIfCounting]);
 
@@ -445,7 +458,7 @@ const modifyProductValue = useCallback(async (barcodeToUpdate: string, type: 'co
                     description: `No se pudo actualizar el stock en la base de datos para ${productDescription}.`
                 });
             }
-        } else if (type === 'count' && productForToast ) { // Ensure productForToast is not null
+        } else if (type === 'count' && productForToast ) { 
              if (!showDiscrepancyToastIfNeeded(productForToast, finalValue)) {
                 if(isMountedRef.current) toast({
                     title: "Cantidad Modificada",
@@ -542,7 +555,7 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
                      description: `No se pudo actualizar el stock en la base de datos para ${productDescription}.`
                  });
              }
-         } else if (type === 'count' && productForToast) { // Ensure productForToast is not null
+         } else if (type === 'count' && productForToast) { 
              const actionText = sumValue ? "sumada a" : "establecida en";
              if (!showDiscrepancyToastIfNeeded(productForToast, finalValue)) {
                  if(isMountedRef.current) toast({
@@ -619,7 +632,7 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
      setConfirmQuantityProductBarcode(null);
      setConfirmQuantityAction(null);
      setConfirmQuantityNewValue(null);
-     setOpenModifyDialog(null); // This will also trigger focus via its close handler
+     setOpenModifyDialog(null); 
     }
     focusBarcodeIfCounting();
  }, [currentWarehouseId, confirmQuantityProductBarcode, confirmQuantityAction, confirmQuantityNewValue, toast, getWarehouseName, countingList, showDiscrepancyToastIfNeeded, focusBarcodeIfCounting]);
@@ -740,7 +753,7 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
             timestamp: new Date().toISOString(),
             warehouseId: currentWarehouseId,
             warehouseName: currentWHName,
-            products: JSON.parse(JSON.stringify(currentListForWarehouse)) // Deep copy
+            products: JSON.parse(JSON.stringify(currentListForWarehouse)) 
         };
 
         await saveCountingHistory(historyEntry);
@@ -811,7 +824,7 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
                          updatedCurrentWarehouseList.push({
                              ...dbProduct,
                              warehouseId: currentWarehouseId,
-                             count: 0, // New items added from DB to counting list start with count 0
+                             count: 0, 
                              lastUpdated: new Date().toISOString(),
                          });
                      }
@@ -1443,7 +1456,7 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
          setIsOpen={(open) => {
             setIsEditDetailDialogOpen(open);
             if (!open) {
-                setProductToEditDetail(null); // Clear product on close
+                setProductToEditDetail(null); 
                 focusBarcodeIfCounting();
             }
          }}
@@ -1484,4 +1497,3 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
     </div>
   );
 }
-

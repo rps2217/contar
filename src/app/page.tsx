@@ -122,9 +122,8 @@ export default function Home() {
   // --- Helper Functions ---
   const focusBarcodeIfCounting = useCallback(() => {
     if (isMountedRef.current && activeSection === 'Contador') {
-        requestAnimationFrame(() => {
-            barcodeInputRef.current?.focus();
-        });
+        // No longer wrapping this in RAF, as the callers will wrap it.
+        barcodeInputRef.current?.focus();
     }
   }, [activeSection]);
 
@@ -147,12 +146,17 @@ export default function Home() {
           });
         }
     }
-    focusBarcodeIfCounting(); // Initial focus if starting in Contador section
+    // Initial focus if starting in Contador section
+    requestAnimationFrame(() => {
+      if (isMountedRef.current) {
+          focusBarcodeIfCounting();
+      }
+    });
     return () => {
       isMountedRef.current = false;
     };
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [focusBarcodeIfCounting]); // Added focusBarcodeIfCounting dependency
 
   useEffect(() => {
       if (isMountedRef.current && currentUserId !== null) {
@@ -259,8 +263,12 @@ export default function Home() {
             }
         });
       }
-      if(isMountedRef.current) setBarcode("");
-      focusBarcodeIfCounting();
+      requestAnimationFrame(() => {
+          if (isMountedRef.current) {
+              setBarcode("");
+              focusBarcodeIfCounting();
+          }
+      });
       return;
     }
     if (!currentWarehouseId) {
@@ -275,14 +283,18 @@ export default function Home() {
     }
 
      if (trimmedBarcode === lastScannedBarcode) {
-         if(isMountedRef.current) setBarcode("");
-         focusBarcodeIfCounting();
+         requestAnimationFrame(() => {
+             if (isMountedRef.current) {
+                 setBarcode("");
+                 focusBarcodeIfCounting();
+             }
+         });
          return;
      }
      if(isMountedRef.current) setLastScannedBarcode(trimmedBarcode);
      const clearLastScannedTimeout = setTimeout(() => {
          if (isMountedRef.current) setLastScannedBarcode(null);
-     }, 800);
+     }, 800); // Shortened timeout slightly
 
     let descriptionForToast = '';
 
@@ -315,8 +327,8 @@ export default function Home() {
                     return [updatedProductData, ...listWithoutOld];
                 });
              }
-            playBeep(880, 100);
-            showDiscrepancyToastIfNeeded(updatedProductData, newCount);
+            playBeep(880, 100); // Success beep
+            showDiscrepancyToastIfNeeded(updatedProductData, newCount); // Toast already wrapped in RAF
         }
     } else {
         if(isMountedRef.current) setIsDbLoading(true);
@@ -326,13 +338,15 @@ export default function Home() {
             if (dbProduct) {
                 newProductForList = {
                     ...dbProduct,
-                    warehouseId: currentWarehouseId,
+                    description: dbProduct.description || `Producto ${trimmedBarcode}`,
+                    provider: dbProduct.provider || "Desconocido",
                     stock: dbProduct.stock ?? 0,
+                    warehouseId: currentWarehouseId,
                     count: 1,
                     lastUpdated: new Date().toISOString(),
                     expirationDate: dbProduct.expirationDate || undefined,
                 };
-                playBeep(660, 150);
+                playBeep(660, 150); // Found in DB beep
                 showDiscrepancyToastIfNeeded(newProductForList);
 
             } else {
@@ -347,7 +361,7 @@ export default function Home() {
                     lastUpdated: new Date().toISOString(),
                     expirationDate: undefined,
                 };
-                playBeep(440, 300);
+                playBeep(440, 300); // Unknown product beep
                 if(isMountedRef.current){
                      requestAnimationFrame(() => {
                         if (isMountedRef.current) {
@@ -379,8 +393,12 @@ export default function Home() {
              if (isMountedRef.current) setIsDbLoading(false);
         }
     }
-    if(isMountedRef.current) setBarcode("");
-    focusBarcodeIfCounting();
+    requestAnimationFrame(() => {
+        if (isMountedRef.current) {
+            setBarcode("");
+            focusBarcodeIfCounting();
+        }
+    });
 
     return () => clearTimeout(clearLastScannedTimeout);
   }, [barcode, currentWarehouseId, lastScannedBarcode, toast, countingList, showDiscrepancyToastIfNeeded, focusBarcodeIfCounting]);
@@ -493,21 +511,15 @@ const modifyProductValue = useCallback(async (barcodeToUpdate: string, type: 'co
             }
         } else if (type === 'count' && productForToast ) {
              if (!showDiscrepancyToastIfNeeded(productForToast, finalValue)) {
-                if(isMountedRef.current) {
-                    requestAnimationFrame(() => {
-                        if (isMountedRef.current) {
-                            toast({
-                                title: "Cantidad Modificada",
-                                description: `Cantidad de ${productDescription} (${getWarehouseName(currentWarehouseId)}) cambiada a ${finalValue}.`,
-                                duration: 3000
-                            });
-                        }
-                    });
-                }
-            }
+                // No explicit toast here for simple +/- unless it creates a discrepancy
+             }
         }
      }
-     focusBarcodeIfCounting();
+     requestAnimationFrame(() => {
+        if (isMountedRef.current) {
+            focusBarcodeIfCounting();
+        }
+    });
   }, [currentWarehouseId, getWarehouseName, toast, countingList, showDiscrepancyToastIfNeeded, focusBarcodeIfCounting]);
 
 
@@ -521,6 +533,11 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
                 }
             });
         }
+        requestAnimationFrame(() => {
+             if (isMountedRef.current) {
+                 focusBarcodeIfCounting();
+             }
+         });
         return;
     }
 
@@ -636,7 +653,11 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
              }
          }
      }
-     focusBarcodeIfCounting();
+     requestAnimationFrame(() => {
+        if (isMountedRef.current) {
+            focusBarcodeIfCounting();
+        }
+    });
 }, [currentWarehouseId, getWarehouseName, toast, countingList, showDiscrepancyToastIfNeeded, focusBarcodeIfCounting]);
 
 
@@ -652,7 +673,11 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
  const handleConfirmQuantityChange = useCallback(() => {
      if (!isMountedRef.current || !confirmQuantityProductBarcode || confirmQuantityAction === null || confirmQuantityNewValue === null) {
          if(isMountedRef.current) setIsConfirmQuantityDialogOpen(false);
-         focusBarcodeIfCounting();
+         requestAnimationFrame(() => {
+             if (isMountedRef.current) {
+                 focusBarcodeIfCounting();
+             }
+         });
          return;
      }
 
@@ -711,7 +736,11 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
      setConfirmQuantityNewValue(null);
      setOpenModifyDialog(null);
     }
-    focusBarcodeIfCounting();
+    requestAnimationFrame(() => {
+        if (isMountedRef.current) {
+            focusBarcodeIfCounting();
+        }
+    });
  }, [currentWarehouseId, confirmQuantityProductBarcode, confirmQuantityAction, confirmQuantityNewValue, toast, getWarehouseName, countingList, showDiscrepancyToastIfNeeded, focusBarcodeIfCounting]);
 
 
@@ -746,7 +775,11 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
      setIsDeleteDialogOpen(false);
      setProductToDelete(null);
     }
-    focusBarcodeIfCounting();
+    requestAnimationFrame(() => {
+        if (isMountedRef.current) {
+            focusBarcodeIfCounting();
+        }
+    });
  }, [productToDelete, toast, getWarehouseName, focusBarcodeIfCounting]);
 
  const handleClearCurrentList = useCallback(() => {
@@ -766,7 +799,11 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
           }
      });
      if(isMountedRef.current) setIsDeleteListDialogOpen(false);
-     focusBarcodeIfCounting();
+     requestAnimationFrame(() => {
+        if (isMountedRef.current) {
+            focusBarcodeIfCounting();
+        }
+    });
  }, [currentWarehouseId, getWarehouseName, toast, focusBarcodeIfCounting]);
 
  const handleExport = useCallback(() => {
@@ -833,7 +870,11 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
             });
         }
     }
-    focusBarcodeIfCounting();
+    requestAnimationFrame(() => {
+        if (isMountedRef.current) {
+            focusBarcodeIfCounting();
+        }
+    });
  }, [countingList, currentWarehouseId, toast, getWarehouseName, focusBarcodeIfCounting]);
 
 
@@ -853,7 +894,11 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
                   }
             });
         }
-        focusBarcodeIfCounting();
+        requestAnimationFrame(() => {
+            if (isMountedRef.current) {
+                focusBarcodeIfCounting();
+            }
+        });
         return;
     }
 
@@ -898,7 +943,11 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
         if (isMountedRef.current) {
             setIsSavingToHistory(false);
         }
-        focusBarcodeIfCounting();
+        requestAnimationFrame(() => {
+            if (isMountedRef.current) {
+                focusBarcodeIfCounting();
+            }
+        });
     }
 }, [countingList, currentWarehouseId, getWarehouseName, toast, currentUserId, focusBarcodeIfCounting]);
 
@@ -986,7 +1035,11 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
          if (isMountedRef.current) {
              setIsRefreshingStock(false);
          }
-         focusBarcodeIfCounting();
+        requestAnimationFrame(() => {
+            if (isMountedRef.current) {
+                focusBarcodeIfCounting();
+            }
+        });
      }
  }, [currentWarehouseId, toast, getWarehouseName, focusBarcodeIfCounting]);
 
@@ -997,7 +1050,11 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
 
  const handleCloseModifyDialog = () => {
      if(isMountedRef.current) setOpenModifyDialog(null);
-     focusBarcodeIfCounting();
+     requestAnimationFrame(() => {
+        if (isMountedRef.current) {
+            focusBarcodeIfCounting();
+        }
+    });
  };
 
  const handleOpenEditDetailDialog = useCallback(async (product: DisplayProduct) => {
@@ -1109,7 +1166,11 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
          if (isMountedRef.current) {
              setIsDbLoading(false);
          }
-         focusBarcodeIfCounting();
+         requestAnimationFrame(() => {
+            if (isMountedRef.current) {
+                focusBarcodeIfCounting();
+            }
+        });
      }
  }, [toast, currentWarehouseId, productToEditDetail, focusBarcodeIfCounting]);
 
@@ -1151,7 +1212,7 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
                  return null;
              })
              .filter(item => item !== null) as DisplayProduct[];
-         itemsForCurrentWarehouse = [...Array.from(newProductsMap.values())];
+         itemsForCurrentWarehouse = [...Array.from(newProductsMap.values())]; // Add any remaining new products
          const newList = [...itemsForCurrentWarehouse, ...otherWarehouseItems];
            newList.sort((a, b) => {
                  if (a.warehouseId === currentWarehouseId && b.warehouseId !== currentWarehouseId) return -1;
@@ -1174,7 +1235,11 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
             });
         }
      });
-     focusBarcodeIfCounting();
+    requestAnimationFrame(() => {
+        if (isMountedRef.current) {
+            focusBarcodeIfCounting();
+        }
+    });
 }, [toast, setActiveSection, currentWarehouseId, getWarehouseName, focusBarcodeIfCounting]);
 
 
@@ -1193,7 +1258,11 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
   const handleSectionChange = useCallback((newSection: string) => {
     if(isMountedRef.current) setActiveSection(newSection);
     if (newSection === 'Contador') {
-       focusBarcodeIfCounting();
+        requestAnimationFrame(() => {
+            if (isMountedRef.current) {
+                focusBarcodeIfCounting();
+            }
+        });
     }
   }, [setActiveSection, focusBarcodeIfCounting]);
 
@@ -1203,7 +1272,11 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
              if(isMountedRef.current) setCurrentWarehouseId(newWarehouseId);
              if(isMountedRef.current) setSearchTerm("");
          }
-         focusBarcodeIfCounting();
+         requestAnimationFrame(() => {
+            if (isMountedRef.current) {
+                focusBarcodeIfCounting();
+            }
+        });
    }, [currentWarehouseId, setCurrentWarehouseId, focusBarcodeIfCounting]);
 
    const handleAddWarehouse = useCallback((newWarehouse: { id: string; name: string }) => {
@@ -1311,7 +1384,11 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
         setIsDbLoading(false);
         setIsClearAllDataConfirmOpen(false);
       }
-       focusBarcodeIfCounting();
+      requestAnimationFrame(() => {
+        if (isMountedRef.current) {
+            focusBarcodeIfCounting();
+        }
+     });
     }
   }, [toast, warehouses, currentUserId, focusBarcodeIfCounting]);
 
@@ -1581,7 +1658,11 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
                 setConfirmQuantityProductBarcode(null);
                 setConfirmQuantityAction(null);
                 setConfirmQuantityNewValue(null);
-                focusBarcodeIfCounting();
+                requestAnimationFrame(() => {
+                    if (isMountedRef.current) {
+                        focusBarcodeIfCounting();
+                    }
+                });
             }
           }}
           title="Confirmar Modificación"
@@ -1606,7 +1687,11 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
                 setConfirmQuantityAction(null);
                 setConfirmQuantityNewValue(null);
               }
-              focusBarcodeIfCounting();
+              requestAnimationFrame(() => {
+                if (isMountedRef.current) {
+                    focusBarcodeIfCounting();
+                }
+            });
           }}
       />
 
@@ -1616,7 +1701,11 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
             setIsDeleteDialogOpen(open);
             if (!open) {
                 setProductToDelete(null);
-                focusBarcodeIfCounting();
+                requestAnimationFrame(() => {
+                    if (isMountedRef.current) {
+                        focusBarcodeIfCounting();
+                    }
+                });
             }
          }}
          title="Confirmar Eliminación (Lista Actual)"
@@ -1624,7 +1713,11 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
          onConfirm={confirmDelete}
          onCancel={() => {
             if(isMountedRef.current) setIsDeleteDialogOpen(false);
-            focusBarcodeIfCounting();
+            requestAnimationFrame(() => {
+                if (isMountedRef.current) {
+                    focusBarcodeIfCounting();
+                }
+            });
          }}
          isDestructive={true}
       />
@@ -1633,14 +1726,24 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
           isOpen={isDeleteListDialogOpen}
           onOpenChange={(open) => {
             setIsDeleteListDialogOpen(open);
-            if (!open) focusBarcodeIfCounting();
+            if (!open) {
+                requestAnimationFrame(() => {
+                    if (isMountedRef.current) {
+                        focusBarcodeIfCounting();
+                    }
+                });
+            }
           }}
           title="Confirmar Borrado de Lista"
           description={`¿Estás seguro de que deseas borrar todos los productos del inventario actual (${getWarehouseName(currentWarehouseId)})? Esta acción no se puede deshacer.`}
           onConfirm={handleClearCurrentList}
           onCancel={() => {
             if(isMountedRef.current) setIsDeleteListDialogOpen(false);
-            focusBarcodeIfCounting();
+            requestAnimationFrame(() => {
+                if (isMountedRef.current) {
+                    focusBarcodeIfCounting();
+                }
+            });
           }}
           isDestructive={true}
       />
@@ -1649,7 +1752,13 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
             isOpen={isClearAllDataConfirmOpen}
             onOpenChange={(open) => {
                 setIsClearAllDataConfirmOpen(open);
-                if (!open) focusBarcodeIfCounting();
+                if (!open) {
+                    requestAnimationFrame(() => {
+                        if (isMountedRef.current) {
+                            focusBarcodeIfCounting();
+                        }
+                    });
+                }
             }}
             title="Confirmar Borrado Completo"
             description={
@@ -1666,7 +1775,11 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
             onConfirm={handleClearAllData}
             onCancel={() => {
                 if(isMountedRef.current) setIsClearAllDataConfirmOpen(false);
-                focusBarcodeIfCounting();
+                requestAnimationFrame(() => {
+                    if (isMountedRef.current) {
+                        focusBarcodeIfCounting();
+                    }
+                });
             }}
             isDestructive={true}
             isProcessing={isDbLoading}
@@ -1678,7 +1791,11 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
             setIsEditDetailDialogOpen(open);
             if (!open) {
                 setProductToEditDetail(null);
-                focusBarcodeIfCounting();
+                requestAnimationFrame(() => {
+                    if (isMountedRef.current) {
+                        focusBarcodeIfCounting();
+                    }
+                });
             }
          }}
          selectedDetail={productToEditDetail}
@@ -1719,7 +1836,11 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
                     if (isMountedRef.current) {
                         setIsDbLoading(false);
                     }
-                    focusBarcodeIfCounting();
+                    requestAnimationFrame(() => {
+                        if (isMountedRef.current) {
+                            focusBarcodeIfCounting();
+                        }
+                    });
                }
            }}
          isProcessing={isDbLoading}

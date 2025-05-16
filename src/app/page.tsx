@@ -39,7 +39,7 @@ import {
   saveCountingHistory,
   clearAllDatabases,
   getCountingHistory,
-  clearCountingHistory,
+  clearCountingHistory as clearFullCountingHistory,
 } from '@/lib/database';
 import { CountingHistoryViewer } from '@/components/counting-history-viewer';
 import { DiscrepancyReportViewer } from '@/components/discrepancy-report-viewer';
@@ -120,10 +120,18 @@ export default function Home() {
 
 
   // --- Helper Functions ---
-  const focusBarcodeIfCounting = useCallback(() => {
+ const focusBarcodeIfCounting = useCallback(() => {
     if (isMountedRef.current && activeSection === 'Contador') {
-        // No longer wrapping this in RAF, as the callers will wrap it.
-        barcodeInputRef.current?.focus();
+        requestAnimationFrame(() => {
+            if (isMountedRef.current && activeSection === 'Contador') {
+                 barcodeInputRef.current?.focus();
+            }
+        });
+        setTimeout(() => {
+            if (isMountedRef.current && activeSection === 'Contador' && document.activeElement !== barcodeInputRef.current) {
+                barcodeInputRef.current?.focus();
+            }
+        }, 50);
     }
   }, [activeSection]);
 
@@ -1155,7 +1163,7 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
          if (!isMountedRef.current) return;
           requestAnimationFrame(() => {
              if(isMountedRef.current) {
-                requestAnimationFrame(() => { // Wrap toast in RAF
+                requestAnimationFrame(() => { 
                     if (isMountedRef.current) {
                         toast({ variant: "destructive", title: "Error al Actualizar", description: `No se pudo actualizar: ${error.message}` });
                     }

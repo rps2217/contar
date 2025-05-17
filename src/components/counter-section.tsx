@@ -33,25 +33,25 @@ interface CounterSectionProps {
   onDecrement: (barcode: string, type: 'count' | 'stock') => void;
   onIncrement: (barcode: string, type: 'count' | 'stock') => void;
   onEditDetailRequest: (product: DisplayProduct) => void;
-  countingList: DisplayProduct[];
+  countingList: DisplayProduct[]; // Full list for checking length before actions
   currentWarehouseId: string;
   isSavingToHistory: boolean;
   onSaveToHistory: () => Promise<void>;
   onExport: () => void;
   onSetIsDeleteListDialogOpen: (isOpen: boolean) => void;
   isMobile: boolean;
-  toast: (options: any) => void; // Consider using a more specific type for toast options
-  isDbLoading: boolean;
-  isTransitionPending: boolean;
+  toast: (options: any) => void;
+  isDbLoading: boolean; // General DB loading state from parent
+  isTransitionPending: boolean; // Transition state from parent
 }
 
-export const CounterSection: React.FC<CounterSectionProps> = ({
+const CounterSectionComponent: React.FC<CounterSectionProps> = ({
   barcode,
   setBarcode,
   onAddProduct,
   onRefreshStock,
-  isLoading,
-  isRefreshingStock,
+  isLoading, // This is the combined loading state (isDbLoading || isRefreshingStock || isTransitionPending)
+  isRefreshingStock, // Specific state for refresh button animation
   inputRef,
   searchTerm,
   setSearchTerm,
@@ -63,7 +63,7 @@ export const CounterSection: React.FC<CounterSectionProps> = ({
   onDecrement,
   onIncrement,
   onEditDetailRequest,
-  countingList,
+  countingList, // Used to check overall list length for current warehouse
   currentWarehouseId,
   isSavingToHistory,
   onSaveToHistory,
@@ -71,10 +71,13 @@ export const CounterSection: React.FC<CounterSectionProps> = ({
   onSetIsDeleteListDialogOpen,
   isMobile,
   toast,
-  isDbLoading,
-  isTransitionPending,
+  isDbLoading, // Passed through for specific checks if needed, though `isLoading` covers general disabling
+  isTransitionPending
 }) => {
-  const currentListForWarehouse = countingList.filter(p => p.warehouseId === currentWarehouseId);
+  const currentListForWarehouse = React.useMemo(() => 
+    countingList.filter(p => p.warehouseId === currentWarehouseId),
+    [countingList, currentWarehouseId]
+  );
 
   return (
     <div id="contador-content" className="flex flex-col h-full">
@@ -83,7 +86,7 @@ export const CounterSection: React.FC<CounterSectionProps> = ({
         setBarcode={setBarcode}
         onAddProduct={onAddProduct}
         onRefreshStock={onRefreshStock}
-        isLoading={isLoading || isDbLoading || isRefreshingStock || isTransitionPending}
+        isLoading={isLoading} // Use the combined loading state
         isRefreshingStock={isRefreshingStock}
         inputRef={inputRef}
       />
@@ -96,14 +99,14 @@ export const CounterSection: React.FC<CounterSectionProps> = ({
           onChange={(e) => setSearchTerm(e.target.value)}
           className="pl-8 w-full bg-blue-50 dark:bg-blue-900/30 border-blue-300 dark:border-blue-600"
           aria-label="Buscar en lista de conteo"
-          disabled={isLoading || isDbLoading || isRefreshingStock || isTransitionPending}
+          disabled={isLoading}
         />
       </div>
       <div className="flex-1 overflow-hidden">
         <CountingListTable
           countingList={filteredCountingList}
           warehouseName={warehouseName}
-          isLoading={isLoading || isDbLoading || isTransitionPending}
+          isLoading={isLoading}
           onDeleteRequest={onDeleteRequest}
           onOpenStockDialog={onOpenStockDialog}
           onOpenQuantityDialog={onOpenQuantityDialog}
@@ -126,14 +129,14 @@ export const CounterSection: React.FC<CounterSectionProps> = ({
             <DropdownMenuContent align="end" className="w-[calc(100vw-4rem)] sm:w-56">
               <DropdownMenuItem
                 onSelect={onSaveToHistory}
-                disabled={currentListForWarehouse.length === 0 || isDbLoading || isSavingToHistory || isTransitionPending}
+                disabled={currentListForWarehouse.length === 0 || isLoading || isSavingToHistory}
               >
                 {isSavingToHistory ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <Save className="h-4 w-4 mr-2" />}
                 {isSavingToHistory ? "Guardando..." : "Guardar Historial"}
               </DropdownMenuItem>
               <DropdownMenuItem
                 onSelect={onExport}
-                disabled={currentListForWarehouse.length === 0 || isDbLoading || isTransitionPending}
+                disabled={currentListForWarehouse.length === 0 || isLoading}
               >
                 <Download className="h-4 w-4 mr-2" /> Exportar
               </DropdownMenuItem>
@@ -147,7 +150,7 @@ export const CounterSection: React.FC<CounterSectionProps> = ({
                     });
                   }
                 }}
-                disabled={currentListForWarehouse.length === 0 || isDbLoading || isTransitionPending}
+                disabled={currentListForWarehouse.length === 0 || isLoading}
                 className="text-destructive focus:text-destructive dark:focus:text-red-400"
               >
                 <Trash className="h-4 w-4 mr-2" /> Borrar Lista
@@ -158,7 +161,7 @@ export const CounterSection: React.FC<CounterSectionProps> = ({
           <>
             <Button
               onClick={onSaveToHistory}
-              disabled={currentListForWarehouse.length === 0 || isDbLoading || isSavingToHistory || isTransitionPending}
+              disabled={currentListForWarehouse.length === 0 || isLoading || isSavingToHistory}
               variant="outline"
               className="flex items-center gap-1 w-full sm:w-auto"
             >
@@ -167,7 +170,7 @@ export const CounterSection: React.FC<CounterSectionProps> = ({
             </Button>
             <Button
               onClick={onExport}
-              disabled={currentListForWarehouse.length === 0 || isDbLoading || isTransitionPending}
+              disabled={currentListForWarehouse.length === 0 || isLoading}
               variant="outline"
               className="flex items-center gap-1 w-full sm:w-auto"
             >
@@ -183,7 +186,7 @@ export const CounterSection: React.FC<CounterSectionProps> = ({
                    });
                 }
               }}
-              disabled={currentListForWarehouse.length === 0 || isDbLoading || isTransitionPending}
+              disabled={currentListForWarehouse.length === 0 || isLoading}
               variant="destructive"
               className="flex items-center gap-1 w-full sm:w-auto"
             >
@@ -195,3 +198,5 @@ export const CounterSection: React.FC<CounterSectionProps> = ({
     </div>
   );
 };
+
+export const CounterSection = React.memo(CounterSectionComponent);

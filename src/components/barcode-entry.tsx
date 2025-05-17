@@ -15,19 +15,19 @@ interface BarcodeEntryProps {
   inputRef: React.RefObject<HTMLInputElement>;
 }
 
-export const BarcodeEntry: React.FC<BarcodeEntryProps> = ({
+const BarcodeEntryComponent: React.FC<BarcodeEntryProps> = ({
   barcode,
   setBarcode,
   onAddProduct,
   onRefreshStock,
-  isLoading, // This now includes isTransitionPending from parent
+  isLoading, 
   isRefreshingStock,
   inputRef,
 }) => {
   const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
     if (e.key === "Enter") {
       e.preventDefault();
-      if (!isLoading) { // Prevent action if already loading/processing
+      if (!isLoading) { 
         onAddProduct();
       }
     }
@@ -49,12 +49,12 @@ export const BarcodeEntry: React.FC<BarcodeEntryProps> = ({
         ref={inputRef}
         onKeyDown={handleKeyDown}
         aria-label="Código de barras"
-        disabled={isLoading} // Use the combined isLoading prop
+        disabled={isLoading} 
       />
       <div className="flex w-full sm:w-auto items-center gap-2 mt-2 sm:mt-0">
         <Button
           onClick={() => {
-            if (!isLoading) { // Prevent action if already loading/processing
+            if (!isLoading) { 
               onAddProduct();
             }
           }}
@@ -64,7 +64,7 @@ export const BarcodeEntry: React.FC<BarcodeEntryProps> = ({
             "text-teal-600 border-teal-500 hover:bg-teal-50 dark:text-teal-400 dark:border-teal-600 dark:hover:bg-teal-900/50"
           )}
           aria-label="Agregar producto al almacén actual"
-          disabled={isLoading || !barcode.trim()} // Use combined isLoading
+          disabled={isLoading || !barcode.trim()} 
         >
           Agregar
         </Button>
@@ -73,7 +73,7 @@ export const BarcodeEntry: React.FC<BarcodeEntryProps> = ({
           variant="outline"
           size="icon"
           className="h-10 w-10 text-blue-600 dark:text-blue-400 border-blue-300 dark:border-blue-600 hover:bg-blue-50 dark:hover:bg-blue-900 hover:text-blue-700 dark:hover:text-blue-300"
-          disabled={isLoading} // Use combined isLoading
+          disabled={isLoading} 
           aria-label="Actualizar stocks desde la base de datos para este almacén"
           title="Actualizar Stocks"
         >
@@ -83,3 +83,5 @@ export const BarcodeEntry: React.FC<BarcodeEntryProps> = ({
     </div>
   );
 };
+
+export const BarcodeEntry = React.memo(BarcodeEntryComponent);

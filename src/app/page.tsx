@@ -26,7 +26,6 @@ import { es } from 'date-fns/locale';
 import { Minus, Plus, Trash, RefreshCw, Search, Boxes, Loader2, History as HistoryIcon, CalendarIcon, Save, Edit, Download, BarChart, Settings, AlertTriangle, XCircle, Menu as MenuIcon, User, ShieldAlert, Filter, PanelLeftClose, PanelRightOpen, PackageSearch, CalendarClock, BookOpenText, Users2, ClipboardList, MoreVertical, Warehouse as WarehouseIconLucide } from "lucide-react";
 import React, { useCallback, useEffect, useRef, useState, useMemo, useTransition } from "react";
 import { playBeep } from '@/lib/helpers';
-import { CountingListTable } from '@/components/counting-list-table';
 import { ModifyValueDialog } from '@/components/modify-value-dialog';
 import { ConfirmationDialog } from '@/components/confirmation-dialog';
 import { useLocalStorage } from '@/hooks/use-local-storage';
@@ -54,7 +53,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { useIsMobile } from '@/hooks/use-mobile';
-import { BarcodeEntry } from '@/components/barcode-entry';
+import { CounterSection } from '@/components/counter-section';
 
 
 // --- Constants ---
@@ -65,7 +64,7 @@ const LOCAL_STORAGE_ACTIVE_SECTION_KEY = 'stockCounterPro_activeSection';
 const LOCAL_STORAGE_SIDEBAR_COLLAPSED_KEY = 'stockCounterPro_sidebarCollapsed';
 const LOCAL_STORAGE_USER_ID_KEY = 'stockCounterPro_userId';
 const LOCAL_STORAGE_SAVE_DEBOUNCE_MS = 500;
-const LAST_SCANNED_BARCODE_TIMEOUT_MS = 300; // Reduced timeout
+const LAST_SCANNED_BARCODE_TIMEOUT_MS = 300;
 
 // --- Main Component ---
 
@@ -74,7 +73,7 @@ export default function Home() {
   const { toast } = useToast();
   const barcodeInputRef = useRef<HTMLInputElement>(null);
   const isMountedRef = useRef(false);
-  const lastScannedTimeoutRef = useRef<NodeJS.Timeout | null>(null); // Ref for the timeout
+  const lastScannedTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
   // --- React Transition Hook ---
   const [isTransitionPending, startTransition] = useTransition();
@@ -166,7 +165,6 @@ export default function Home() {
       }
     });
     
-    // Cleanup for the lastScannedBarcode timeout
     return () => {
       isMountedRef.current = false;
       if (lastScannedTimeoutRef.current) {
@@ -507,7 +505,7 @@ const modifyProductValue = useCallback(async (barcodeToUpdate: string, type: 'co
                         }
                     } else {
                           const listProduct = countingList.find(p => p.barcode === barcodeToUpdate && p.warehouseId === currentWarehouseId);
-                          if(listProduct) { // This might refer to the state before startTransition
+                          if(listProduct) { 
                                const newDbProduct: ProductDetail = {
                                     barcode: listProduct.barcode,
                                     description: listProduct.description,
@@ -621,7 +619,7 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
             });
         });
 
-        if(isMountedRef.current) setOpenModifyDialog(null); // Close dialog after transition starts
+        if(isMountedRef.current) setOpenModifyDialog(null); 
 
          if (finalValue !== undefined && productForToast) {
              if (type === 'stock') {
@@ -641,7 +639,6 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
                             });
                           }
                      } else {
-                           // This listProduct might be stale if `countingList` was read before `startTransition`
                            const listProduct = countingList.find(p => p.barcode === barcodeToUpdate && p.warehouseId === currentWarehouseId);
                            if(listProduct) {
                                 const newDbProduct: ProductDetail = {
@@ -745,7 +742,7 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
             const listCopy = [...prevList];
             const productToUpdateCopy = { ...listCopy[index] };
             const finalConfirmedCount = Math.max(0, newValue);
-            confirmedValue = finalConfirmedCount; // Capture this for toast after transition
+            confirmedValue = finalConfirmedCount; 
 
             productAfterConfirm = {
                 ...productToUpdateCopy,
@@ -757,12 +754,8 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
         });
      });
 
-    // Toast logic should refer to values captured *before* startTransition, or be re-evaluated.
-    // For simplicity, we'll use the captured `confirmedValue` and `productDescription`.
-    // The `productAfterConfirm` object used in showDiscrepancyToastIfNeeded might be slightly stale if other props change,
-    // but `count` will be up-to-date from `confirmedValue`.
     requestAnimationFrame(() => {
-        if (productInList && confirmedValue !== null && isMountedRef.current) { // Use productInList to get description and stock
+        if (productInList && confirmedValue !== null && isMountedRef.current) { 
             const tempProductForToast = {...productInList, count: confirmedValue};
             if (!showDiscrepancyToastIfNeeded(tempProductForToast, confirmedValue)) {
                 requestAnimationFrame(() => {
@@ -967,7 +960,7 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
             timestamp: new Date().toISOString(),
             warehouseId: currentWarehouseId,
             warehouseName: currentWHName,
-            products: JSON.parse(JSON.stringify(currentListForWarehouse)) // Deep copy
+            products: JSON.parse(JSON.stringify(currentListForWarehouse)) 
         };
 
         await saveCountingHistory(historyEntry);
@@ -1261,8 +1254,6 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
      startTransition(() => {
         setCountingList(prevList => {
             const otherWarehouseItems = prevList.filter(item => item.warehouseId !== currentWarehouseId);
-            // For simplicity, replace all items for current warehouse with the new provider list
-            // This avoids complex merging logic for now.
             let itemsForCurrentWarehouse = [...productsWithWarehouseContext];
 
             const newList = [...itemsForCurrentWarehouse, ...otherWarehouseItems];
@@ -1473,6 +1464,35 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
     isDbLoading,
   };
 
+  const counterSectionProps = {
+    barcode,
+    setBarcode,
+    onAddProduct: handleAddProduct,
+    onRefreshStock: handleRefreshStock,
+    isLoading: isDbLoading || isTransitionPending || isRefreshingStock,
+    isRefreshingStock,
+    inputRef: barcodeInputRef,
+    searchTerm,
+    setSearchTerm,
+    filteredCountingList,
+    warehouseName: getWarehouseName(currentWarehouseId),
+    onDeleteRequest: handleDeleteRequest,
+    onOpenStockDialog: (product: DisplayProduct) => handleOpenModifyDialog(product, 'stock'),
+    onOpenQuantityDialog: (product: DisplayProduct) => handleOpenModifyDialog(product, 'count'),
+    onDecrement: handleDecrement,
+    onIncrement: handleIncrement,
+    onEditDetailRequest: handleOpenEditDetailDialog,
+    countingList,
+    currentWarehouseId,
+    isSavingToHistory,
+    onSaveToHistory: handleSaveToHistory,
+    onExport: handleExport,
+    onSetIsDeleteListDialogOpen: setIsDeleteListDialogOpen,
+    isMobile,
+    toast,
+    isDbLoading: isDbLoading, // Pass isDbLoading explicitly if needed by CounterSection
+  };
+
 
   // --- Main Component Render ---
   return (
@@ -1520,136 +1540,7 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
 
       {/* Main Content Area */}
       <main className="flex-1 p-6 overflow-y-auto">
-        {activeSection === 'Contador' && (
-            <div id="contador-content" className="flex flex-col h-full">
-                <BarcodeEntry
-                  barcode={barcode}
-                  setBarcode={setBarcode}
-                  onAddProduct={() => handleAddProduct()}
-                  onRefreshStock={handleRefreshStock}
-                  isLoading={isDbLoading || isRefreshingStock || isTransitionPending}
-                  isRefreshingStock={isRefreshingStock}
-                  inputRef={barcodeInputRef}
-                />
-                 <div className="relative mb-4">
-                    <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
-                    <Input
-                        type="search"
-                        placeholder="Buscar en inventario actual..."
-                        value={searchTerm}
-                        onChange={(e) => setSearchTerm(e.target.value)}
-                         className="pl-8 w-full bg-blue-50 dark:bg-blue-900/30 border-blue-300 dark:border-blue-600"
-                        aria-label="Buscar en lista de conteo"
-                        disabled={isDbLoading || isRefreshingStock || isTransitionPending}
-                    />
-                </div>
-                <div className="flex-1 overflow-hidden">
-                   <CountingListTable
-                        countingList={filteredCountingList}
-                        warehouseName={getWarehouseName(currentWarehouseId)}
-                        isLoading={isDbLoading || isTransitionPending}
-                        onDeleteRequest={handleDeleteRequest}
-                        onOpenStockDialog={(product) => handleOpenModifyDialog(product, 'stock')}
-                        onOpenQuantityDialog={(product) => handleOpenModifyDialog(product, 'count')}
-                        onDecrement={handleDecrement}
-                        onIncrement={handleIncrement}
-                        onEditDetailRequest={handleOpenEditDetailDialog}
-                        tableHeightClass="h-full"
-                    />
-                </div>
-
-               <div className="mt-4 flex flex-col sm:flex-row sm:justify-end items-stretch sm:items-center gap-2">
-                {isMobile ? (
-                    <DropdownMenu>
-                        <DropdownMenuTrigger asChild>
-                            <Button variant="outline" className="w-full">
-                                <MoreVertical className="h-4 w-4 mr-2" />
-                                <span>Acciones</span>
-                            </Button>
-                        </DropdownMenuTrigger>
-                        <DropdownMenuContent align="end" className="w-[calc(100vw-4rem)] sm:w-56">
-                            <DropdownMenuItem
-                                onSelect={() => handleSaveToHistory()}
-                                disabled={countingList.filter(p => p.warehouseId === currentWarehouseId).length === 0 || isDbLoading || isSavingToHistory || isTransitionPending}
-                            >
-                                {isSavingToHistory ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <Save className="h-4 w-4 mr-2" />}
-                                {isSavingToHistory ? "Guardando..." : "Guardar Historial"}
-                            </DropdownMenuItem>
-                            <DropdownMenuItem
-                                onSelect={handleExport}
-                                disabled={countingList.filter(p => p.warehouseId === currentWarehouseId).length === 0 || isDbLoading || isTransitionPending}
-                            >
-                                <Download className="h-4 w-4 mr-2" /> Exportar
-                            </DropdownMenuItem>
-                            <DropdownMenuItem
-                                onSelect={() => {
-                                    if (countingList.filter(p => p.warehouseId === currentWarehouseId).length > 0) {
-                                        if(isMountedRef.current) setIsDeleteListDialogOpen(true);
-                                    } else {
-                                        requestAnimationFrame(() => {
-                                            if(isMountedRef.current) {
-                                                requestAnimationFrame(() => { 
-                                                    if (isMountedRef.current) {
-                                                        toast({ title: "Vacío", description: "La lista actual ya está vacía." });
-                                                    }
-                                                });
-                                            }
-                                        });
-                                    }
-                                }}
-                                disabled={countingList.filter(p => p.warehouseId === currentWarehouseId).length === 0 || isDbLoading || isTransitionPending}
-                                className="text-destructive focus:text-destructive dark:focus:text-red-400"
-                            >
-                                <Trash className="h-4 w-4 mr-2" /> Borrar Lista
-                            </DropdownMenuItem>
-                        </DropdownMenuContent>
-                    </DropdownMenu>
-                ) : (
-                    <>
-                        <Button
-                            onClick={() => handleSaveToHistory()}
-                            disabled={countingList.filter(p => p.warehouseId === currentWarehouseId).length === 0 || isDbLoading || isSavingToHistory || isTransitionPending}
-                            variant="outline"
-                            className="flex items-center gap-1 w-full sm:w-auto"
-                        >
-                            {isSavingToHistory ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
-                            {isSavingToHistory ? "Guardando..." : "Guardar Historial"}
-                        </Button>
-                        <Button
-                            onClick={handleExport}
-                            disabled={countingList.filter(p => p.warehouseId === currentWarehouseId).length === 0 || isDbLoading || isTransitionPending}
-                            variant="outline"
-                            className="flex items-center gap-1 w-full sm:w-auto"
-                        >
-                            <Download className="h-4 w-4" /> Exportar
-                        </Button>
-                        <Button
-                            onClick={() => {
-                                if (countingList.filter(p => p.warehouseId === currentWarehouseId).length > 0) {
-                                    if(isMountedRef.current) setIsDeleteListDialogOpen(true);
-                                } else {
-                                    requestAnimationFrame(() => {
-                                        if(isMountedRef.current) {
-                                            requestAnimationFrame(() => { 
-                                                if (isMountedRef.current) {
-                                                    toast({ title: "Vacío", description: "La lista actual ya está vacía." });
-                                                }
-                                            });
-                                        }
-                                    });
-                                }
-                            }}
-                            disabled={countingList.filter(p => p.warehouseId === currentWarehouseId).length === 0 || isDbLoading || isTransitionPending}
-                            variant="destructive"
-                             className="flex items-center gap-1 w-full sm:w-auto"
-                        >
-                            <Trash className="h-4 w-4" /> Borrar Lista
-                        </Button>
-                    </>
-                )}
-                </div>
-            </div>
-        )}
+        {activeSection === 'Contador' && <CounterSection {...counterSectionProps} />}
 
          {activeSection === 'Catálogo de Productos' && (
             <div id="database-content">

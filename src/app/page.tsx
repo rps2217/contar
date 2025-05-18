@@ -140,7 +140,7 @@ export default function Home() {
                     barcodeInputRef.current.focus();
                 }
             }
-        }, 100); // Increased from 50ms
+        }, 100);
     }
   }, [activeSection]);
 
@@ -249,7 +249,7 @@ export default function Home() {
     const stockToCheck = product.stock ?? 0;
 
     if (stockToCheck > 0 && countToCheck !== stockToCheck) {
-        if(isMountedRef.current){
+        if (isMountedRef.current && activeSection !== 'Contador') { // Only show toast if not in Counter section
             requestAnimationFrame(() => {
                 if(isMountedRef.current) {
                     toast({
@@ -261,10 +261,10 @@ export default function Home() {
                 }
             });
         }
-        return true;
+        return true; // Still return true to indicate discrepancy for other logic
     }
     return false;
-  }, [toast]);
+  }, [toast, activeSection]); // Added activeSection
 
 
   // --- Callbacks ---
@@ -355,7 +355,8 @@ export default function Home() {
                 });
              }
             playBeep(880, 100);
-            // showDiscrepancyToastIfNeeded(updatedProductData, newCount); // Toast might be too intrusive for rapid scanning
+            // showDiscrepancyToastIfNeeded is now conditional on activeSection
+            showDiscrepancyToastIfNeeded(updatedProductData, newCount);
         }
     } else {
         if(isMountedRef.current) setIsDbLoading(true);
@@ -374,7 +375,7 @@ export default function Home() {
                     expirationDate: dbProduct.expirationDate || undefined,
                 };
                 playBeep(660, 150);
-                // showDiscrepancyToastIfNeeded(newProductForList); // Toast might be too intrusive
+                showDiscrepancyToastIfNeeded(newProductForList);
 
             } else {
                 descriptionForToast = `Producto desconocido ${trimmedBarcode}`;

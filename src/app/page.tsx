@@ -126,17 +126,21 @@ export default function Home() {
 
   // --- Helper Functions ---
  const focusBarcodeIfCounting = useCallback(() => {
-    if (isMountedRef.current && activeSection === 'Contador') {
+    if (isMountedRef.current && activeSection === 'Contador' && barcodeInputRef.current) {
         requestAnimationFrame(() => {
-            if (isMountedRef.current && activeSection === 'Contador') {
-                 barcodeInputRef.current?.focus();
+            if (isMountedRef.current && activeSection === 'Contador' && barcodeInputRef.current) {
+                 if (document.activeElement !== barcodeInputRef.current) {
+                    barcodeInputRef.current.focus();
+                 }
             }
         });
         setTimeout(() => {
-            if (isMountedRef.current && activeSection === 'Contador' && document.activeElement !== barcodeInputRef.current) {
-                barcodeInputRef.current?.focus();
+            if (isMountedRef.current && activeSection === 'Contador' && barcodeInputRef.current) {
+                if (document.activeElement !== barcodeInputRef.current) {
+                    barcodeInputRef.current.focus();
+                }
             }
-        }, 50);
+        }, 100); // Increased from 50ms
     }
   }, [activeSection]);
 
@@ -351,7 +355,7 @@ export default function Home() {
                 });
              }
             playBeep(880, 100);
-            showDiscrepancyToastIfNeeded(updatedProductData, newCount);
+            // showDiscrepancyToastIfNeeded(updatedProductData, newCount); // Toast might be too intrusive for rapid scanning
         }
     } else {
         if(isMountedRef.current) setIsDbLoading(true);
@@ -370,7 +374,7 @@ export default function Home() {
                     expirationDate: dbProduct.expirationDate || undefined,
                 };
                 playBeep(660, 150);
-                showDiscrepancyToastIfNeeded(newProductForList);
+                // showDiscrepancyToastIfNeeded(newProductForList); // Toast might be too intrusive
 
             } else {
                 descriptionForToast = `Producto desconocido ${trimmedBarcode}`;
@@ -1490,7 +1494,8 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
     onSetIsDeleteListDialogOpen: setIsDeleteListDialogOpen,
     isMobile,
     toast,
-    isDbLoading: isDbLoading, // Pass isDbLoading explicitly if needed by CounterSection
+    isDbLoading: isDbLoading, 
+    isTransitionPending: isTransitionPending,
   };
 
 
@@ -1806,3 +1811,4 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
     </div>
   );
 }
+

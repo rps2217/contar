@@ -2,9 +2,10 @@
 // src/components/product-database.tsx
 "use client";
 
-import type { ProductDetail, DisplayProduct } from '@/types/product';
+import type { ProductDetail } from '@/types/product';
 import { useToast } from "@/hooks/use-toast";
 import { cn, getLocalStorageItem, setLocalStorageItem, debounce } from "@/lib/utils";
+import { useLocalStorage } from '@/hooks/use-local-storage'; // Added import
 import {
   addOrUpdateProductToDB,
   getAllProductsFromDB,
@@ -13,7 +14,7 @@ import {
   addProductsToDB,
 } from '@/lib/database';
 import {
-    Filter, Play, Loader2, Save, Trash, Upload, Warehouse as WarehouseIcon, CalendarIcon
+    Filter, Play, Loader2, Save, Trash, Upload, Warehouse as WarehouseIcon, CalendarIcon, PackageSearch
 } from "lucide-react";
 import Papa from 'papaparse';
 import * as React from "react"; 
@@ -36,18 +37,20 @@ import { es } from 'date-fns/locale';
 
 
 const GOOGLE_SHEET_URL_LOCALSTORAGE_KEY = 'stockCounterPro_googleSheetUrl';
-const CHUNK_SIZE = 200; // Process 200 products at a time
+const CHUNK_SIZE = 200; 
 const SEARCH_DEBOUNCE_MS = 300;
 
 
 const extractSpreadsheetId = (input: string): string | null => {
   if (!input) return null;
-  const sheetUrlPattern = /\/spreadsheets\/d\/([a-zA-Z0-9-_]+)/;
+  // Improved regex to handle various Google Sheet URL formats
+  const sheetUrlPattern = /\/spreadsheets\/d\/([a-zA-Z0-9-_]+)(?:\/edit|\/htmlview|\/pubhtml|\/export)?(?:[#?].*)?/;
   const match = input.match(sheetUrlPattern);
   if (match && match[1]) {
     return match[1];
   }
-  if (!input.startsWith('http') && input.length > 30 && input.length < 50 && /^[a-zA-Z0-9-_]+$/.test(input)) {
+  // Fallback for raw IDs (less reliable, but kept for some flexibility)
+  if (!input.includes('/') && input.length > 30 && input.length < 50 && /^[a-zA-Z0-9-_]+$/.test(input)) {
     return input;
   }
   return null;
@@ -56,7 +59,7 @@ const extractSpreadsheetId = (input: string): string | null => {
 const parseGoogleSheetUrl = (sheetUrlOrId: string): { spreadsheetId: string | null; gid: string } => {
     const spreadsheetId = extractSpreadsheetId(sheetUrlOrId);
     const gidMatch = sheetUrlOrId.match(/[#&]gid=([0-9]+)/);
-    const gid = gidMatch ? gidMatch[1] : '0'; // Default to GID 0 if not specified
+    const gid = gidMatch ? gidMatch[1] : '0'; 
 
     if (!spreadsheetId) {
          console.warn("Could not extract spreadsheet ID from input:", sheetUrlOrId);
@@ -67,16 +70,23 @@ const parseGoogleSheetUrl = (sheetUrlOrId: string): { spreadsheetId: string | nu
 
 async function fetchGoogleSheetData(sheetUrlOrId: string): Promise<ProductDetail[]> {
     const { spreadsheetId, gid } = parseGoogleSheetUrl(sheetUrlOrId);
-    const csvExportUrl = `https://docs.google.com/spreadsheets/d/${spreadsheetId}/export?format=csv&gid=${gid}`;
+    
+    // Construct the CSV export URL without requiring "Publish to the web"
+    const csvExportUrl = `https://docs.google.com/spreadsheets/d/${spreadsheetId}/gviz/tq?tqx=out:csv&gid=${gid}`;
     
     let response: Response;
     try {
         const urlWithCacheBust = `${csvExportUrl}&_=${new Date().getTime()}`;
-        response = await fetch(urlWithCacheBust, { cache: "no-store" });
+        response = await fetch(urlWithCacheBust, { 
+            cache: "no-store",
+            // Note: Directly accessing gviz/tq might still face CORS if not proxied or if sheet isn't 'anyone with link can view'
+            // For a truly public sheet (anyone with link can view), this should generally work.
+            // If CORS issues persist, a backend proxy would be the most robust solution.
+        });
     } catch (error: any) {
         let userMessage = "Error de red al obtener la hoja. Verifique su conexión y la URL/ID.";
         if (error.message?.includes('Failed to fetch')) {
-            userMessage += " Posible problema de CORS, conectividad, o la URL/ID es incorrecta. Asegúrese de que la hoja esté 'Publicada en la web' como CSV.";
+            userMessage += " Posible problema de CORS, conectividad, o la URL/ID es incorrecta. Asegúrese de que la hoja tenga permisos de 'cualquiera con el enlace puede ver'.";
         } else {
             userMessage += ` Detalle: ${error.message}`;
         }
@@ -88,10 +98,13 @@ async function fetchGoogleSheetData(sheetUrlOrId: string): Promise<ProductDetail
         const statusText = response.statusText;
         const errorBody = await response.text().catch(() => "Could not read error response body.");
         let userMessage = `Error ${status} al obtener datos. `;
-        if (status === 400 || errorBody.toLowerCase().includes("publish to the web")) userMessage = "Error: La hoja de cálculo debe estar 'Publicada en la web' como CSV para acceder a ella sin autenticación. Ve a Archivo > Compartir > Publicar en la web en Google Sheets.";
-        else if (status === 403 || errorBody.toLowerCase().includes("google accounts sign in")) userMessage = "Error de Acceso: La hoja no es pública o requiere inicio de sesión. Cambie la configuración de compartir a 'Cualquier persona con el enlace puede ver' Y asegúrese de que esté publicada en la web como CSV.";
+
+        if (status === 400) userMessage += "Solicitud incorrecta. Verifique la URL y el GID de la hoja.";
+        else if (status === 403) userMessage += "Acceso denegado. Asegúrese de que la hoja de cálculo tenga permisos de 'cualquiera con el enlace puede ver'.";
         else if (status === 404) userMessage += "Hoja no encontrada. Verifique la URL/ID y el ID de la hoja (gid).";
         else userMessage += ` ${statusText}. Revise los permisos de la hoja o la URL/ID.`;
+        
+        console.error("Google Sheet fetch error details:", { status, statusText, errorBody, csvExportUrl });
         throw new Error(userMessage);
     }
 
@@ -129,6 +142,7 @@ async function fetchGoogleSheetData(sheetUrlOrId: string): Promise<ProductDetail
                     const description = values[1]?.trim() || `Producto ${barcode}`;
                     
                     let stock = 0;
+                    // Ensure column 6 (index 5) exists before trying to access it
                     if (values.length > 5 && values[5]) {
                         const stockStr = values[5].trim();
                         const parsedStock = parseInt(stockStr, 10);
@@ -137,11 +151,15 @@ async function fetchGoogleSheetData(sheetUrlOrId: string): Promise<ProductDetail
                         } else {
                              console.warn(`Valor de stock inválido "${stockStr}" para código ${barcode} en fila ${i + 1}. Usando 0.`);
                         }
+                    } else {
+                        console.warn(`Columna de stock (columna 6) no encontrada o vacía para el código ${barcode} en la fila ${i + 1}. Usando stock 0.`);
                     }
 
+
+                    // Ensure column 10 (index 9) exists before trying to access it
                     const provider = (values.length > 9 && values[9]?.trim()) ? values[9].trim() : "Desconocido";
                     
-                    let expirationDate: string | undefined = undefined; // Placeholder for future expiration date column
+                    let expirationDate: string | undefined = undefined; 
 
                     products.push({ barcode, description, provider, stock, expirationDate });
                 }
@@ -259,7 +277,7 @@ const ProductDatabaseComponent: React.FC<ProductDatabaseProps> = ({ onStartCount
       await loadProductsFromDB(); 
       toast({
         title: "Producto Eliminado",
-        description: `El producto ${product?.description || barcode} ha sido eliminado.`,
+        description: `${product?.description || barcode} ha sido eliminado de la base de datos.`,
       });
     } catch (error: any) {
       toast({ variant: "destructive", title: "Error al Eliminar", description: `No se pudo eliminar: ${error.message}` });
@@ -378,9 +396,9 @@ const ProductDatabaseComponent: React.FC<ProductDatabaseProps> = ({ onStartCount
      }
      try {
          const dataToExport = products.map(p => ({
-             BARCODE: p.barcode,
-             DESCRIPTION: p.description,
-             PROVIDER: p.provider,
+             CODIGO_BARRAS: p.barcode,
+             DESCRIPCION: p.description,
+             PROVEEDOR: p.provider,
              STOCK: p.stock ?? 0,
              FECHA_VENCIMIENTO: p.expirationDate || '', 
          }));
@@ -445,16 +463,16 @@ const ProductDatabaseComponent: React.FC<ProductDatabaseProps> = ({ onStartCount
   }, [selectedProviderFilter, products, onStartCountByProvider, toast]);
 
 
-  const debouncedSearchTerm = useMemo(
+  const debouncedSetSearchTerm = useMemo(
     () => debounce((term: string) => setSearchTerm(term), SEARCH_DEBOUNCE_MS),
     []
   );
 
   useEffect(() => {
     return () => {
-      debouncedSearchTerm.clear?.();
+      debouncedSetSearchTerm.clear?.();
     };
-  }, [debouncedSearchTerm]);
+  }, [debouncedSetSearchTerm]);
 
 
   const filteredProducts = useMemo(() => {
@@ -517,8 +535,8 @@ const ProductDatabaseComponent: React.FC<ProductDatabaseProps> = ({ onStartCount
              <Input
                  id="search-product"
                  type="text"
-                 placeholder="Buscar por código, descripción, fecha..."
-                 onChange={(e) => debouncedSearchTerm(e.target.value)}
+                 placeholder="Buscar por código, descripción..."
+                 onChange={(e) => debouncedSetSearchTerm(e.target.value)}
                  className="h-10 flex-grow min-w-[150px]"
                  disabled={isProcessing || isLoading || isTransitionPending}
              />
@@ -553,13 +571,13 @@ const ProductDatabaseComponent: React.FC<ProductDatabaseProps> = ({ onStartCount
 
        <div className="space-y-2 p-4 border rounded-lg bg-card dark:bg-gray-800 shadow-sm">
            <Label htmlFor="google-sheet-url" className="block font-medium mb-1 dark:text-gray-200">
-              Cargar/Actualizar desde Google Sheet (URL o ID):
+              Cargar/Actualizar desde Google Sheet:
            </Label>
           <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
              <Input
              id="google-sheet-url"
              type="text"
-             placeholder="URL de Hoja de Google o ID de Hoja"
+             placeholder="URL completa de Hoja de Google o ID de Hoja"
              value={googleSheetUrlOrId}
              onChange={handleGoogleSheetUrlOrIdChange}
              className="flex-grow h-10 dark:bg-gray-700 dark:border-gray-600 dark:text-white"
@@ -575,7 +593,7 @@ const ProductDatabaseComponent: React.FC<ProductDatabaseProps> = ({ onStartCount
              </Button>
          </div>
          <p id="google-sheet-info" className="text-xs text-muted-foreground dark:text-gray-400 mt-1">
-             La hoja debe estar 'Publicada en la web' como CSV (Archivo {'>'} Compartir {'>'} Publicar en la web). Se leerá por posición: Col 1: Código, Col 2: Descripción, Col 6: Stock, Col 10: Proveedor.
+             La hoja debe tener permisos de 'cualquiera con el enlace puede ver'. Se leerá por posición: Col 1: Código, Col 2: Descripción, Col 6: Stock, Col 10: Proveedor.
          </p>
          {isProcessing && uploadProgress > 0 && ( 
              <div className="mt-4 space-y-1">
@@ -596,7 +614,7 @@ const ProductDatabaseComponent: React.FC<ProductDatabaseProps> = ({ onStartCount
             title={alertAction === 'deleteProduct' ? 'Confirmar Eliminación' : 'Confirmar Borrado Completo'}
             description={
                 alertAction === 'deleteProduct' && productToDelete ?
-                `¿Estás seguro de que deseas eliminar permanentemente el producto "${productToDelete.description}" (${productToDelete.barcode})? Esta acción no se puede deshacer.`
+                `¿Estás seguro de que deseas eliminar permanentemente el producto "${productToDelete.description}" (${productToDelete.barcode}) de la base de datos? Esta acción no se puede deshacer.`
                 : alertAction === 'clearDatabase' ?
                 "Estás a punto de eliminar TODOS los productos de la base de datos permanentemente. Esta acción no se puede deshacer."
                 : "Esta acción no se puede deshacer."
@@ -712,3 +730,4 @@ const ProductTable: React.FC<ProductTableProps> = ({
     </ScrollArea>
   );
 };
+

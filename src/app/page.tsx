@@ -1,3 +1,4 @@
+
 // src/app/page.tsx
 "use client";
 
@@ -256,7 +257,6 @@ export default function Home() {
                         title: "Alerta de Discrepancia",
                         description: `${product.description}: Contado ${countToCheck}, Stock ${stockToCheck}.`,
                         variant: "default",
-                        duration: 6000,
                     });
                 }
             });
@@ -397,7 +397,6 @@ export default function Home() {
                                 variant: "destructive",
                                 title: "Producto Desconocido",
                                 description: `Producto ${trimmedBarcode} no encontrado. Agregado temporalmente. Edita en 'Catálogo de Productos'.`,
-                                duration: 7000,
                             });
                         }
                     });
@@ -688,7 +687,6 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
                                 toast({
                                     title: "Cantidad Modificada",
                                     description: `Cantidad de ${productDescription} (${getWarehouseName(currentWarehouseId)}) ${actionText} ${finalValue}.`,
-                                    duration: 3000
                                 });
                             }
                         });
@@ -813,8 +811,8 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
             requestAnimationFrame(() => {
                 if (isMountedRef.current) {
                     toast({
-                        title: "Producto eliminado (Lista Actual)",
-                        description: `${descriptionForToast} (${barcodeForToast}) ha sido eliminado del inventario actual (${getWarehouseName(warehouseId)}).`,
+                        title: "Producto eliminado",
+                        description: `"${descriptionForToast}" (${barcodeForToast}) se eliminó de la lista actual.`,
                         variant: "default"
                     });
                 }
@@ -1199,7 +1197,6 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
                     if (isMountedRef.current) {
                         toast({
                             title: "Producto Actualizado",
-                            description: `${updatedProductData.description} ha sido actualizado en la base de datos.`,
                         });
                     }
                 });
@@ -1666,7 +1663,7 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
             }
          }}
          title="Confirmar Eliminación (Lista Actual)"
-         description={`¿Seguro que deseas eliminar "${productToDelete?.description}" (${productToDelete?.barcode}) del inventario actual (${getWarehouseName(productToDelete?.warehouseId)})? Esta acción no se puede deshacer.`}
+         description={ productToDelete ? `¿Seguro que deseas eliminar "${productToDelete?.description}" (${productToDelete?.barcode}) del inventario actual (${getWarehouseName(productToDelete?.warehouseId)})? Esta acción no se puede deshacer.` : `¿Seguro que deseas eliminar este producto?`}
          onConfirm={confirmDelete}
          onCancel={() => {
             if(isMountedRef.current) setIsDeleteDialogOpen(false);
@@ -1773,7 +1770,7 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
                        if(isMountedRef.current) {
                         requestAnimationFrame(() => { 
                             if (isMountedRef.current) {
-                                toast({title: "Producto Eliminado (DB)", description: `Producto ${barcode} eliminado de la base de datos.`});
+                                toast({title: "Producto eliminado de DB"});
                             }
                         });
                        }
@@ -1812,4 +1809,5 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
     </div>
   );
 }
+
 

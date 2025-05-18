@@ -1,9 +1,10 @@
+
 // src/components/product-database.tsx
 "use client";
 
 import type { ProductDetail, DisplayProduct } from '@/types/product';
 import { useToast } from "@/hooks/use-toast";
-import { cn, getLocalStorageItem, setLocalStorageItem } from "@/lib/utils";
+import { cn, getLocalStorageItem, setLocalStorageItem, debounce } from "@/lib/utils";
 import {
   addOrUpdateProductToDB,
   getAllProductsFromDB,
@@ -36,6 +37,7 @@ import { es } from 'date-fns/locale';
 
 const GOOGLE_SHEET_URL_LOCALSTORAGE_KEY = 'stockCounterPro_googleSheetUrl';
 const CHUNK_SIZE = 200; // Process 200 products at a time
+const SEARCH_DEBOUNCE_MS = 300;
 
 
 const extractSpreadsheetId = (input: string): string | null => {
@@ -100,31 +102,27 @@ async function fetchGoogleSheetData(sheetUrlOrId: string): Promise<ProductDetail
             skipEmptyLines: true,
             complete: (results) => {
                 if (results.errors.length > 0) {
-                    // Log specific PapaParse errors
                      results.errors.forEach(err => console.warn(`PapaParse error: ${err.message} on row ${err.row}. Code: ${err.code}. Type: ${err.type}`));
                 }
                 const csvData = results.data;
                 const products: ProductDetail[] = [];
-                if (csvData.length <= 1) { // Expecting at least header and one data row
-                    resolve(products); // No data or only header
+                if (csvData.length <= 1) { 
+                    resolve(products); 
                     return;
                 }
                 
-                const headerRow = csvData[0]; // Assume first row is header
-                // Column mapping by position:
                 // Col 1 (index 0): Barcode
                 // Col 2 (index 1): Description
                 // Col 6 (index 5): Stock
                 // Col 10 (index 9): Provider
-                // Col 11 (index 10): Expiration Date (YYYY-MM-DD)
 
-                for (let i = 1; i < csvData.length; i++) { // Start from row 1 (data)
+                for (let i = 1; i < csvData.length; i++) { 
                     const values = csvData[i];
                     if (!values || values.length === 0) continue;
 
                     const barcode = values[0]?.trim();
                     if (!barcode) {
-                        console.warn(`Fila ${i + 1} omitida: Código de barras vacío o faltante. Fila:`, values);
+                        console.warn(`Fila ${i + 1} omitida: Código de barras vacío o faltante.`);
                         continue;
                     }
 
@@ -137,43 +135,20 @@ async function fetchGoogleSheetData(sheetUrlOrId: string): Promise<ProductDetail
                         if (!isNaN(parsedStock) && parsedStock >= 0) {
                             stock = parsedStock;
                         } else {
-                            console.warn(`Valor de stock inválido "${stockStr}" para código ${barcode} en fila ${i + 1}. Usando 0 por defecto.`);
+                             console.warn(`Valor de stock inválido "${stockStr}" para código ${barcode} en fila ${i + 1}. Usando 0.`);
                         }
                     }
 
                     const provider = (values.length > 9 && values[9]?.trim()) ? values[9].trim() : "Desconocido";
-
-                    let expirationDate: string | undefined = undefined;
-                    if (values.length > 10 && values[10]) {
-                        const dateStr = values[10].trim();
-                        const commonFormats = ["yyyy-MM-dd", "dd/MM/yyyy", "MM/dd/yyyy"];
-                        let parsedValidDate: Date | null = null;
-
-                        for (const fmt of commonFormats) {
-                            try {
-                                const d = parse(dateStr, fmt, new Date());
-                                if (isValid(d)) {
-                                    parsedValidDate = d;
-                                    break;
-                                }
-                            } catch (e) {/* ignore */}
-                        }
-                        
-                        if (parsedValidDate) {
-                            expirationDate = format(parsedValidDate, "yyyy-MM-dd");
-                        } else if (/^\d{4}-\d{2}-\d{2}$/.test(dateStr) && isValid(parseISO(dateStr))) {
-                           expirationDate = dateStr;
-                        } else {
-                            console.warn(`Fecha de vencimiento inválida o no parseable "${dateStr}" para código ${barcode} en fila ${i + 1}. Omitiendo fecha de vencimiento.`);
-                        }
-                    }
+                    
+                    let expirationDate: string | undefined = undefined; // Placeholder for future expiration date column
 
                     products.push({ barcode, description, provider, stock, expirationDate });
                 }
                 resolve(products);
             },
             error: (error: any) => {
-                reject(new Error(`Error al analizar el archivo CSV con PapaParse: ${error.message}`));
+                reject(new Error(`Error al analizar el archivo CSV: ${error.message}`));
             }
         });
     });
@@ -181,12 +156,12 @@ async function fetchGoogleSheetData(sheetUrlOrId: string): Promise<ProductDetail
 
 
  interface ProductDatabaseProps {
-  onStartCountByProvider: (products: ProductDetail[]) => void; // Changed from DisplayProduct to ProductDetail
+  onStartCountByProvider: (products: ProductDetail[]) => void; 
   isTransitionPending?: boolean;
  }
 
 
-export const ProductDatabase: React.FC<ProductDatabaseProps> = ({ onStartCountByProvider, isTransitionPending }) => {
+const ProductDatabaseComponent: React.FC<ProductDatabaseProps> = ({ onStartCountByProvider, isTransitionPending }) => {
   const { toast } = useToast();
   const [products, setProducts] = useState<ProductDetail[]>([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -196,7 +171,7 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = ({ onStartCountBy
   const [alertAction, setAlertAction] = useState<'deleteProduct' | 'clearDatabase' | null>(null);
   const [productToDelete, setProductToDelete] = useState<ProductDetail | null>(null);
   const [uploadProgress, setUploadProgress] = useState(0);
-  const [isProcessing, setIsProcessing] = useState(false); // More generic processing state
+  const [isProcessing, setIsProcessing] = useState(false); 
   const [processingStatus, setProcessingStatus] = useState<string>("");
   const [googleSheetUrlOrId, setGoogleSheetUrlOrId] = useLocalStorage<string>(
       GOOGLE_SHEET_URL_LOCALSTORAGE_KEY,
@@ -236,7 +211,7 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = ({ onStartCountBy
         barcode: isUpdating ? selectedProduct!.barcode : data.barcode.trim(),
         description: data.description.trim() || `Producto ${data.barcode.trim()}`,
         provider: data.provider?.trim() || "Desconocido",
-        stock: Number.isFinite(Number(data.stock)) ? Number(data.stock) : 0, // Ensure stock is number
+        stock: Number.isFinite(Number(data.stock)) ? Number(data.stock) : 0, 
         expirationDate: data.expirationDate || undefined,
     };
 
@@ -252,7 +227,6 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = ({ onStartCountBy
         await loadProductsFromDB();
         toast({
             title: isUpdating ? "Producto Actualizado" : "Producto Agregado",
-            description: `${productData.description} (${productData.barcode}) ha sido ${isUpdating ? 'actualizado' : 'agregado'}.`,
         });
         setIsEditModalOpen(false);
         setSelectedProduct(null); 
@@ -285,7 +259,7 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = ({ onStartCountBy
       await loadProductsFromDB(); 
       toast({
         title: "Producto Eliminado",
-        description: `El producto ${product?.description || barcode} ha sido eliminado de la base de datos.`,
+        description: `El producto ${product?.description || barcode} ha sido eliminado.`,
       });
     } catch (error: any) {
       toast({ variant: "destructive", title: "Error al Eliminar", description: `No se pudo eliminar: ${error.message}` });
@@ -306,7 +280,7 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = ({ onStartCountBy
     try {
       await clearProductDatabaseFromDB(); 
       setProducts([]); 
-      toast({ title: "Base de Datos Borrada", description: "Todos los productos han sido eliminados." });
+      toast({ title: "Base de Datos Borrada" });
     } catch (error: any) {
       toast({ variant: "destructive", title: "Error al Borrar DB", description: `No se pudo borrar la base de datos: ${error.message}` });
     } finally {
@@ -319,7 +293,7 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = ({ onStartCountBy
 
 
   const handleOpenEditDialog = useCallback((product: ProductDetail | null) => {
-    setSelectedProduct(product); // This will be the product from the current list state
+    setSelectedProduct(product); 
     setIsEditModalOpen(true);
   }, []);
 
@@ -374,21 +348,21 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = ({ onStartCountBy
              }
             
              setProcessingStatus(`Cargando ${totalItemsToLoad} productos...`);
-             // Load in chunks to IndexedDB
+             
              for (let i = 0; i < totalItemsToLoad; i += CHUNK_SIZE) {
                  const chunk = parsedProducts.slice(i, i + CHUNK_SIZE);
-                 await addProductsToDB(chunk); // This function should handle writing to IndexedDB
+                 await addProductsToDB(chunk); 
                  itemsLoaded += chunk.length;
                  setUploadProgress(Math.round((itemsLoaded / totalItemsToLoad) * 100));
                  setProcessingStatus(`Cargando ${itemsLoaded} de ${totalItemsToLoad} productos...`);
              }
 
              await loadProductsFromDB(); 
-             toast({ title: "Carga Completa", description: `Se procesaron ${totalItemsToLoad} productos desde Google Sheet.` });
+             toast({ title: "Carga Completa", description: `Se procesaron ${totalItemsToLoad} productos.` });
 
         } catch (error: any) {
             setProcessingStatus("Error durante la carga.");
-            toast({ variant: "destructive", title: "Error de Carga", description: error.message || "Error desconocido al cargar desde Google Sheet.", duration: 9000 });
+            toast({ variant: "destructive", title: "Error de Carga", description: error.message || "Error desconocido al cargar desde Google Sheet."});
         } finally {
             setIsProcessing(false);
             setProcessingStatus("");
@@ -420,7 +394,7 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = ({ onStartCountBy
          link.click();
          document.body.removeChild(link);
          URL.revokeObjectURL(link.href);
-         toast({ title: "Exportación Iniciada", description: "Se ha iniciado la descarga del archivo CSV." });
+         toast({ title: "Exportación Iniciada"});
      } catch (error) {
           toast({ variant: "destructive", title: "Error de Exportación", description: "No se pudo generar el archivo CSV." });
      }
@@ -451,7 +425,6 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = ({ onStartCountBy
     setProcessingStatus(`Buscando productos de ${selectedProviderFilter}...`);
 
     try {
-      // Products are already loaded from DB, filter them directly
       const providerProducts = products.filter(product => (product.provider || "Desconocido") === selectedProviderFilter);
 
       if (providerProducts.length === 0) {
@@ -461,7 +434,7 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = ({ onStartCountBy
         return;
       }
       
-      onStartCountByProvider(providerProducts); // Pass ProductDetail[]
+      onStartCountByProvider(providerProducts); 
 
     } catch (error) {
       toast({ variant: "destructive", title: "Error", description: "No se pudo iniciar el conteo por proveedor." });
@@ -470,6 +443,18 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = ({ onStartCountBy
       setProcessingStatus("");
     }
   }, [selectedProviderFilter, products, onStartCountByProvider, toast]);
+
+
+  const debouncedSearchTerm = useMemo(
+    () => debounce((term: string) => setSearchTerm(term), SEARCH_DEBOUNCE_MS),
+    []
+  );
+
+  useEffect(() => {
+    return () => {
+      debouncedSearchTerm.clear?.();
+    };
+  }, [debouncedSearchTerm]);
 
 
   const filteredProducts = useMemo(() => {
@@ -533,8 +518,7 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = ({ onStartCountBy
                  id="search-product"
                  type="text"
                  placeholder="Buscar por código, descripción, fecha..."
-                 value={searchTerm}
-                 onChange={(e) => setSearchTerm(e.target.value)}
+                 onChange={(e) => debouncedSearchTerm(e.target.value)}
                  className="h-10 flex-grow min-w-[150px]"
                  disabled={isProcessing || isLoading || isTransitionPending}
              />
@@ -591,9 +575,9 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = ({ onStartCountBy
              </Button>
          </div>
          <p id="google-sheet-info" className="text-xs text-muted-foreground dark:text-gray-400 mt-1">
-             La hoja debe estar 'Publicada en la web' como CSV (Archivo {'>'} Compartir {'>'} Publicar en la web). Se leerá por posición: Col 1: Código, Col 2: Descripción, Col 6: Stock, Col 10: Proveedor, Col 11: Vencimiento (YYYY-MM-DD).
+             La hoja debe estar 'Publicada en la web' como CSV (Archivo {'>'} Compartir {'>'} Publicar en la web). Se leerá por posición: Col 1: Código, Col 2: Descripción, Col 6: Stock, Col 10: Proveedor.
          </p>
-         {isProcessing && uploadProgress > 0 && ( // Show progress only when uploadProgress is > 0
+         {isProcessing && uploadProgress > 0 && ( 
              <div className="mt-4 space-y-1">
                  <Progress value={uploadProgress} className="h-2 w-full" />
                  <p className="text-sm text-muted-foreground dark:text-gray-400 text-center">
@@ -646,6 +630,8 @@ export const ProductDatabase: React.FC<ProductDatabaseProps> = ({ onStartCountBy
   );
 };
 
+export const ProductDatabase = React.memo(ProductDatabaseComponent);
+
 
 interface ProductTableProps {
   products: ProductDetail[];
@@ -693,7 +679,8 @@ const ProductTable: React.FC<ProductTableProps> = ({
               <TableRow key={product.barcode} className="hover:bg-muted/50 dark:hover:bg-gray-700 text-sm transition-colors duration-150">
                 <TableCell className="px-4 py-3 font-medium text-gray-700 dark:text-gray-200">{product.barcode}</TableCell>
                 <TableCell
-                    className="px-4 py-3 text-gray-800 dark:text-gray-100"
+                    className="px-4 py-3 text-gray-800 dark:text-gray-100 cursor-pointer hover:text-blue-600 dark:hover:text-blue-400 hover:underline"
+                    onClick={() => onEdit(product)}
                  >
                     {product.description}
                 </TableCell>
@@ -703,7 +690,7 @@ const ProductTable: React.FC<ProductTableProps> = ({
                 </TableCell>
                 <TableCell 
                     className={cn("px-4 py-3 text-center text-gray-600 dark:text-gray-300 tabular-nums",
-                        product.expirationDate && new Date(product.expirationDate) < new Date() ? 'text-red-500 dark:text-red-400 font-semibold' : ''
+                        product.expirationDate && isValid(parseISO(product.expirationDate)) && new Date(product.expirationDate) < new Date() ? 'text-red-500 dark:text-red-400 font-semibold' : ''
                     )}
                     title={product.expirationDate && isValid(parseISO(product.expirationDate)) ? `Vence: ${format(parseISO(product.expirationDate), 'PPP', {locale: es})}` : 'Sin fecha'}
                 >

@@ -1,4 +1,5 @@
 
+
 "use client";
 
 import React, { useState, useCallback } from 'react';
@@ -86,7 +87,6 @@ export const WarehouseManagement: React.FC<WarehouseManagementProps> = ({
        toast({
         title: "ID Generado",
         description: `Se ha generado un ID de almacén automático: ${warehouseId}`,
-        duration: 4000,
       });
     }
 
@@ -116,7 +116,7 @@ export const WarehouseManagement: React.FC<WarehouseManagementProps> = ({
       onUpdateWarehouses(updatedWarehouses);
       toast({
         title: "Almacén eliminado",
-        description: `${warehouseToDelete.name} ha sido eliminado de la lista de almacenes.`,
+        description: `${warehouseToDelete.name} ha sido eliminado.`,
         variant: "default"
       });
        // TODO: Consider deleting associated inventory items from IndexedDB here as well

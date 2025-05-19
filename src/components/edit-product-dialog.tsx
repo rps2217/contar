@@ -1,3 +1,4 @@
+
 // src/components/edit-product-dialog.tsx
 "use client";
 
@@ -35,8 +36,6 @@ const editProductSchema = z.object({
   ),
   expirationDate: z.string().optional().refine(val => {
     if (!val) return true; // Optional field
-    // Check for YYYY-MM-DD format specifically if direct input is allowed
-    // or rely on date picker to provide valid ISO string
     return /^\d{4}-\d{2}-\d{2}$/.test(val) || isValid(parseISO(val));
   }, { message: "Formato de fecha inválido. Use YYYY-MM-DD." }),
 });
@@ -90,7 +89,6 @@ export const EditProductDialog: React.FC<EditProductDialogProps> = ({
         barcode: selectedDetail.barcode,
         description: selectedDetail.description,
         provider: selectedDetail.provider || "",
-        // Use initialStock for countingList context, otherwise use DB stock for other contexts
         stock: context === 'countingList' ? initialStock : (selectedDetail.stock ?? 0),
         expirationDate: selectedDetail.expirationDate || "",
       });
@@ -99,7 +97,7 @@ export const EditProductDialog: React.FC<EditProductDialogProps> = ({
         barcode: "",
         description: "",
         provider: "",
-        stock: 0, // Default stock for new products
+        stock: 0,
         expirationDate: "",
       });
     }
@@ -134,7 +132,7 @@ export const EditProductDialog: React.FC<EditProductDialogProps> = ({
 
   return (
     <Dialog open={isOpen} onOpenChange={(open) => { if (!open) handleClose(); else setIsOpen(true); }}>
-      <DialogContent className="sm:max-w-md"> {/* Adjusted width */}
+      <DialogContent className="sm:max-w-md">
         <DialogHeader>
           <DialogTitle>{dialogTitle}</DialogTitle>
           <DialogDescription>
@@ -142,7 +140,7 @@ export const EditProductDialog: React.FC<EditProductDialogProps> = ({
           </DialogDescription>
         </DialogHeader>
         <Form {...form}>
-          <form onSubmit={form.handleSubmit(handleFormSubmit)} className="space-y-3"> {/* Reduced space */}
+          <form onSubmit={form.handleSubmit(handleFormSubmit)} className="space-y-3">
             <FormField
               control={form.control}
               name="barcode"
@@ -197,7 +195,7 @@ export const EditProductDialog: React.FC<EditProductDialogProps> = ({
                       placeholder="Stock" 
                       {...field} 
                       onChange={e => field.onChange(parseInt(e.target.value) || 0)} 
-                      disabled={context === 'expiration'} // Disable stock editing in expiration context
+                      disabled={context === 'expiration'}
                     />
                   </FormControl>
                   <FormMessage />
@@ -220,7 +218,7 @@ export const EditProductDialog: React.FC<EditProductDialogProps> = ({
                               !field.value && "text-muted-foreground"
                             )}
                           >
-                            {field.value && isValid(parseISO(field.value)) ? ( // Check if date is valid before formatting
+                            {field.value && isValid(parseISO(field.value)) ? (
                               format(parseISO(field.value), "PPP", { locale: es })
                             ) : (
                               <span>Seleccionar fecha</span>
@@ -229,7 +227,16 @@ export const EditProductDialog: React.FC<EditProductDialogProps> = ({
                           </Button>
                         </FormControl>
                       </PopoverTrigger>
-                      <PopoverContent className="w-auto p-0" align="start">
+                      <PopoverContent 
+                        className="w-auto p-0" 
+                        align="start"
+                        onPointerDownOutside={(event) => {
+                          event.preventDefault();
+                        }}
+                        onEscapeKeyDown={(event) => {
+                           event.stopPropagation();
+                        }}
+                      >
                         <Calendar
                           mode="single"
                           selected={field.value && isValid(parseISO(field.value)) ? parseISO(field.value) : undefined}
@@ -249,7 +256,7 @@ export const EditProductDialog: React.FC<EditProductDialogProps> = ({
                   </FormItem>
                 )}
               />
-            <DialogFooter className="flex flex-col sm:flex-row sm:justify-between gap-2 mt-3"> {/* Reduced margin */}
+            <DialogFooter className="flex flex-col sm:flex-row sm:justify-between gap-2 mt-3">
                {!isAddingNew && onDelete && context !== 'expiration' && (
                   <Button
                     type="button"
@@ -262,7 +269,7 @@ export const EditProductDialog: React.FC<EditProductDialogProps> = ({
                     Eliminar de DB
                   </Button>
                 )}
-                 {(isAddingNew || context === 'expiration') && <div className="flex-grow sm:hidden"></div>} {/* Spacer for mobile layout consistency */}
+                 {(isAddingNew || context === 'expiration') && <div className="flex-grow sm:hidden"></div>}
 
 
                 <div className="flex flex-col sm:flex-row sm:justify-end gap-2 w-full sm:w-auto">
@@ -283,3 +290,4 @@ export const EditProductDialog: React.FC<EditProductDialogProps> = ({
     </Dialog>
   );
 };
+

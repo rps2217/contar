@@ -14,6 +14,7 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { debounce } from '@/lib/utils'; // Import debounce
 
 interface CounterSectionProps {
   barcode: string;
@@ -23,8 +24,8 @@ interface CounterSectionProps {
   isLoading: boolean;
   isRefreshingStock: boolean;
   inputRef: React.RefObject<HTMLInputElement>;
-  searchTerm: string;
-  setSearchTerm: (term: string) => void;
+  searchTerm: string; // searchTerm from parent (Home)
+  setSearchTerm: (term: string) => void; // setSearchTerm from parent (Home)
   filteredCountingList: DisplayProduct[];
   warehouseName: string;
   onDeleteRequest: (product: DisplayProduct) => void;
@@ -33,7 +34,7 @@ interface CounterSectionProps {
   onDecrement: (barcode: string, type: 'count' | 'stock') => void;
   onIncrement: (barcode: string, type: 'count' | 'stock') => void;
   onEditDetailRequest: (product: DisplayProduct) => void;
-  countingList: DisplayProduct[]; // Full list for checking length before actions
+  countingList: DisplayProduct[]; 
   currentWarehouseId: string;
   isSavingToHistory: boolean;
   onSaveToHistory: () => Promise<void>;
@@ -41,8 +42,8 @@ interface CounterSectionProps {
   onSetIsDeleteListDialogOpen: (isOpen: boolean) => void;
   isMobile: boolean;
   toast: (options: any) => void;
-  isDbLoading: boolean; // General DB loading state from parent
-  isTransitionPending: boolean; // Transition state from parent
+  isDbLoading: boolean; 
+  isTransitionPending: boolean; 
 }
 
 const CounterSectionComponent: React.FC<CounterSectionProps> = ({
@@ -50,11 +51,11 @@ const CounterSectionComponent: React.FC<CounterSectionProps> = ({
   setBarcode,
   onAddProduct,
   onRefreshStock,
-  isLoading, // This is the combined loading state (isDbLoading || isRefreshingStock || isTransitionPending)
-  isRefreshingStock, // Specific state for refresh button animation
+  isLoading, 
+  isRefreshingStock, 
   inputRef,
-  searchTerm,
-  setSearchTerm,
+  searchTerm, // Prop from Home
+  setSearchTerm, // Prop from Home
   filteredCountingList,
   warehouseName,
   onDeleteRequest,
@@ -63,7 +64,7 @@ const CounterSectionComponent: React.FC<CounterSectionProps> = ({
   onDecrement,
   onIncrement,
   onEditDetailRequest,
-  countingList, // Used to check overall list length for current warehouse
+  countingList, 
   currentWarehouseId,
   isSavingToHistory,
   onSaveToHistory,
@@ -71,13 +72,45 @@ const CounterSectionComponent: React.FC<CounterSectionProps> = ({
   onSetIsDeleteListDialogOpen,
   isMobile,
   toast,
-  isDbLoading, // Passed through for specific checks if needed, though `isLoading` covers general disabling
+  isDbLoading, 
   isTransitionPending
 }) => {
   const currentListForWarehouse = React.useMemo(() => 
     countingList.filter(p => p.warehouseId === currentWarehouseId),
     [countingList, currentWarehouseId]
   );
+
+  const [localSearchTerm, setLocalSearchTerm] = React.useState(searchTerm);
+
+  React.useEffect(() => {
+    // Sync localSearchTerm if the prop searchTerm changes from parent
+    // (e.g., if Home component resets it or changes it for other reasons)
+    if (localSearchTerm !== searchTerm) {
+      setLocalSearchTerm(searchTerm);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchTerm]);
+
+  const debouncedSetParentSearchTerm = React.useMemo(
+    () => debounce((term: string) => {
+      setSearchTerm(term); // Call the parent's setSearchTerm
+    }, 300), // 300ms debounce time
+    [setSearchTerm] // setSearchTerm from Home is stable
+  );
+
+  const handleLocalSearchChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const newTerm = e.target.value;
+    setLocalSearchTerm(newTerm);
+    debouncedSetParentSearchTerm(newTerm);
+  };
+  
+  React.useEffect(() => {
+    // Cleanup debounce timer on unmount
+    return () => {
+      debouncedSetParentSearchTerm.clear?.();
+    };
+  }, [debouncedSetParentSearchTerm]);
+
 
   return (
     <div id="contador-content" className="flex flex-col h-full">
@@ -86,7 +119,7 @@ const CounterSectionComponent: React.FC<CounterSectionProps> = ({
         setBarcode={setBarcode}
         onAddProduct={onAddProduct}
         onRefreshStock={onRefreshStock}
-        isLoading={isLoading} // Use the combined loading state
+        isLoading={isLoading} 
         isRefreshingStock={isRefreshingStock}
         inputRef={inputRef}
       />
@@ -95,8 +128,8 @@ const CounterSectionComponent: React.FC<CounterSectionProps> = ({
         <Input
           type="search"
           placeholder="Buscar en inventario actual..."
-          value={searchTerm}
-          onChange={(e) => setSearchTerm(e.target.value)}
+          value={localSearchTerm} // Use localSearchTerm for input value
+          onChange={handleLocalSearchChange} // Use local handler
           className="pl-8 w-full bg-blue-50 dark:bg-blue-900/30 border-blue-300 dark:border-blue-600"
           aria-label="Buscar en lista de conteo"
           disabled={isLoading}

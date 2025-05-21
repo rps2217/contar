@@ -24,7 +24,7 @@ import {
 import { WarehouseManagement } from "@/components/warehouse-management";
 import { format, isValid, parseISO } from 'date-fns';
 import { es } from 'date-fns/locale';
-import { Minus, Plus, Trash, RefreshCw, Search, Boxes, Loader2, History as HistoryIcon, CalendarIcon, Save, Edit, Download, BarChart, Settings, AlertTriangle, XCircle, Menu as MenuIcon, User, ShieldAlert, Filter, PanelLeftClose, PanelRightOpen, PackageSearch, CalendarClock, BookOpenText, Users2, ClipboardList, MoreVertical, Warehouse as WarehouseIconLucide } from "lucide-react";
+import { Minus, Plus, Trash, RefreshCw, Search, Boxes, Loader2, History as HistoryIcon, CalendarIcon, Save, Edit, Download, BarChart, Settings, AlertTriangle, XCircle, Menu as MenuIcon, User, ShieldAlert, Filter, PanelLeftClose, PanelRightOpen, PackageSearch, CalendarClock, BookOpenText, Users2, ClipboardList, MoreVertical, Warehouse as WarehouseIconLucide, LockKeyhole } from "lucide-react";
 import React, { useCallback, useEffect, useRef, useState, useMemo, useTransition } from "react";
 import { playBeep } from '@/lib/helpers';
 import { ModifyValueDialog } from '@/components/modify-value-dialog';
@@ -67,6 +67,9 @@ const LOCAL_STORAGE_USER_ID_KEY = 'stockCounterPro_userId';
 const LOCAL_STORAGE_SAVE_DEBOUNCE_MS = 500;
 const LAST_SCANNED_BARCODE_TIMEOUT_MS = 300;
 
+const LOGIN_USER = "rps";
+const LOGIN_PASSWORD = "2217";
+
 // --- Main Component ---
 
 export default function Home() {
@@ -78,6 +81,11 @@ export default function Home() {
 
   // --- React Transition Hook ---
   const [isTransitionPending, startTransition] = useTransition();
+
+  // --- Authentication State ---
+  const [isAuthenticated, setIsAuthenticated] = useState(false);
+  const [loginUsername, setLoginUsername] = useState("");
+  const [loginPassword, setLoginPassword] = useState("");
 
 
   // --- LocalStorage Hooks ---
@@ -150,18 +158,14 @@ export default function Home() {
  useEffect(() => {
     isMountedRef.current = true;
     const storedUserId = getLocalStorageItem<string | null>(LOCAL_STORAGE_USER_ID_KEY, null);
-    if (storedUserId) {
+    if (storedUserId === LOGIN_USER) {
         setCurrentUserId(storedUserId);
+        setIsAuthenticated(true);
     } else {
-        const newUserId = `user_${Math.random().toString(36).substring(2, 11)}`;
-        setLocalStorageItem(LOCAL_STORAGE_USER_ID_KEY, newUserId);
-        setCurrentUserId(newUserId);
-        if (isMountedRef.current) {
-          requestAnimationFrame(() => {
-             if (isMountedRef.current) {
-                toast({title: "ID de Usuario", description: `ID de usuario generado: ${newUserId}. Puedes cambiarlo en la barra lateral.`});
-             }
-          });
+        setCurrentUserId(null);
+        setIsAuthenticated(false);
+        if (typeof window !== 'undefined') {
+            localStorage.removeItem(LOCAL_STORAGE_USER_ID_KEY);
         }
     }
     requestAnimationFrame(() => {
@@ -823,7 +827,7 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
                 if (isMountedRef.current) {
                     toast({
                         title: "Producto eliminado",
-                        description: `"${descriptionForToast}" se eliminó de la lista actual.`,
+                        description: `"${descriptionForToast}" (${barcodeForToast}) se eliminó de la lista actual.`, // Added barcode for clarity
                         variant: "default"
                     });
                 }
@@ -1507,8 +1511,74 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
     isTransitionPending: isTransitionPending,
   };
 
+  const handleLogin = () => {
+    if (loginUsername === LOGIN_USER && loginPassword === LOGIN_PASSWORD) {
+        setCurrentUserId(LOGIN_USER);
+        setIsAuthenticated(true);
+        if (isMountedRef.current) {
+            requestAnimationFrame(() => {
+                if (isMountedRef.current) {
+                    toast({ title: "Inicio de sesión exitoso", description: `Bienvenido, ${loginUsername}!` });
+                }
+            });
+        }
+        setLoginUsername("");
+        setLoginPassword("");
+    } else {
+        if (isMountedRef.current) {
+             requestAnimationFrame(() => {
+                if (isMountedRef.current) {
+                    toast({ variant: "destructive", title: "Error de inicio de sesión", description: "Usuario o contraseña incorrectos." });
+                }
+            });
+        }
+        setLoginPassword("");
+    }
+  };
+
 
   // --- Main Component Render ---
+  if (!isAuthenticated) {
+    return (
+        <div className="login-container">
+            <div className="login-form bg-card p-8 rounded-lg shadow-xl w-full max-w-sm">
+                <div className="flex flex-col items-center mb-6">
+                    <LockKeyhole className="h-12 w-12 text-primary mb-3" />
+                    <h2 className="text-2xl font-semibold text-center text-foreground">Iniciar Sesión</h2>
+                </div>
+                <div className="space-y-4">
+                    <div>
+                        <Label htmlFor="username">Usuario</Label>
+                        <Input
+                            id="username"
+                            type="text"
+                            placeholder="Nombre de usuario"
+                            value={loginUsername}
+                            onChange={(e) => setLoginUsername(e.target.value)}
+                            className="mt-1"
+                        />
+                    </div>
+                    <div>
+                        <Label htmlFor="password">Contraseña</Label>
+                        <Input
+                            id="password"
+                            type="password"
+                            placeholder="Contraseña"
+                            value={loginPassword}
+                            onChange={(e) => setLoginPassword(e.target.value)}
+                            className="mt-1"
+                            onKeyDown={(e) => e.key === 'Enter' && handleLogin()}
+                        />
+                    </div>
+                    <Button onClick={handleLogin} className="w-full bg-primary hover:bg-primary/90 text-primary-foreground">
+                        Ingresar
+                    </Button>
+                </div>
+            </div>
+        </div>
+    );
+  }
+
   return (
     <div className="flex flex-col md:flex-row h-screen bg-background text-foreground">
       {/* Mobile Header & Sheet */}
@@ -1820,5 +1890,3 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
     </div>
   );
 }
-
-

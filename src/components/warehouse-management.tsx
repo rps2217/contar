@@ -308,9 +308,9 @@ export const WarehouseManagement: React.FC<WarehouseManagementProps> = ({
           </DialogHeader>
           <div className="grid gap-4 py-4">
             <div className="grid grid-cols-4 items-center gap-4">
-              <label htmlFor="name" className="text-right font-medium text-gray-700 dark:text-gray-300">
+              <Label htmlFor="name" className="text-right font-medium text-gray-700 dark:text-gray-300">
                 Nombre
-              </label>
+              </Label>
               <Input
                 id="name"
                 value={editWarehouseName}

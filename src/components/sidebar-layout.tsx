@@ -22,9 +22,6 @@ interface SidebarLayoutProps {
   activeSection: string;
   sectionItems: SectionItem[];
   currentUserId: string | null; // Can be null if not logged in
-  setCurrentUserId: (id: string) => void; // Keep for direct ID change if needed, though login is primary
-  showUserIdInput: boolean;
-  setShowUserIdInput: (show: boolean) => void;
   warehouses: Warehouse[];
   currentWarehouseId: string;
   handleWarehouseChange: (id: string) => void;
@@ -40,9 +37,6 @@ export const SidebarLayout: React.FC<SidebarLayoutProps> = ({
   activeSection,
   sectionItems,
   currentUserId,
-  // setCurrentUserId, // Not directly used in UI anymore, managed by login/logout
-  // showUserIdInput,   // Not directly used in UI anymore
-  // setShowUserIdInput,// Not directly used in UI anymore
   warehouses,
   currentWarehouseId,
   handleWarehouseChange,
@@ -105,7 +99,7 @@ export const SidebarLayout: React.FC<SidebarLayoutProps> = ({
              isMobileView ? "p-4" : "" 
             )}>
           <div className="space-y-2 mb-4 px-2">
-            <Label htmlFor="user-id-display" className="text-sm font-medium text-muted-foreground">
+            <Label htmlFor="user-id-display-sidebar" className="text-sm font-medium text-muted-foreground">
               Usuario:
             </Label>
             <div className="flex items-center gap-2">

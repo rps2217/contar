@@ -1,5 +1,5 @@
 // src/components/modify-value-dialog.tsx
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, useId } from 'react';
 import { Button } from "@/components/ui/button";
 import {
     Dialog, DialogClose, DialogContent, DialogDescription, DialogFooter,
@@ -41,7 +41,7 @@ export const ModifyValueDialog: React.FC<ModifyValueDialogProps> = ({
   const [editingValue, setEditingValue] = useState<string>('');
   const valueInputRef = useRef<HTMLInputElement>(null);
   const { toast } = useToast();
-  const descriptionId = React.useId(); // For accessibility
+  const descriptionId = useId(); // For accessibility
 
   useEffect(() => {
     if (isOpen && isEditing) {
@@ -68,7 +68,7 @@ export const ModifyValueDialog: React.FC<ModifyValueDialogProps> = ({
   const titleText = type === 'stock' ? `Ajustar Stock (${product.description})` : `Ajustar Cantidad (${product.description})`;
   const descriptionText = type === 'stock' ?
     `Ajuste el stock del producto en este almacén (${warehouseName}). Este cambio se reflejará en la base de datos.` :
-    `Ajuste la cantidad contada manualmente en ${warehouseName}.`;
+    `Ajuste la cantidad contada manually en ${warehouseName}.`;
 
   const handleValueClick = () => {
     if (isProcessing) return; // Prevent editing if processing

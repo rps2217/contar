@@ -17,7 +17,7 @@ import {
     Filter, Play, Loader2, Save, Trash, Upload, Warehouse as WarehouseIcon, CalendarIcon, PackageSearch, Edit
 } from "lucide-react";
 import Papa from 'papaparse';
-import * as React from "react";
+import * as React from "react"; // Import React
 import { useCallback, useEffect, useState, useMemo, useRef } from "react"; 
 import { ConfirmationDialog } from "@/components/confirmation-dialog";
 import { EditProductDialog } from "@/components/edit-product-dialog";
@@ -34,9 +34,9 @@ import {
 } from "@/components/ui/table";
 import { format, parse, isValid, parseISO } from 'date-fns';
 import { es } from 'date-fns/locale';
+import { GOOGLE_SHEET_URL_LOCALSTORAGE_KEY } from '@/lib/constants';
 
 
-const GOOGLE_SHEET_URL_LOCALSTORAGE_KEY = 'stockCounterPro_googleSheetUrl';
 const CHUNK_SIZE = 200;
 const SEARCH_DEBOUNCE_MS = 300;
 

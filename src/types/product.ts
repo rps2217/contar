@@ -1,4 +1,6 @@
 // src/types/product.ts
+import type { Timestamp } from 'firebase/firestore';
+
 
 /**
  * Represents the core details of a product, independent of warehouse or stock count.
@@ -25,13 +27,14 @@ export interface InventoryItem {
   lastUpdated?: string; // Optional: ISO 8601 timestamp of the last update for this item in this warehouse
   // Potential future fields:
   // location?: string; // Specific location within the warehouse (e.g., "Aisle 3, Shelf 2")
+  firestoreLastUpdated?: Timestamp; // For Firestore server-side ordering
 }
 
 /**
  * Combined type often useful for display purposes, especially in the counting list.
  * It merges product details with the inventory specifics for the current context (warehouse).
  */
-export interface DisplayProduct extends ProductDetail, Omit<InventoryItem, 'barcode' | 'warehouseId' | 'stock'> {
+export interface DisplayProduct extends ProductDetail, Omit<InventoryItem, 'barcode' | 'warehouseId' | 'stock' | 'firestoreLastUpdated'> {
     warehouseId: string; // Keep warehouseId for context
     // stock and count are inherited from InventoryItem via Omit and included in ProductDetail potentially
     // expirationDate is inherited from ProductDetail
@@ -47,6 +50,7 @@ export interface CountingHistoryEntry {
   warehouseId: string;
   warehouseName: string; // Store the name for easier display
   products: DisplayProduct[]; // A snapshot of the counting list at the time of saving
+  firestoreTimestamp?: Timestamp; // For Firestore server-side ordering
 }
 
 

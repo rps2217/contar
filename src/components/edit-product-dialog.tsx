@@ -18,7 +18,7 @@ import { Input } from "@/components/ui/input";
 import { Calendar } from "@/components/ui/calendar";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { CalendarIcon, Loader2, Save, Trash } from "lucide-react";
-import React, { useEffect } from "react";
+import React, { useEffect, useId } from "react";
 import { useForm } from "react-hook-form";
 import * as z from "zod";
 import { format, parseISO, isValid } from 'date-fns';
@@ -71,6 +71,7 @@ export const EditProductDialog: React.FC<EditProductDialogProps> = ({
   warehouseName = 'Almacén Principal',
 }) => {
   const { toast } = useToast();
+  const descriptionId = useId(); // For aria-describedby
 
   const form = useForm<EditProductValues>({
     resolver: zodResolver(editProductSchema),
@@ -122,7 +123,7 @@ export const EditProductDialog: React.FC<EditProductDialogProps> = ({
   const isAddingNew = !selectedDetail?.barcode;
   const dialogTitle = isAddingNew ? "Agregar Nuevo Producto" : 
     (context === 'expiration' ? `Editar Vencimiento (${selectedDetail?.description})` : `Editar Producto (${warehouseName})`);
-  const dialogDescription = isAddingNew ?
+  const dialogDescriptionText = isAddingNew ?
       "Completa la información para agregar un nuevo producto, su stock inicial y fecha de vencimiento." :
       (context === 'expiration' ? "Modifica la fecha de vencimiento del producto." :
       `Modifica los detalles del producto, el stock para el almacén "${warehouseName}" y su fecha de vencimiento.`);
@@ -132,11 +133,11 @@ export const EditProductDialog: React.FC<EditProductDialogProps> = ({
 
   return (
     <Dialog open={isOpen} onOpenChange={(open) => { if (!open) handleClose(); else setIsOpen(true); }}>
-      <DialogContent className="sm:max-w-md" aria-describedby={isAddingNew ? "add-product-dialog-description" : "edit-product-dialog-description"}>
+      <DialogContent className="sm:max-w-md" aria-describedby={descriptionId}>
         <DialogHeader>
           <DialogTitle>{dialogTitle}</DialogTitle>
-          <DialogDescription id={isAddingNew ? "add-product-dialog-description" : "edit-product-dialog-description"}>
-            {dialogDescription}
+          <DialogDescription id={descriptionId}>
+            {dialogDescriptionText}
           </DialogDescription>
         </DialogHeader>
         <Form {...form}>

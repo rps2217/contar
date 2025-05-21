@@ -1,10 +1,13 @@
+
 // src/lib/firebase.ts
 import { initializeApp, getApps, getApp, type FirebaseApp } from 'firebase/app';
 import { getFirestore, type Firestore } from 'firebase/firestore';
+// Firebase Auth import no es necesario para el login simple actual
+// import { getAuth, type Auth } from 'firebase/auth';
 
-// Your web app's Firebase configuration
-// IMPORTANT: These values MUST be replaced by your actual Firebase project credentials,
-// ideally through environment variables.
+// Tu configuración de Firebase para la aplicación web
+// IMPORTANTE: Estos valores DEBEN ser reemplazados por tus credenciales reales del proyecto Firebase,
+// idealmente a través de variables de entorno.
 const firebaseConfig = {
   apiKey: process.env.NEXT_PUBLIC_FIREBASE_API_KEY || "YOUR_API_KEY",
   authDomain: process.env.NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN || "YOUR_AUTH_DOMAIN",
@@ -14,40 +17,53 @@ const firebaseConfig = {
   appId: process.env.NEXT_PUBLIC_FIREBASE_APP_ID || "YOUR_APP_ID",
 };
 
-let app: FirebaseApp | null = null; // Initialize as null
-let db: Firestore | null = null; // Initialize as null
+let app: FirebaseApp | null = null;
+let db: Firestore | null = null;
+// let auth: Auth | null = null; // Instancia de Auth no necesaria para el login simple
 
-// Check if the critical projectId is still a placeholder or missing
-const isPlaceholderConfig = !firebaseConfig.projectId || firebaseConfig.projectId === "YOUR_PROJECT_ID";
+// Verifica si el projectId crítico (y apiKey) todavía son placeholders o están ausentes
+const isPlaceholderConfig =
+  !firebaseConfig.projectId ||
+  firebaseConfig.projectId === "YOUR_PROJECT_ID" ||
+  !firebaseConfig.apiKey ||
+  firebaseConfig.apiKey === "YOUR_API_KEY";
 
 if (isPlaceholderConfig) {
-  console.error(
-    "CRITICAL_FIREBASE_SETUP_ERROR: Firebase configuration is using placeholder values or is incomplete. " +
-    "Firestore will NOT be initialized. " +
+  // Cambiado de console.error a console.warn
+  console.warn(
+    "CRITICAL_FIREBASE_SETUP_WARNING: Firebase configuration is using placeholder values or is incomplete. " +
+    "Firestore (and other Firebase services) will NOT be initialized correctly. " +
     "Please ensure all NEXT_PUBLIC_FIREBASE_... environment variables are correctly set in your hosting environment (e.g., Netlify) and/or your .env.local file."
   );
+  // app, db (y auth si se usara) permanecerán como null si se entra en este bloque
 } else {
-  if (!getApps().length) {
-    try {
-      app = initializeApp(firebaseConfig);
-      db = getFirestore(app);
-      console.log("Firebase initialized successfully with Firestore.");
-    } catch (error) {
-      console.error("Error initializing Firebase:", error);
-      // app and db remain null if initialization fails
-    }
-  } else {
-    app = getApp();
-    try {
-      db = getFirestore(app); // Get Firestore instance from existing app
-      // console.log("Using existing Firebase app instance for Firestore.");
-    } catch (error) {
-      console.error("Error getting Firestore from existing Firebase app:", error);
-      // db remains null if getting Firestore fails
+  // Asegura que Firebase se inicialice solo en el lado del cliente
+  if (typeof window !== 'undefined') {
+    if (!getApps().length) {
+      try {
+        app = initializeApp(firebaseConfig);
+        db = getFirestore(app);
+        // auth = getAuth(app); // No necesario para el login simple
+        console.log("Firebase initialized successfully with Firestore.");
+      } catch (error) {
+        console.error("Error initializing Firebase:", error);
+        // app, db, auth permanecen null si la inicialización falla
+      }
+    } else {
+      app = getApp();
+      try {
+        db = getFirestore(app); // Obtener instancia de Firestore de la app existente
+        // auth = getAuth(app); // No necesario para el login simple
+        // console.log("Using existing Firebase app instance for Firestore.");
+      } catch (error) {
+        console.error("Error getting Firestore from existing Firebase app:", error);
+        // db permanece null si falla la obtención de Firestore
+      }
     }
   }
 }
 
-// Export app and db. They will be null if initialization failed or used placeholders.
-// Code using 'db' (e.g., in firestore-service.ts) MUST check if 'db' is null before using it.
+// Exporta app y db. Serán null si la inicialización falló o se usaron placeholders.
+// El código que usa 'db' (ej. en firestore-service.ts) DEBE verificar si 'db' es null antes de usarlo.
 export { app, db };
+// export { app, db, auth }; // Exportar auth si/cuando se reimplemente Firebase Auth completo

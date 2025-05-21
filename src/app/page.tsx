@@ -141,7 +141,7 @@ export default function Home() {
                     barcodeInputRef.current.focus();
                 }
             }
-        }, 100);
+        }, 100); // Adjusted to 100ms
     }
   }, [activeSection]);
 
@@ -264,7 +264,7 @@ export default function Home() {
         return true; // Still return true to indicate discrepancy for other logic
     }
     return false;
-  }, [toast, activeSection]); // Added activeSection
+  }, [toast, activeSection]);
 
 
   // --- Callbacks ---
@@ -355,7 +355,6 @@ export default function Home() {
                 });
              }
             playBeep(880, 100);
-            // showDiscrepancyToastIfNeeded is now conditional on activeSection
             showDiscrepancyToastIfNeeded(updatedProductData, newCount);
         }
     } else {
@@ -501,8 +500,8 @@ const modifyProductValue = useCallback(async (barcodeToUpdate: string, type: 'co
                             requestAnimationFrame(() => {
                                if (isMountedRef.current) {
                                     toast({
-                                         title: `Stock (DB) Actualizado`,
-                                         description: `Stock de ${productDescription} actualizado a ${finalValue} en la base de datos.`
+                                         title: `Stock Actualizado`,
+                                         description: `Stock de ${productDescription} actualizado a ${finalValue}.`
                                      });
                                 }
                             });
@@ -522,8 +521,8 @@ const modifyProductValue = useCallback(async (barcodeToUpdate: string, type: 'co
                                     requestAnimationFrame(() => {
                                        if (isMountedRef.current) {
                                             toast({
-                                                 title: `Stock (DB) Establecido`,
-                                                 description: `Stock de ${newDbProduct.description} establecido a ${newDbProduct.stock} en la base de datos.`
+                                                 title: `Stock Establecido`,
+                                                 description: `Stock de ${newDbProduct.description} establecido a ${newDbProduct.stock}.`
                                              });
                                         }
                                     });
@@ -587,6 +586,18 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
     const productInList = countingList[productIndexInList];
     productDescription = productInList.description;
     const originalValue = type === 'count' ? productInList.count ?? 0 : productInList.stock ?? 0;
+    
+    // Optimization: If setting count (not summing) and new value is same as original, do nothing.
+    if (type === 'count' && !sumValue && newValue === originalValue) {
+        if(isMountedRef.current) setOpenModifyDialog(null);
+        requestAnimationFrame(() => {
+            if (isMountedRef.current) {
+                focusBarcodeIfCounting();
+            }
+        });
+        return;
+    }
+
     let calculatedValue = sumValue ? (originalValue + newValue) : newValue;
     finalValue = Math.max(0, calculatedValue);
     productForToast = { ...productInList, [type]: finalValue, lastUpdated: new Date().toISOString() };
@@ -636,8 +647,8 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
                             requestAnimationFrame(() => {
                                 if (isMountedRef.current) {
                                     toast({
-                                      title: `Stock (DB) Actualizado`,
-                                      description: `Stock de ${productDescription} actualizado a ${finalValue} en la base de datos.`
+                                      title: `Stock Actualizado`,
+                                      description: `Stock de ${productDescription} actualizado a ${finalValue}.`
                                     });
                                 }
                             });
@@ -657,8 +668,8 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
                                     requestAnimationFrame(() => {
                                        if (isMountedRef.current) {
                                             toast({
-                                                title: `Stock (DB) Establecido`,
-                                                description: `Stock de ${newDbProduct.description} establecido a ${newDbProduct.stock} en la base de datos.`
+                                                title: `Stock Establecido`,
+                                                description: `Stock de ${newDbProduct.description} establecido a ${newDbProduct.stock}.`
                                             });
                                         }
                                     });
@@ -812,7 +823,7 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
                 if (isMountedRef.current) {
                     toast({
                         title: "Producto eliminado",
-                        description: `"${descriptionForToast}" (${barcodeForToast}) se eliminó de la lista actual.`,
+                        description: `"${descriptionForToast}" se eliminó de la lista actual.`,
                         variant: "default"
                     });
                 }

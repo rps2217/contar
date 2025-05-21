@@ -41,6 +41,7 @@ export const ModifyValueDialog: React.FC<ModifyValueDialogProps> = ({
   const [editingValue, setEditingValue] = useState<string>('');
   const valueInputRef = useRef<HTMLInputElement>(null);
   const { toast } = useToast();
+  const descriptionId = React.useId(); // For accessibility
 
   useEffect(() => {
     if (isOpen && isEditing) {
@@ -121,7 +122,10 @@ export const ModifyValueDialog: React.FC<ModifyValueDialogProps> = ({
 
   return (
     <Dialog open={isOpen} onOpenChange={(openState) => { if (!openState) handleDialogClose(); else setIsOpen(true); }}>
-      <DialogContent className="sm:max-w-[425px] bg-white dark:bg-gray-900 text-black dark:text-white border-teal-500 rounded-lg shadow-xl p-6">
+      <DialogContent 
+        className="sm:max-w-[425px] bg-white dark:bg-gray-900 text-black dark:text-white border-teal-500 rounded-lg shadow-xl p-6"
+        aria-describedby={descriptionId} // Added for accessibility
+      >
         <DialogHeader>
           <DialogTitle className="text-center text-xl font-semibold text-gray-800 dark:text-gray-200">
             <span className="flex items-center justify-center gap-2">
@@ -130,7 +134,7 @@ export const ModifyValueDialog: React.FC<ModifyValueDialogProps> = ({
             </span>
             {titleText}
           </DialogTitle>
-          <DialogDescription className="text-center text-gray-600 dark:text-gray-400 mt-1">
+          <DialogDescription id={descriptionId} className="text-center text-gray-600 dark:text-gray-400 mt-1">
             {descriptionText}
           </DialogDescription>
         </DialogHeader>

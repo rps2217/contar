@@ -1,7 +1,7 @@
 // src/lib/firebase.ts
-import { initializeApp, getApps, getApp } from 'firebase/app';
-import { getFirestore } from 'firebase/firestore';
-// import { getAnalytics } from "firebase/analytics"; // Optional: If you want analytics
+import { initializeApp, getApps, getApp, type FirebaseApp } from 'firebase/app';
+import { getFirestore, type Firestore } from 'firebase/firestore';
+// import { getAuth, type Auth } from 'firebase/auth'; // Commented out if not using Firebase Auth
 
 // Your web app's Firebase configuration
 // IMPORTANT: Replace with your actual Firebase config values
@@ -17,12 +17,34 @@ const firebaseConfig = {
 };
 
 // Initialize Firebase only if it hasn't been initialized yet
-const app = !getApps().length ? initializeApp(firebaseConfig) : getApp();
+let app: FirebaseApp;
+let db: Firestore;
+// let auth: Auth; // Commented out if not using Firebase Auth
 
-// Initialize Cloud Firestore and get a reference to the service
-const db = getFirestore(app);
+if (!getApps().length) {
+  app = initializeApp(firebaseConfig);
+  if (firebaseConfig.projectId !== "YOUR_PROJECT_ID" && firebaseConfig.apiKey !== "YOUR_API_KEY") {
+    db = getFirestore(app);
+    // auth = getAuth(app); // Commented out if not using Firebase Auth
+    console.log("Firebase initialized with Firestore.");
+  } else {
+    console.warn("Firebase configuration is using placeholder values. Firestore (and Auth) will not be initialized.");
+    // @ts-ignore - Assign a dummy object to db and auth if not initialized
+    db = {} as Firestore;
+    // auth = {} as Auth; // Commented out
+  }
+} else {
+  app = getApp();
+  if (firebaseConfig.projectId !== "YOUR_PROJECT_ID" && firebaseConfig.apiKey !== "YOUR_API_KEY") {
+    db = getFirestore(app);
+    // auth = getAuth(app); // Commented out
+  } else {
+     console.warn("Firebase configuration is using placeholder values. Firestore (and Auth) will not be initialized.");
+    // @ts-ignore
+    db = {} as Firestore;
+    // auth = {} as Auth; // Commented out
+  }
+}
 
-// Optional: Initialize Analytics
-// const analytics = typeof window !== 'undefined' ? getAnalytics(app) : null;
 
-export { app, db };
+export { app, db }; // Export 'auth' only if you re-enable it

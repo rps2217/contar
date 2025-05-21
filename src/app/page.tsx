@@ -1479,6 +1479,14 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
     handleWarehouseChange,
     getWarehouseName,
     isDbLoading,
+    onSignOut: () => { // Add this signOut handler
+      setIsAuthenticated(false);
+      setCurrentUserId(null);
+      if (typeof window !== 'undefined') {
+          localStorage.removeItem(LOCAL_STORAGE_USER_ID_KEY);
+      }
+      toast({title: "Sesión cerrada"});
+    }
   };
 
   const counterSectionProps = {

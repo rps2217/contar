@@ -132,10 +132,10 @@ export const EditProductDialog: React.FC<EditProductDialogProps> = ({
 
   return (
     <Dialog open={isOpen} onOpenChange={(open) => { if (!open) handleClose(); else setIsOpen(true); }}>
-      <DialogContent className="sm:max-w-md">
+      <DialogContent className="sm:max-w-md" aria-describedby={isAddingNew ? "add-product-dialog-description" : "edit-product-dialog-description"}>
         <DialogHeader>
           <DialogTitle>{dialogTitle}</DialogTitle>
-          <DialogDescription>
+          <DialogDescription id={isAddingNew ? "add-product-dialog-description" : "edit-product-dialog-description"}>
             {dialogDescription}
           </DialogDescription>
         </DialogHeader>

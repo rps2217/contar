@@ -116,8 +116,6 @@ export const WarehouseManagement: React.FC<WarehouseManagementProps> = ({
       onUpdateWarehouses(updatedWarehouses);
       toast({
         title: "Almacén eliminado",
-        description: `${warehouseToDelete.name} ha sido eliminado.`,
-        variant: "default"
       });
        // TODO: Consider deleting associated inventory items from IndexedDB here as well
        // This would require importing the delete functions and calling them
@@ -154,8 +152,6 @@ export const WarehouseManagement: React.FC<WarehouseManagementProps> = ({
     onUpdateWarehouses(updatedWarehouses);
     toast({
       title: "Almacén actualizado",
-      description: `${warehouseToEdit.name} ha sido actualizado a ${editWarehouseName.trim()}.`,
-      variant: "default"
     });
     setIsEditDialogOpen(false);
     setWarehouseToEdit(null);

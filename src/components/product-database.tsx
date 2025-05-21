@@ -4,8 +4,8 @@
 
 import type { ProductDetail } from '@/types/product';
 import { useToast } from "@/hooks/use-toast";
-import { cn, getLocalStorageItem, setLocalStorageItem, debounce } from "@/lib/utils";
-import { useLocalStorage } from '@/hooks/use-local-storage';
+import { cn, getLocalStorageItem, setLocalStorageItem, debounce } from "@/lib/utils"; // Import getLocalStorageItem and setLocalStorageItem
+import { useLocalStorage } from '@/hooks/use-local-storage'; // Import useLocalStorage
 import {
   addOrUpdateProductToDB,
   getAllProductsFromDB,
@@ -18,7 +18,7 @@ import {
 } from "lucide-react";
 import Papa from 'papaparse';
 import * as React from "react";
-import { useCallback, useEffect, useState, useMemo, useRef } from "react"; // Added useRef
+import { useCallback, useEffect, useState, useMemo, useRef } from "react"; 
 import { ConfirmationDialog } from "@/components/confirmation-dialog";
 import { EditProductDialog } from "@/components/edit-product-dialog";
 import { Button } from "@/components/ui/button";
@@ -39,7 +39,6 @@ import { es } from 'date-fns/locale';
 const GOOGLE_SHEET_URL_LOCALSTORAGE_KEY = 'stockCounterPro_googleSheetUrl';
 const CHUNK_SIZE = 200;
 const SEARCH_DEBOUNCE_MS = 300;
-const MAX_CSV_ROWS_TO_LOAD = 4000; // Define a maximum number of rows to load
 
 
 const extractSpreadsheetId = (input: string): string | null => {
@@ -49,6 +48,7 @@ const extractSpreadsheetId = (input: string): string | null => {
   if (match && match[1]) {
     return match[1];
   }
+  // Allow raw ID if it looks like one
   if (!input.includes('/') && input.length > 30 && input.length < 50 && /^[a-zA-Z0-9-_]+$/.test(input)) {
     return input;
   }
@@ -58,7 +58,7 @@ const extractSpreadsheetId = (input: string): string | null => {
 const parseGoogleSheetUrl = (sheetUrlOrId: string): { spreadsheetId: string | null; gid: string } => {
     const spreadsheetId = extractSpreadsheetId(sheetUrlOrId);
     const gidMatch = sheetUrlOrId.match(/[#&]gid=([0-9]+)/);
-    const gid = gidMatch ? gidMatch[1] : '0';
+    const gid = gidMatch ? gidMatch[1] : '0'; // Default to first sheet if GID not present
 
     if (!spreadsheetId) {
          console.warn("Could not extract spreadsheet ID from input:", sheetUrlOrId);
@@ -107,6 +107,7 @@ async function fetchGoogleSheetData(sheetUrlOrId: string): Promise<ProductDetail
             reject(new Error("PapaParse (Papa) is not defined. Ensure it's correctly imported or loaded."));
             return;
         }
+
         Papa.parse<string[]>(csvText, {
             skipEmptyLines: true,
             complete: (results) => {
@@ -115,31 +116,57 @@ async function fetchGoogleSheetData(sheetUrlOrId: string): Promise<ProductDetail
                 }
                 const csvData = results.data;
                 const products: ProductDetail[] = [];
-                if (csvData.length <= 1) {
+                if (csvData.length <= 1) { // Ensure there's more than just a header row
                     resolve(products);
                     return;
                 }
 
-                // Col 1 (index 0): Barcode
-                // Col 2 (index 1): Description
-                // Col 6 (index 5): Stock
-                // Col 10 (index 9): Provider
+                // Assume first row is header
+                const headers = csvData[0].map(h => h.toLowerCase().trim());
+                
+                // Define required headers and their possible names (English/Spanish, common variations)
+                const headerMapping: Record<keyof Omit<ProductDetail, 'expirationDate'>, string[]> = {
+                    barcode: ["codigo", "código", "codigo de barras", "código de barras", "barcode"],
+                    description: ["producto", "descripción", "descripcion", "description"],
+                    provider: ["laboratorio", "proveedor", "provider"],
+                    stock: ["stock final", "stockactual", "stock actual", "stock", "cantidad"]
+                };
 
-                for (let i = 1; i < csvData.length; i++) {
+                // Find the index for each required header
+                const headerIndices: Partial<Record<keyof Omit<ProductDetail, 'expirationDate'>, number>> = {};
+
+                for (const key in headerMapping) {
+                    const possibleNames = headerMapping[key as keyof Omit<ProductDetail, 'expirationDate'>];
+                    const index = headers.findIndex(h => possibleNames.includes(h));
+                    if (index !== -1) {
+                        headerIndices[key as keyof Omit<ProductDetail, 'expirationDate'>] = index;
+                    } else {
+                        // Allowing 'provider' and 'stock' to be optional for more flexibility
+                        if (key !== 'provider' && key !== 'stock') {
+                            console.error(`Required header for "${key}" (e.g., ${possibleNames.join('/')}) not found in CSV headers: [${headers.join(', ')}]. Check Google Sheet headers.`);
+                            reject(new Error(`Encabezado requerido para "${key}" (ej. ${possibleNames.join('/')}) no encontrado en el CSV. Verifique los encabezados de la Hoja de Google.`));
+                            return;
+                        }
+                         console.warn(`Optional header for "${key}" (e.g., ${possibleNames.join('/')}) not found. It will be set to default.`);
+                    }
+                }
+
+
+                for (let i = 1; i < csvData.length; i++) { // Start from second row (data)
                     const values = csvData[i];
                     if (!values || values.length === 0) continue;
 
-                    const barcode = values[0]?.trim();
+                    const barcode = headerIndices.barcode !== undefined ? values[headerIndices.barcode]?.trim() : undefined;
                     if (!barcode) {
-                        console.warn(`Fila ${i + 1} omitida: Código de barras vacío o faltante.`);
+                        console.warn(`Fila ${i + 1} omitida: Código de barras vacío o faltante según el encabezado mapeado.`);
                         continue;
                     }
 
-                    const description = values[1]?.trim() || `Producto ${barcode}`;
-
+                    const description = headerIndices.description !== undefined ? values[headerIndices.description]?.trim() : `Producto ${barcode}`;
+                    
                     let stock = 0;
-                    if (values.length > 5 && values[5]) {
-                        const stockStr = values[5].trim();
+                    if (headerIndices.stock !== undefined && values[headerIndices.stock]) {
+                        const stockStr = values[headerIndices.stock].trim();
                         const parsedStock = parseInt(stockStr, 10);
                         if (!isNaN(parsedStock) && parsedStock >= 0) {
                             stock = parsedStock;
@@ -147,11 +174,12 @@ async function fetchGoogleSheetData(sheetUrlOrId: string): Promise<ProductDetail
                              console.warn(`Valor de stock inválido "${stockStr}" para código ${barcode} en fila ${i + 1}. Usando 0.`);
                         }
                     } else {
-                        console.warn(`Columna de stock (columna 6) no encontrada o vacía para el código ${barcode} en la fila ${i + 1}. Usando stock 0.`);
+                        console.warn(`Columna de stock no encontrada o vacía para el código ${barcode} en la fila ${i + 1}. Usando stock 0.`);
                     }
-
-                    const provider = (values.length > 9 && values[9]?.trim()) ? values[9].trim() : "Desconocido";
-
+                    
+                    const provider = headerIndices.provider !== undefined ? (values[headerIndices.provider]?.trim() || "Desconocido") : "Desconocido";
+                    
+                    // Expiration date is not directly mapped from these columns for now, can be added if needed
                     let expirationDate: string | undefined = undefined;
 
                     products.push({ barcode, description, provider, stock, expirationDate });
@@ -182,7 +210,7 @@ const ProductDatabaseComponent: React.FC<ProductDatabaseProps> = ({ onStartCount
   const [alertAction, setAlertAction] = useState<'deleteProduct' | 'clearDatabase' | null>(null);
   const [productToDelete, setProductToDelete] = useState<ProductDetail | null>(null);
   const [uploadProgress, setUploadProgress] = useState(0);
-  const [isProcessing, setIsProcessing] = useState(false);
+  const [isProcessing, setIsProcessing] = useState(false); 
   const [processingStatus, setProcessingStatus] = useState<string>("");
   const [googleSheetUrlOrId, setGoogleSheetUrlOrId] = useLocalStorage<string>(
       GOOGLE_SHEET_URL_LOCALSTORAGE_KEY,

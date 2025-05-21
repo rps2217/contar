@@ -36,9 +36,9 @@ import {
   getProductFromDB,
   getAllProductsFromDB,
   deleteProductFromDB,
-  saveCountingHistory,
+  saveCountingHistory as saveHistoryToDB, // Renamed to avoid conflict
   clearAllDatabases,
-  getCountingHistory,
+  getCountingHistory as getHistoryFromDB, // Renamed to avoid conflict
   clearCountingHistory as clearFullCountingHistory,
 } from '@/lib/database';
 import { CountingHistoryViewer } from '@/components/counting-history-viewer';
@@ -106,7 +106,7 @@ export default function Home() {
     false
   );
   const [currentUserId, setCurrentUserId] = useState<string | null>(null);
-  const [showUserIdInput, setShowUserIdInput] = useState(false);
+  // const [showUserIdInput, setShowUserIdInput] = useState(false); // Not directly used for login logic now
 
 
   // --- Component State ---
@@ -121,7 +121,7 @@ export default function Home() {
   const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false);
   const [isDeleteListDialogOpen, setIsDeleteListDialogOpen] = useState(false);
   const [productToDelete, setProductToDelete] = useState<DisplayProduct | null>(null);
-  const [isDbLoading, setIsDbLoading] = useState(true);
+  const [isDbLoading, setIsDbLoading] = useState(true); // Used for initial list load and other async ops
   const [isRefreshingStock, setIsRefreshingStock] = useState(false);
   const [isSavingToHistory, setIsSavingToHistory] = useState(false);
   const [lastScannedBarcode, setLastScannedBarcode] = useState<string | null>(null);
@@ -149,7 +149,7 @@ export default function Home() {
                     barcodeInputRef.current.focus();
                 }
             }
-        }, 100); // Adjusted to 100ms
+        }, 100);
     }
   }, [activeSection]);
 
@@ -158,13 +158,13 @@ export default function Home() {
  useEffect(() => {
     isMountedRef.current = true;
     const storedUserId = getLocalStorageItem<string | null>(LOCAL_STORAGE_USER_ID_KEY, null);
-    if (storedUserId === LOGIN_USER) {
+    if (storedUserId === LOGIN_USER) { // Check against the fixed login user
         setCurrentUserId(storedUserId);
         setIsAuthenticated(true);
     } else {
         setCurrentUserId(null);
         setIsAuthenticated(false);
-        if (typeof window !== 'undefined') {
+        if (typeof window !== 'undefined') { // Ensure localStorage access is client-side
             localStorage.removeItem(LOCAL_STORAGE_USER_ID_KEY);
         }
     }
@@ -181,19 +181,20 @@ export default function Home() {
       }
     };
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [focusBarcodeIfCounting]);
+  }, [focusBarcodeIfCounting]); // Added focusBarcodeIfCounting to deps as it's used here
 
   useEffect(() => {
-      if (isMountedRef.current && currentUserId !== null) {
+      if (isMountedRef.current && currentUserId !== null) { // Only save if a user is actually set
           setLocalStorageItem(LOCAL_STORAGE_USER_ID_KEY, currentUserId);
       }
   }, [currentUserId]);
 
 
-  useEffect(() => {
-    if (!currentWarehouseId || !isMountedRef.current) {
+ // Load countingList from localStorage
+ useEffect(() => {
+    if (!currentWarehouseId || !isMountedRef.current || !currentUserId) {
         if(isMountedRef.current) setIsDbLoading(false);
-        if(isMountedRef.current) setCountingList([]);
+        if(isMountedRef.current) setCountingList([]); // Clear list if no warehouse/user
         return;
     }
     if(isMountedRef.current) setIsDbLoading(true);
@@ -207,13 +208,13 @@ export default function Home() {
                 stock: item.stock ?? 0,
                 count: item.count ?? 0,
                 lastUpdated: item.lastUpdated || new Date().toISOString(),
-                warehouseId: item.warehouseId || currentWarehouseId,
+                warehouseId: item.warehouseId || currentWarehouseId, 
                 expirationDate: item.expirationDate || undefined,
             }));
         if(isMountedRef.current) setCountingList(loadedList.filter(item => item.warehouseId === currentWarehouseId));
     } else {
         if (savedList === null || (Array.isArray(savedList) && savedList.length > 0)) {
-             // console.warn(`Invalid data structure in localStorage for warehouse ${currentWarehouseId}. Clearing.`);
+            // console.warn(`Invalid data structure in localStorage for ${savedListKey}. Clearing.`);
         }
         if(typeof window !== 'undefined') localStorage.removeItem(savedListKey);
         if(isMountedRef.current) setCountingList([]);
@@ -221,6 +222,7 @@ export default function Home() {
     if(isMountedRef.current) setIsDbLoading(false);
  }, [currentWarehouseId, currentUserId]);
 
+ // Debounced function to save countingList to localStorage
  const debouncedSaveCountingList = useMemo(
     () =>
       debounce((list: DisplayProduct[], warehouseId: string, userId: string | null) => {
@@ -232,6 +234,7 @@ export default function Home() {
     []
   );
 
+  // Effect to save countingList when it changes
   useEffect(() => {
     if (!isDbLoading && isMountedRef.current && currentWarehouseId && currentUserId) {
       debouncedSaveCountingList(countingList, currentWarehouseId, currentUserId);
@@ -254,7 +257,7 @@ export default function Home() {
     const stockToCheck = product.stock ?? 0;
 
     if (stockToCheck > 0 && countToCheck !== stockToCheck) {
-        if (isMountedRef.current && activeSection !== 'Contador') { // Only show toast if not in Counter section
+        if (isMountedRef.current && activeSection !== 'Contador') { 
             requestAnimationFrame(() => {
                 if(isMountedRef.current) {
                     toast({
@@ -265,7 +268,7 @@ export default function Home() {
                 }
             });
         }
-        return true; // Still return true to indicate discrepancy for other logic
+        return true; 
     }
     return false;
   }, [toast, activeSection]);
@@ -591,7 +594,6 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
     productDescription = productInList.description;
     const originalValue = type === 'count' ? productInList.count ?? 0 : productInList.stock ?? 0;
     
-    // Optimization: If setting count (not summing) and new value is same as original, do nothing.
     if (type === 'count' && !sumValue && newValue === originalValue) {
         if(isMountedRef.current) setOpenModifyDialog(null);
         requestAnimationFrame(() => {
@@ -827,7 +829,7 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
                 if (isMountedRef.current) {
                     toast({
                         title: "Producto eliminado",
-                        description: `"${descriptionForToast}" (${barcodeForToast}) se eliminó de la lista actual.`, // Added barcode for clarity
+                        description: `"${descriptionForToast}" se eliminó de la lista actual.`,
                         variant: "default"
                     });
                 }
@@ -843,15 +845,21 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
             focusBarcodeIfCounting();
         }
     });
- }, [productToDelete, toast, getWarehouseName, focusBarcodeIfCounting, startTransition]);
+ }, [productToDelete, toast, focusBarcodeIfCounting, startTransition]);
 
  const handleClearCurrentList = useCallback(() => {
-     if (!isMountedRef.current || !currentWarehouseId) return;
+     if (!isMountedRef.current || !currentWarehouseId || !currentUserId) return;
      if(isMountedRef.current) {
         startTransition(() => {
             setCountingList(prevList => prevList.filter(p => p.warehouseId !== currentWarehouseId));
         });
      }
+
+     const savedListKey = `${LOCAL_STORAGE_COUNTING_LIST_KEY_PREFIX}${currentWarehouseId}_${currentUserId}`;
+     if (typeof window !== 'undefined') {
+        localStorage.removeItem(savedListKey);
+     }
+
      requestAnimationFrame(() => {
          if(isMountedRef.current) {
             requestAnimationFrame(() => {
@@ -871,7 +879,7 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
             focusBarcodeIfCounting();
         }
     });
- }, [currentWarehouseId, getWarehouseName, toast, focusBarcodeIfCounting, startTransition]);
+ }, [currentWarehouseId, getWarehouseName, toast, focusBarcodeIfCounting, startTransition, currentUserId]);
 
  const handleExport = useCallback(() => {
      const currentWarehouseList = countingList.filter(p => p.warehouseId === currentWarehouseId);
@@ -981,7 +989,7 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
             products: JSON.parse(JSON.stringify(currentListForWarehouse)) 
         };
 
-        await saveCountingHistory(historyEntry);
+        await saveHistoryToDB(historyEntry);
          if (!hideToast && isMountedRef.current) {
             requestAnimationFrame(() => {
                 if(isMountedRef.current) {
@@ -1417,9 +1425,13 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
     if(isMountedRef.current) setIsDbLoading(true);
     try {
       await clearAllDatabases();
-      warehouses.forEach(warehouse => {
-        if(typeof window !== 'undefined') localStorage.removeItem(`${LOCAL_STORAGE_COUNTING_LIST_KEY_PREFIX}${warehouse.id}_${currentUserId}`);
-      });
+      if (currentUserId) {
+        warehouses.forEach(warehouse => {
+          if(typeof window !== 'undefined') {
+            localStorage.removeItem(`${LOCAL_STORAGE_COUNTING_LIST_KEY_PREFIX}${warehouse.id}_${currentUserId}`);
+          }
+        });
+      }
       if(isMountedRef.current) {
         startTransition(() => {
             setCountingList([]);
@@ -1467,26 +1479,29 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
     { name: 'Informes', icon: BarChart, label: 'Informes' },
   ], [getWarehouseName, currentWarehouseId]);
 
+  const handleSignOut = () => {
+    setIsAuthenticated(false);
+    setCurrentUserId(null);
+    setCountingList([]); // Clear counting list on sign out
+    if (typeof window !== 'undefined') {
+        localStorage.removeItem(LOCAL_STORAGE_USER_ID_KEY);
+    }
+    toast({title: "Sesión cerrada"});
+  };
+
   const sidebarProps = {
     activeSection,
     sectionItems,
     currentUserId: currentUserId || "",
-    setCurrentUserId,
-    showUserIdInput,
-    setShowUserIdInput,
+    // setCurrentUserId, // Managed by login/logout
+    // showUserIdInput,  // Managed by login/logout
+    // setShowUserIdInput, // Managed by login/logout
     warehouses,
     currentWarehouseId,
     handleWarehouseChange,
     getWarehouseName,
     isDbLoading,
-    onSignOut: () => { // Add this signOut handler
-      setIsAuthenticated(false);
-      setCurrentUserId(null);
-      if (typeof window !== 'undefined') {
-          localStorage.removeItem(LOCAL_STORAGE_USER_ID_KEY);
-      }
-      toast({title: "Sesión cerrada"});
-    }
+    onSignOut: handleSignOut,
   };
 
   const counterSectionProps = {
@@ -1898,3 +1913,4 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
     </div>
   );
 }
+

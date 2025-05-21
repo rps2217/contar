@@ -46,10 +46,7 @@ export const CountingHistoryViewer: React.FC<CountingHistoryViewerProps> = ({ ge
     setIsLoading(true);
     setError(null);
     try {
-      // Pass currentUserId to getCountingHistory if you want to filter by user
-      // For now, it fetches all history, and we can show the userId.
-      // If strict filtering is needed, getCountingHistory needs to be adapted.
-      const history = await getCountingHistory(currentUserId); // Pass userId to potentially filter
+      const history = await getCountingHistory(currentUserId);
       setHistoryEntries(history);
     } catch (err: any) {
       console.error("Error loading counting history:", err);
@@ -62,7 +59,7 @@ export const CountingHistoryViewer: React.FC<CountingHistoryViewerProps> = ({ ge
     } finally {
       setIsLoading(false);
     }
-  }, [toast, currentUserId]); // Add currentUserId as dependency
+  }, [toast, currentUserId]);
 
   useEffect(() => {
     loadHistory();
@@ -71,10 +68,9 @@ export const CountingHistoryViewer: React.FC<CountingHistoryViewerProps> = ({ ge
   const handleClearHistory = async () => {
     setIsClearing(true);
     try {
-      await clearCountingHistory(); // This clears all history.
-      // If user-specific clearing is needed, clearCountingHistory would need adaptation.
+      await clearCountingHistory();
       setHistoryEntries([]);
-      toast({ title: "Historial Borrado", description: "Se ha borrado todo el historial de conteos." });
+      toast({ title: "Historial Borrado" });
     } catch (err: any) {
       console.error("Error clearing counting history:", err);
       toast({
@@ -103,7 +99,7 @@ export const CountingHistoryViewer: React.FC<CountingHistoryViewerProps> = ({ ge
         entry.products.forEach(product => {
           dataToExport.push({
             "ID Historial": entry.id,
-            "ID Usuario": entry.userId || 'N/A', // Include userId
+            "ID Usuario": entry.userId || 'N/A',
             "Fecha Historial": historyTimestamp,
             "Almacén": warehouseName,
             "Código Barras": product.barcode,
@@ -229,10 +225,11 @@ export const CountingHistoryViewer: React.FC<CountingHistoryViewerProps> = ({ ge
                         </TableRow>
                       </TableHeader>
                       <TableBody>
-                        {entry.products.map((product, index) => {
+                        {entry.products.map((product) => {
                            const difference = (product.count ?? 0) - (product.stock ?? 0);
+                           const productKey = `${entry.id}-${product.barcode}`; // Simplified key
                            return (
-                              <TableRow key={`${entry.id}-${product.barcode}-${index}`} className="text-sm hover:bg-muted/10 dark:hover:bg-gray-700/50 transition-colors">
+                              <TableRow key={productKey} className="text-sm hover:bg-muted/10 dark:hover:bg-gray-700/50 transition-colors">
                                 <TableCell className="px-4 py-2 font-mono text-gray-700 dark:text-gray-200">{product.barcode}</TableCell>
                                 <TableCell className="px-4 py-2 text-gray-800 dark:text-gray-100">{product.description}</TableCell>
                                 <TableCell className="px-4 py-2 text-gray-600 dark:text-gray-300">{product.provider || 'N/A'}</TableCell>
@@ -260,8 +257,7 @@ export const CountingHistoryViewer: React.FC<CountingHistoryViewerProps> = ({ ge
         </ScrollArea>
       )}
 
-       {/* Confirmation Dialog for Clearing History */}
-        <ConfirmationDialog
+       <ConfirmationDialog
             isOpen={isClearConfirmOpen}
             onOpenChange={setIsClearConfirmOpen}
             title="Confirmar Borrado del Historial"

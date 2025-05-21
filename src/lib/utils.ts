@@ -45,8 +45,12 @@ export const getLocalStorageItem = <T>(key: string, defaultValue: T): T => {
     console.error(`Error parsing JSON for localStorage key “${key}”:`, parseError);
     // Log the problematic data (first 100 chars) for debugging
     console.warn(`Invalid JSON data found for key "${key}", returning default value. Data was:`, item?.substring(0, 100));
-    // Optionally, remove the invalid item to prevent future errors
-    // try { window.localStorage.removeItem(key); } catch (removeError) { console.error(`Error removing invalid item for key "${key}":`, removeError); }
+    // Remove the invalid item to prevent future errors
+    try {
+ window.localStorage.removeItem(key);
+    } catch (removeError) {
+ console.error(`Error removing invalid item for key "${key}":`, removeError);
+    }
     return defaultValue;
   }
 };

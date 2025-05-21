@@ -46,16 +46,15 @@ const CountingListTableComponent: React.FC<CountingListTableProps> = ({
             <TableHead className="hidden md:table-cell px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider w-[15%]">Vencimiento</TableHead>
             <TableHead className="hidden md:table-cell px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider w-[15%]">Últ. Act.</TableHead>
             <TableHead className="hidden md:table-cell px-4 py-3 text-center text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider w-[5%]">Validación</TableHead>
-            <TableHead className="text-center hidden md:table-cell px-4 py-3 text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider w-[15%]">Acciones</TableHead>
           </TableRow>
         </TableHeader>
         <TableBody>
-          {countingList.map((product) => { 
+          {countingList.map((product) => {
              const lastUpdatedDate = product.lastUpdated ? new Date(product.lastUpdated) : null;
              const isValidLastUpdate = lastUpdatedDate && isValid(lastUpdatedDate);
              const expirationDate = product.expirationDate ? parseISO(product.expirationDate) : null;
-             const isValidExpiration = expirationDate && isValid(expirationDate);             
-             const uniqueKey = `${product.barcode}-${product.warehouseId || 'unknown'}`; 
+             const isValidExpiration = expirationDate && isValid(expirationDate);
+             const uniqueKey = product.barcode; // Use product.barcode directly as key
             return (
                 <TableRow
                 key={uniqueKey}
@@ -63,16 +62,16 @@ const CountingListTableComponent: React.FC<CountingListTableProps> = ({
                     "hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors duration-150",
                     product.count === product.stock && product.stock !== 0 ? "bg-green-50 dark:bg-green-900/30" : ""
                 )}
-                aria-rowindex={countingList.indexOf(product) + 1} 
+                aria-rowindex={countingList.indexOf(product) + 1}
                 >
                 <TableCell
                     className="px-4 py-3 font-medium text-gray-900 dark:text-gray-100"
                     aria-label={`Detalles para ${product.description}`}
                 >
                     <span
-                        onClick={() => onEditDetailRequest(product)}
-                        className="cursor-pointer hover:text-blue-600 dark:hover:text-blue-400 hover:underline"
-                        title={`Editar detalles de ${product.description}`}
+                        onClick={() => onDeleteRequest(product)} // Changed to onDeleteRequest
+                        className="cursor-pointer hover:text-red-600 dark:hover:text-red-400 hover:underline"
+                        title={`Eliminar ${product.description} de la lista actual`}
                     >
                         {product.description}
                     </span>
@@ -80,16 +79,16 @@ const CountingListTableComponent: React.FC<CountingListTableProps> = ({
                         <Button
                             variant="ghost"
                             size="icon"
-                            className="h-6 w-6 text-blue-500 hover:text-blue-600 p-0" 
+                            className="h-6 w-6 text-blue-500 hover:text-blue-600 p-0"
                             onClick={() => onEditDetailRequest(product)}
                             title={`Editar detalles de ${product.description}`}
                         >
-                            <Edit className="h-3.5 w-3.5" /> 
+                            <Edit className="h-3.5 w-3.5" />
                         </Button>
                         <Button
                             variant="ghost"
                             size="icon"
-                            className="h-6 w-6 text-red-500 hover:text-red-600 p-0" 
+                            className="h-6 w-6 text-red-500 hover:text-red-600 p-0"
                             onClick={() => onDeleteRequest(product)}
                             title={`Eliminar ${product.description}`}
                         >
@@ -139,53 +138,11 @@ const CountingListTableComponent: React.FC<CountingListTableProps> = ({
                     <span className="text-red-600 dark:text-red-400 font-semibold">{product.count - (product.stock ?? 0)}</span>
                     ) : null}
                 </TableCell>
-                <TableCell className="text-center hidden md:table-cell px-4 py-3">
-                    <div className="flex justify-center items-center space-x-1">
-                    <Button
-                        onClick={() => onDecrement(product.barcode, 'count')}
-                        size="icon"
-                        variant="ghost"
-                        className="text-gray-500 dark:text-gray-400 hover:text-red-600 dark:hover:text-red-400 hover:bg-red-100 dark:hover:bg-red-900/50 rounded-full w-8 h-8"
-                        aria-label={`Disminuir cantidad para ${product.description}`}
-                    >
-                        <Minus className="h-4 w-4" />
-                    </Button>
-                    <Button
-                        onClick={() => onIncrement(product.barcode, 'count')}
-                        size="icon"
-                        variant="ghost"
-                        className="text-gray-500 dark:text-gray-400 hover:text-green-600 dark:hover:text-green-400 hover:bg-green-100 dark:hover:bg-green-900/50 rounded-full w-8 h-8"
-                        aria-label={`Aumentar cantidad para ${product.description}`}
-                    >
-                        <Plus className="h-4 w-4" />
-                    </Button>
-                      <Button
-                         onClick={() => onEditDetailRequest(product)}
-                         size="icon"
-                         variant="ghost"
-                         className="text-gray-500 dark:text-gray-400 hover:text-blue-600 dark:hover:text-blue-400 hover:bg-blue-100 dark:hover:bg-blue-900/50 rounded-full w-8 h-8"
-                         aria-label={`Editar detalles para ${product.description}`}
-                         title="Editar Detalles (Stock, Proveedor, Vencimiento)"
-                     >
-                         <Edit className="h-4 w-4" />
-                     </Button>
-                     <Button
-                        variant="ghost"
-                        size="icon"
-                        className="text-gray-500 dark:text-gray-400 hover:text-red-600 dark:hover:text-red-400 hover:bg-red-100 dark:hover:bg-red-900/50 rounded-full w-8 h-8"
-                        onClick={() => onDeleteRequest(product)}
-                        title={`Eliminar ${product.description} de este inventario`}
-                        aria-label={`Eliminar ${product.description}`}
-                      >
-                        <Trash className="h-4 w-4" />
-                      </Button>
-                    </div>
-                </TableCell>
                 </TableRow>
             );})}
           {countingList.length === 0 && (
             <TableRow>
-              <TableCell colSpan={7} className="text-center px-4 py-10 text-gray-500 dark:text-gray-400">
+              <TableCell colSpan={6} className="text-center px-4 py-10 text-gray-500 dark:text-gray-400">
                 No hay productos en este inventario. Agrega uno para empezar.
               </TableCell>
             </TableRow>

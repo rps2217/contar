@@ -1,5 +1,6 @@
 // src/components/confirmation-dialog.tsx
 import React from 'react';
+import { useId } from 'react';
 import {
     AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
     AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle
@@ -34,6 +35,7 @@ export const ConfirmationDialog: React.FC<ConfirmationDialogProps> = ({
   isProcessing = false,
 }) => {
 
+  const descriptionId = useId();
   const handleConfirm = () => {
     if (!isProcessing) {
       onConfirm();
@@ -49,10 +51,14 @@ export const ConfirmationDialog: React.FC<ConfirmationDialogProps> = ({
 
   return (
     <AlertDialog open={isOpen} onOpenChange={onOpenChange}>
-      <AlertDialogContent>
+      <AlertDialogContent aria-describedby={descriptionId}>
         <AlertDialogHeader>
           <AlertDialogTitle>{title}</AlertDialogTitle>
-          <AlertDialogDescription>
+          {/*
+            Ensure AlertDialogDescription has an ID for aria-describedby
+            on AlertDialogContent. useId is ideal for this.
+          */}
+          <AlertDialogDescription id={descriptionId}>
             {description} {/* Render the description passed from the parent */}
           </AlertDialogDescription>
         </AlertDialogHeader>
@@ -71,4 +77,3 @@ export const ConfirmationDialog: React.FC<ConfirmationDialogProps> = ({
     </AlertDialog>
   );
 };
-

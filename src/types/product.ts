@@ -22,11 +22,9 @@ export interface ProductDetail {
 export interface InventoryItem {
   barcode: string;       // Links to ProductDetail
   warehouseId: string; // Identifier for the warehouse (e.g., "main", "storage", "pharmacy1")
-  stock: number;       // Stock level in this specific warehouse
+  stock: number;       // Stock level in this specific warehouse (often from ProductDetail)
   count: number;       // Counted quantity in this specific warehouse during a session
   lastUpdated?: string; // Optional: ISO 8601 timestamp of the last update for this item in this warehouse
-  // Potential future fields:
-  // location?: string; // Specific location within the warehouse (e.g., "Aisle 3, Shelf 2")
   firestoreLastUpdated?: Timestamp; // For Firestore server-side ordering
 }
 
@@ -45,12 +43,12 @@ export interface DisplayProduct extends ProductDetail, Omit<InventoryItem, 'barc
  */
 export interface CountingHistoryEntry {
   id: string; // Unique identifier for the history entry (e.g., timestamp-based)
-  userId?: string; // Optional: Identifier for the user who created this entry
+  userId: string; // Identifier for the user who created this entry
   timestamp: string; // ISO 8601 timestamp when the history was saved
   warehouseId: string;
   warehouseName: string; // Store the name for easier display
   products: DisplayProduct[]; // A snapshot of the counting list at the time of saving
-  firestoreTimestamp?: Timestamp; // For Firestore server-side ordering
+  // firestoreTimestamp?: Timestamp; // For Firestore server-side ordering - Handled by firestore-service.ts
 }
 
 
@@ -60,6 +58,18 @@ export interface CountingHistoryEntry {
 export interface Warehouse {
   id: string;
   name: string;
+}
+
+/**
+ * Represents an item in the consolidated inventory view.
+ */
+export interface ConsolidatedProductViewItem {
+  barcode: string;
+  description: string;
+  masterStock: number; // Stock from the master product catalog
+  totalCountedQuantity: number;
+  warehousesPresent: string[]; // Names of warehouses where the product was counted
+  provider?: string; // Optional provider information from catalog
 }
 
 

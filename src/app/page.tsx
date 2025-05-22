@@ -25,7 +25,7 @@ import { WarehouseManagement } from "@/components/warehouse-management";
 import { ConsolidatedInventoryReport } from '@/components/consolidated-inventory-report';
 import { format, isValid, parseISO } from 'date-fns';
 import { es } from 'date-fns/locale';
-import { Minus, Plus, Trash, RefreshCw, Search, Boxes, Loader2, History as HistoryIcon, CalendarIcon, Save, Edit, Download, BarChart, Settings, AlertTriangle, XCircle, Menu as MenuIcon, User, ShieldAlert, Filter, PanelLeftClose, PanelRightOpen, PackageSearch, CalendarClock, BookOpenText, Users2, ClipboardList, MoreVertical, Warehouse as WarehouseIconLucide, LockKeyhole, CheckCircle, ScanLine } from "lucide-react";
+import { Minus, Plus, Trash, RefreshCw, Search, Boxes, Loader2, History as HistoryIcon, CalendarIcon, Save, Edit, Download, BarChart, Settings, AlertTriangle, XCircle, Menu as MenuIcon, User, ShieldAlert, Filter, PanelLeftClose, PanelRightOpen, PackageSearch, CalendarClock, BookOpenText, Users2, ClipboardList, MoreVertical, Warehouse as WarehouseIconLucide, LockKeyhole, CheckCircle } from "lucide-react";
 import React, { useCallback, useEffect, useRef, useState, useMemo, useTransition } from "react";
 import { playBeep } from '@/lib/helpers';
 import { ModifyValueDialog } from '@/components/modify-value-dialog';
@@ -38,24 +38,24 @@ import {
   deleteProductFromDB as deleteProductFromIndexedDB,
   clearProductDatabase as clearProductDatabaseInIndexedDB,
   addProductsToDB as addProductsToIndexedDB,
-  saveCountingHistory, // Corrected import
-  getCountingHistory,  // Corrected import
-  clearCountingHistory // Corrected import
+  saveCountingHistory, 
+  getCountingHistory,  
+  clearCountingHistory 
 } from '@/lib/database'; // Using IndexedDB for product catalog and local history
 import {
-  subscribeToWarehouses, // Still using Firestore for warehouses for multi-device sync if login is shared
+  subscribeToWarehouses, 
   addOrUpdateWarehouseInFirestore,
   deleteWarehouseFromFirestore,
   // saveCountingHistoryToFirestore, // History will be local first
   // getCountingHistoryFromFirestore,
   // clearCountingHistoryInFirestore,
   // clearAllUserDataInFirestore,
-  getProductFromCatalog, // Will fetch from Firestore-backed catalog
+  getProductFromCatalog, 
   getAllProductsFromCatalog,
   addOrUpdateProductInCatalog,
   deleteProductFromCatalog,
   clearProductCatalogInFirestore,
-  addProductsToCatalog, // For Google Sheet import to Firestore catalog
+  addProductsToCatalog, 
 } from '@/lib/firestore-service';
 import Papa from 'papaparse';
 import { SidebarLayout } from '@/components/sidebar-layout';
@@ -73,6 +73,7 @@ import {
     LOCAL_STORAGE_USER_ID_KEY,
     LOCAL_STORAGE_ACTIVE_SECTION_KEY,
     LOCAL_STORAGE_SIDEBAR_COLLAPSED_KEY,
+    LOCAL_STORAGE_CURRENT_WAREHOUSE_ID_KEY_PREFIX,
     LOGIN_USER,
     LOGIN_PASSWORD,
     LAST_SCANNED_BARCODE_TIMEOUT_MS,
@@ -104,7 +105,17 @@ export default function Home() {
   
   // --- User and Warehouse State ---
   const [currentUserId, setCurrentUserId] = useState<string | null>(null);
-  const [warehouses, setWarehouses] = useState<Warehouse[]>([{ id: DEFAULT_WAREHOUSE_ID, name: DEFAULT_WAREHOUSE_NAME }]);
+  
+  const PREDEFINED_WAREHOUSES: Warehouse[] = [
+    { id: DEFAULT_WAREHOUSE_ID, name: DEFAULT_WAREHOUSE_NAME },
+    { id: 'bodega', name: 'BODEGA' },
+    { id: 'isla', name: 'ISLA' },
+    { id: 'meson', name: 'MESON' },
+    { id: 'vitrinas', name: 'VITRINAS' },
+    { id: 'oficina', name: 'OFICINA' },
+  ];
+
+  const [warehouses, setWarehouses] = useState<Warehouse[]>(PREDEFINED_WAREHOUSES);
   const [currentWarehouseId, setCurrentWarehouseId] = useState<string>(DEFAULT_WAREHOUSE_ID);
   const [catalogProducts, setCatalogProducts] = useState<ProductDetail[]>([]);
 
@@ -169,7 +180,7 @@ export default function Home() {
  useEffect(() => {
     isMountedRef.current = true;
     const storedUserId = getLocalStorageItem<string | null>(LOCAL_STORAGE_USER_ID_KEY, null);
-    if (storedUserId === LOGIN_USER) {
+    if (storedUserId === LOGIN_USER) { // Assuming LOGIN_USER is 'rps'
         setCurrentUserId(LOGIN_USER);
         setIsAuthenticated(true);
     } else {
@@ -196,34 +207,36 @@ export default function Home() {
   // Subscribe to warehouses from Firestore
   useEffect(() => {
     if (!currentUserId || !db) {
-        // If no user or db (Firestore not initialized), set to a local default.
-        // This ensures the UI has a 'main' warehouse to select/display even if Firestore isn't available.
+        // If no user or db (Firestore not initialized), set to local defaults.
         if (isMountedRef.current) {
-            const localDefaultWarehouse = { id: DEFAULT_WAREHOUSE_ID, name: DEFAULT_WAREHOUSE_NAME };
-            setWarehouses([localDefaultWarehouse]);
-            // If currentWarehouseId is not 'main', set it. This ensures the app defaults to 'main'.
-            if (currentWarehouseId !== DEFAULT_WAREHOUSE_ID) {
+            setWarehouses(PREDEFINED_WAREHOUSES);
+            // Ensure currentWarehouseId is valid among predefined or default to main
+            const currentSelectionIsValid = PREDEFINED_WAREHOUSES.some(w => w.id === currentWarehouseId);
+            if (!currentSelectionIsValid) {
                 setCurrentWarehouseId(DEFAULT_WAREHOUSE_ID);
             }
+            setIsDbLoading(false);
         }
         return;
     }
 
     // Firestore is available and user is logged in
-    setIsDbLoading(true); // Indicate loading when subscribing
+    setIsDbLoading(true); 
     const unsubscribe = subscribeToWarehouses(currentUserId, (fetchedWarehouses) => {
       if (isMountedRef.current) {
         if (fetchedWarehouses.length === 0) {
             // Firestore has no warehouses for this user.
-            // Create 'Almacén Principal' locally and attempt to add it to Firestore for this user.
-            const defaultNewUserWarehouse = { id: DEFAULT_WAREHOUSE_ID, name: DEFAULT_WAREHOUSE_NAME };
-            setWarehouses([defaultNewUserWarehouse]);
-            setCurrentWarehouseId(DEFAULT_WAREHOUSE_ID); // Ensure 'main' is selected
+            // Set predefined warehouses locally and attempt to add them to Firestore.
+            setWarehouses(PREDEFINED_WAREHOUSES);
+            setCurrentWarehouseId(DEFAULT_WAREHOUSE_ID); 
 
-            addOrUpdateWarehouseInFirestore(currentUserId, defaultNewUserWarehouse)
-                .catch(err => {
-                    console.error("Failed to add 'Almacén Principal' to Firestore for new user context:", err);
-                });
+            PREDEFINED_WAREHOUSES.forEach(wh => {
+                addOrUpdateWarehouseInFirestore(currentUserId, wh)
+                    .catch(err => {
+                        console.error(`Failed to add predefined warehouse '${wh.name}' to Firestore for user ${currentUserId}:`, err);
+                         requestAnimationFrame(() => toast({ variant: "destructive", title: "Error DB", description: `No se pudo agregar almacén predefinido '${wh.name}'.`}));
+                    });
+            });
         } else {
             // Warehouses were fetched from Firestore
             setWarehouses(fetchedWarehouses);
@@ -236,7 +249,7 @@ export default function Home() {
                 setCurrentWarehouseId(mainExistsInFetched ? DEFAULT_WAREHOUSE_ID : fetchedWarehouses[0].id);
             }
         }
-        setIsDbLoading(false); // Finished loading/updating warehouses
+        setIsDbLoading(false); 
       }
     });
 
@@ -244,7 +257,7 @@ export default function Home() {
       unsubscribe();
       if (isMountedRef.current) setIsDbLoading(false);
     };
-  }, [currentUserId]); // Only re-subscribe if the userId changes.
+  }, [currentUserId]); 
 
 
   // Load catalogProducts from Firestore when user is authenticated
@@ -254,7 +267,7 @@ export default function Home() {
       return;
     }
     setIsDbLoading(true);
-    getAllProductsFromCatalog(currentUserId)
+    getAllProductsFromCatalog(currentUserId) // Assumes this function fetches from Firestore
       .then(products => {
         if (isMountedRef.current) {
           setCatalogProducts(products);
@@ -263,7 +276,7 @@ export default function Home() {
       .catch(error => {
         console.error("Error loading catalog from Firestore:", error);
         if (isMountedRef.current) {
-          toast({ variant: "destructive", title: "Error Catálogo", description: "No se pudo cargar el catálogo." });
+          requestAnimationFrame(() => toast({ variant: "destructive", title: "Error Catálogo", description: "No se pudo cargar el catálogo." }));
         }
       })
       .finally(() => {
@@ -349,6 +362,7 @@ export default function Home() {
                         title: "Alerta de Discrepancia",
                         description: `${product.description}: Contado ${countToCheck}, Stock ${stockToCheck}.`,
                         variant: "default",
+                        duration: 6000,
                     });
                 }
             });
@@ -1070,7 +1084,7 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
             products: JSON.parse(JSON.stringify(currentListForWarehouse)) 
         };
 
-        await saveCountingHistory(historyEntry); // Corrected call
+        await saveCountingHistory(historyEntry); 
          if (!hideToast && isMountedRef.current) {
             requestAnimationFrame(() => {
                 if(isMountedRef.current) {
@@ -1455,10 +1469,9 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
         if (!isMountedRef.current) return;
          if (newWarehouseId !== currentWarehouseId) {
              startTransition(() => {
-                setIsDbLoading(true); // Indicate loading for list and catalog switch
+                setIsDbLoading(true); 
                 setCurrentWarehouseId(newWarehouseId);
-                setSearchTerm(""); // Reset search term for new warehouse list
-                // No need to reload catalogProducts here if it's global for the user
+                setSearchTerm(""); 
              });
          }
    }, [currentWarehouseId, setCurrentWarehouseId, startTransition]);
@@ -1476,16 +1489,10 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
 
         try {
             await addOrUpdateWarehouseInFirestore(currentUserId, newWarehouse);
-            // onSnapshot listener will update 'warehouses' state.
-            // Switch to the new warehouse after it's confirmed by Firestore.
-            // The onSnapshot might trigger a re-render which then allows selection.
-            // For immediate switch, we can optimistically update local state or rely on onSnapshot.
-            // Let's rely on onSnapshot for now, but select it if it appears.
-            // If handleWarehouseChange is used, it might trigger list loading.
              requestAnimationFrame(() => {
                  toast({title: "Almacén Agregado", description: `Cambiado a: ${newWarehouse.name}`});
              });
-             handleWarehouseChange(newWarehouse.id); // Select the new warehouse
+             handleWarehouseChange(newWarehouse.id); 
 
         } catch (error) {
             requestAnimationFrame(() => {
@@ -1502,7 +1509,6 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
       if (warehouseToDelete && warehouseToDelete.id !== DEFAULT_WAREHOUSE_ID) {
           await deleteWarehouseFromFirestore(currentUserId, warehouseToDelete.id);
           message = "Almacén Eliminado";
-          // If the deleted warehouse was the current one, switch to default or first available
           if (warehouseToDelete.id === currentWarehouseId) {
             const remaining = warehouses.filter(w => w.id !== warehouseToDelete.id);
             const newCurrentId = remaining.find(w => w.id === DEFAULT_WAREHOUSE_ID)?.id || remaining[0]?.id || DEFAULT_WAREHOUSE_ID;
@@ -1510,11 +1516,9 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
           }
       } else if (warehouseToDelete && warehouseToDelete.id === DEFAULT_WAREHOUSE_ID) {
          message = "Almacén Principal no se puede eliminar.";
-         toast({ variant: 'destructive', title: 'Operación no permitida', description: message });
+         requestAnimationFrame(() => toast({ variant: 'destructive', title: 'Operación no permitida', description: message }));
          return;
       } else if (!warehouseToDelete && updatedWarehouses.length > 0) {
-          // This case is for updating a warehouse's name.
-          // Find the warehouse that was actually updated.
           const warehouseToUpdate = updatedWarehouses.find(uw => {
              const original = warehouses.find(w => w.id === uw.id);
              return original && original.name !== uw.name;
@@ -1525,10 +1529,10 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
           }
       }
       
-      toast({ title: message });
+      requestAnimationFrame(() => toast({ title: message }));
 
     } catch (error) {
-        toast({ variant: 'destructive', title: 'Error DB', description: 'No se pudieron actualizar los almacenes en la nube.' });
+        requestAnimationFrame(() => toast({ variant: 'destructive', title: 'Error DB', description: 'No se pudieron actualizar los almacenes en la nube.' }));
     }
 }, [currentWarehouseId, handleWarehouseChange, toast, currentUserId, warehouses]);
 
@@ -1545,18 +1549,14 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
     if (!isMountedRef.current || !currentUserId) return;
     if(isMountedRef.current) setIsDbLoading(true);
     try {
-      // Clear from both Firestore and IndexedDB
       await clearProductCatalogInFirestore(currentUserId);
       await clearProductDatabaseInIndexedDB();
 
       if(isMountedRef.current) {
-        setCatalogProducts([]); // Clear local catalog state
+        setCatalogProducts([]); 
         startTransition(() => { 
             setCountingList(prevList => 
                 prevList.map(p => {
-                    // If item was from catalog, reset its details. This check is broad.
-                    // More precise would be to check if its details match an item in the *old* catalog.
-                    // For simplicity, we assume any item with a known barcode might have come from a catalog.
                     return {...p, description: `Producto ${p.barcode}`, provider: "Desconocido", stock: 0, expirationDate: undefined};
                 })
             );
@@ -1608,7 +1608,7 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
         setCurrentUserId(null);
         setCountingList([]); 
         setCatalogProducts([]);
-        setWarehouses([{ id: DEFAULT_WAREHOUSE_ID, name: DEFAULT_WAREHOUSE_NAME }]); 
+        setWarehouses(PREDEFINED_WAREHOUSES); 
         setCurrentWarehouseId(DEFAULT_WAREHOUSE_ID);
         if (typeof window !== 'undefined') {
             localStorage.removeItem(LOCAL_STORAGE_USER_ID_KEY);
@@ -1789,7 +1789,6 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
                     onUpdateWarehouses={(updated, deleted) => handleUpdateWarehouses(updated, deleted)}
                     onSelectWarehouse={handleWarehouseChange}
                     onClearDatabaseRequest={() => {
-                        // This is a global clear, affecting Firestore catalogs & local IndexedDB
                         if(isMountedRef.current) setIsClearCatalogConfirmOpen(true);
                     }}
                   />
@@ -2034,3 +2033,5 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
   );
 }
 
+
+    

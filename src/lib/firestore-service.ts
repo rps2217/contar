@@ -1,4 +1,3 @@
-
 // src/lib/firestore-service.ts
 import { db } from '@/lib/firebase';
 import {
@@ -10,26 +9,27 @@ import {
   query,
   orderBy,
   writeBatch,
-  serverTimestamp,
+  serverTimestamp, // Important for setting server-side timestamps
   Unsubscribe,
   onSnapshot,
   Timestamp,
-  where,
   getDoc,
-  deleteField,
+  // deleteField, // Not used currently, can be removed if not needed
 } from 'firebase/firestore';
 import type { DisplayProduct, ProductDetail, CountingHistoryEntry, Warehouse } from '@/types/product';
-import { toast } from "@/hooks/use-toast"; // Assuming you have a toast hook
+import { toast } from "@/hooks/use-toast";
 
 // --- Helper to check Firestore instance ---
 function ensureDbInitialized() {
   if (!db) {
     console.error("Firestore (db) is not initialized. Check Firebase configuration and environment variables.");
-    toast({
-      variant: "destructive",
-      title: "Error de Base de Datos",
-      description: "La conexión con la base de datos en la nube no está disponible. Verifica tu configuración y conexión.",
-    });
+    // This toast might not be visible if the error occurs very early or in a non-UI context.
+    // Consider a more global error state or logging for production.
+    // toast({
+    //   variant: "destructive",
+    //   title: "Error de Base de Datos",
+    //   description: "La conexión con la base de datos en la nube no está disponible.",
+    // });
     throw new Error("Firestore (db) is not initialized.");
   }
 }
@@ -50,11 +50,19 @@ export const getProductFromCatalog = async (userId: string, barcode: string): Pr
   try {
     const productDocRef = doc(getProductCatalogCollectionRef(userId), barcode);
     const docSnap = await getDoc(productDocRef);
-    return docSnap.exists() ? (docSnap.data() as ProductDetail) : undefined;
+    if (docSnap.exists()) {
+        const data = docSnap.data();
+        // Ensure expirationDate is null if it's undefined or empty string from Firestore
+        return {
+            ...data,
+            expirationDate: (data.expirationDate && typeof data.expirationDate === 'string' && data.expirationDate.trim() !== "") ? data.expirationDate : null,
+        } as ProductDetail;
+    }
+    return undefined;
   } catch (error) {
     console.error(`Error getting product ${barcode} from catalog for user ${userId}:`, error);
     toast({ variant: "destructive", title: "Error DB", description: "No se pudo obtener el producto del catálogo." });
-    return undefined;
+    return undefined; // Or throw error
   }
 };
 
@@ -67,14 +75,20 @@ export const getAllProductsFromCatalog = async (userId: string): Promise<Product
   try {
     const querySnapshot = await getDocs(getProductCatalogCollectionRef(userId));
     const products: ProductDetail[] = [];
-    querySnapshot.forEach((doc) => {
-      products.push({ barcode: doc.id, ...doc.data() } as ProductDetail);
+    querySnapshot.forEach((docSnap) => {
+      const data = docSnap.data();
+      products.push({
+        barcode: docSnap.id,
+        ...data,
+        // Ensure expirationDate is null if it's undefined or empty string from Firestore
+        expirationDate: (data.expirationDate && typeof data.expirationDate === 'string' && data.expirationDate.trim() !== "") ? data.expirationDate : null,
+      } as ProductDetail);
     });
     return products;
   } catch (error) {
     console.error(`Error getting all products from catalog for user ${userId}:`, error);
     toast({ variant: "destructive", title: "Error DB", description: "No se pudieron cargar los productos del catálogo." });
-    return [];
+    return []; // Or throw error
   }
 };
 
@@ -86,7 +100,16 @@ export const addOrUpdateProductInCatalog = async (userId: string, product: Produ
   }
   try {
     const productDocRef = doc(getProductCatalogCollectionRef(userId), product.barcode);
-    await setDoc(productDocRef, product, { merge: true }); // Use merge to update if exists, or create if not
+    const dataToSave: ProductDetail = {
+      barcode: product.barcode,
+      description: product.description?.trim() || `Producto ${product.barcode}`,
+      provider: product.provider?.trim() || "Desconocido",
+      stock: (typeof product.stock === 'number' && !isNaN(product.stock)) ? product.stock : 0,
+      expirationDate: (product.expirationDate && typeof product.expirationDate === 'string' && product.expirationDate.trim() !== "")
+                       ? product.expirationDate.trim()
+                       : null,
+    };
+    await setDoc(productDocRef, dataToSave, { merge: true });
   } catch (error) {
     console.error(`Error adding/updating product ${product.barcode} in catalog for user ${userId}:`, error);
     toast({ variant: "destructive", title: "Error DB", description: "No se pudo guardar el producto en el catálogo." });
@@ -121,7 +144,16 @@ export const addProductsToCatalog = async (userId: string, products: ProductDeta
     products.forEach((product) => {
       if (product && product.barcode) {
         const productDocRef = doc(getProductCatalogCollectionRef(userId), product.barcode);
-        batch.set(productDocRef, product, { merge: true });
+        const dataToSave: ProductDetail = {
+          barcode: product.barcode,
+          description: product.description || `Producto ${product.barcode}`,
+          provider: product.provider || "Desconocido",
+          stock: (typeof product.stock === 'number' && !isNaN(product.stock)) ? product.stock : 0,
+          expirationDate: (product.expirationDate && typeof product.expirationDate === 'string' && product.expirationDate.trim() !== "")
+                           ? product.expirationDate.trim()
+                           : null,
+        };
+        batch.set(productDocRef, dataToSave, { merge: true });
       }
     });
     await batch.commit();
@@ -141,11 +173,16 @@ export const clearProductCatalogInFirestore = async (userId: string): Promise<vo
   try {
     const q = query(getProductCatalogCollectionRef(userId));
     const querySnapshot = await getDocs(q);
+    if (querySnapshot.empty) {
+      console.log(`Product catalog for user ${userId} is already empty.`);
+      return;
+    }
     const batch = writeBatch(db!);
-    querySnapshot.forEach((doc) => {
-      batch.delete(doc.ref);
+    querySnapshot.forEach((docSnap) => { // Changed doc to docSnap to avoid conflict
+      batch.delete(docSnap.ref);
     });
     await batch.commit();
+    console.log(`Product catalog cleared for user ${userId}`);
   } catch (error) {
     console.error(`Error clearing product catalog for user ${userId}:`, error);
     toast({ variant: "destructive", title: "Error DB", description: "No se pudo borrar el catálogo de productos." });
@@ -170,14 +207,14 @@ export const subscribeToWarehouses = (
     callback([]);
     return () => {};
   }
-  const q = query(getWarehousesCollectionRef(userId), orderBy('name')); // Order by name for consistency
+  const q = query(getWarehousesCollectionRef(userId), orderBy('name'));
   
   return onSnapshot(
     q,
     (querySnapshot) => {
       const warehouses: Warehouse[] = [];
-      querySnapshot.forEach((doc) => {
-        warehouses.push(doc.data() as Warehouse);
+      querySnapshot.forEach((docSnap) => { // Changed doc to docSnap
+        warehouses.push(docSnap.data() as Warehouse);
       });
       callback(warehouses);
     },
@@ -214,8 +251,9 @@ export const deleteWarehouseFromFirestore = async (userId: string, warehouseId: 
   try {
     const warehouseDocRef = doc(getWarehousesCollectionRef(userId), warehouseId);
     await deleteDoc(warehouseDocRef);
-    // Important: Also delete the counting list associated with this warehouse
-    await clearCountingListForWarehouseInFirestore(userId, warehouseId);
+    // Note: Deleting a warehouse does NOT automatically delete its associated counting list.
+    // This might be desired, or you might want to implement cascading deletes if necessary.
+    // For now, we keep them separate.
   } catch (error) {
     console.error(`Error deleting warehouse ${warehouseId} for user ${userId}:`, error);
     toast({ variant: "destructive", title: "Error DB", description: "No se pudo eliminar el almacén." });
@@ -224,119 +262,8 @@ export const deleteWarehouseFromFirestore = async (userId: string, warehouseId: 
 };
 
 // --- Counting List Operations (Firestore) ---
-const getCountingListCollectionRef = (userId: string, warehouseId: string) => {
-  ensureDbInitialized();
-  return collection(db!, `users/${userId}/countingLists/${warehouseId}/products`);
-};
-
-export const setCountingListItem = async (userId: string, warehouseId: string, product: DisplayProduct): Promise<void> => {
-  ensureDbInitialized();
-  if (!userId || !warehouseId || !product || !product.barcode) {
-    console.error("User ID, Warehouse ID, or product data is missing for setCountingListItem.");
-    throw new Error("Datos incompletos para guardar el ítem de conteo.");
-  }
-  try {
-    const itemDocRef = doc(getCountingListCollectionRef(userId, warehouseId), product.barcode);
-    // Prepare data for Firestore, ensuring serverTimestamp
-    const { barcode, warehouseId: wid, ...dataToSave } = product; // Exclude barcode and wid from data being saved
-    await setDoc(itemDocRef, { ...dataToSave, firestoreLastUpdated: serverTimestamp() }, { merge: true });
-  } catch (error) {
-    console.error(`Error setting counting list item ${product.barcode} for user ${userId}, warehouse ${warehouseId}:`, error);
-    toast({ variant: "destructive", title: "Error DB", description: "No se pudo guardar el producto en la lista de conteo." });
-    throw error;
-  }
-};
-
-export const deleteCountingListItem = async (userId: string, warehouseId: string, barcode: string): Promise<void> => {
-  ensureDbInitialized();
-  if (!userId || !warehouseId || !barcode) {
-    console.error("User ID, Warehouse ID, or Barcode is missing for deleteCountingListItem.");
-    throw new Error("Datos incompletos para eliminar el ítem de conteo.");
-  }
-  try {
-    const itemDocRef = doc(getCountingListCollectionRef(userId, warehouseId), barcode);
-    await deleteDoc(itemDocRef);
-  } catch (error) {
-    console.error(`Error deleting counting list item ${barcode} for user ${userId}, warehouse ${warehouseId}:`, error);
-    toast({ variant: "destructive", title: "Error DB", description: "No se pudo eliminar el producto de la lista de conteo." });
-    throw error;
-  }
-};
-
-export const clearCountingListForWarehouseInFirestore = async (userId: string, warehouseId: string): Promise<void> => {
-  ensureDbInitialized();
-  if (!userId || !warehouseId) {
-    console.error("User ID or Warehouse ID is missing for clearCountingListForWarehouseInFirestore.");
-    throw new Error("Datos incompletos para borrar la lista de conteo.");
-  }
-  try {
-    const q = query(getCountingListCollectionRef(userId, warehouseId));
-    const querySnapshot = await getDocs(q);
-    const batch = writeBatch(db!);
-    querySnapshot.forEach((doc) => {
-      batch.delete(doc.ref);
-    });
-    await batch.commit();
-  } catch (error) {
-    console.error(`Error clearing counting list for user ${userId}, warehouse ${warehouseId}:`, error);
-    toast({ variant: "destructive", title: "Error DB", description: "No se pudo borrar la lista de conteo." });
-    throw error;
-  }
-};
-
-export const subscribeToCountingList = (
-  userId: string,
-  warehouseId: string,
-  callback: (products: DisplayProduct[]) => void
-): Unsubscribe => {
-  ensureDbInitialized();
-  if (!userId || !warehouseId) {
-    console.warn("User ID or Warehouse ID is missing for subscribing to counting list. Returning empty list.");
-    callback([]);
-    return () => {}; // Return an empty unsubscribe function
-  }
-  const q = query(getCountingListCollectionRef(userId, warehouseId), orderBy('firestoreLastUpdated', 'desc'));
-
-  return onSnapshot(
-    q,
-    (querySnapshot) => {
-      const products: DisplayProduct[] = [];
-      querySnapshot.forEach((doc) => {
-        const data = doc.data();
-        // Ensure lastUpdated is a string (ISO format) from Firestore or client
-        let lastUpdatedString = data.lastUpdated;
-        if (data.firestoreLastUpdated instanceof Timestamp) {
-            lastUpdatedString = data.firestoreLastUpdated.toDate().toISOString();
-        } else if (data.lastUpdated instanceof Timestamp) { // Fallback if only lastUpdated is a Timestamp
-            lastUpdatedString = data.lastUpdated.toDate().toISOString();
-        }
-
-        products.push({
-          barcode: doc.id,
-          warehouseId: warehouseId, 
-          description: data.description,
-          provider: data.provider,
-          stock: data.stock ?? 0,
-          count: data.count ?? 0,
-          lastUpdated: lastUpdatedString,
-          expirationDate: data.expirationDate,
-        } as DisplayProduct); // Cast to DisplayProduct
-      });
-      callback(products);
-    },
-    (error) => {
-      console.error(`Error fetching counting list for user ${userId}, warehouse ${warehouseId}: `, error);
-      if (typeof window !== 'undefined') {
-        toast({
-          variant: "destructive",
-          title: "Error de Sincronización",
-          description: "No se pueden obtener actualizaciones en tiempo real. Verifica tu conexión o intenta más tarde.",
-        });
-      }
-      callback([]); 
-    }
-  );
-};
+// This section was removed when reverting to localStorage for countingList.
+// It can be re-added if Firestore sync for countingList is desired again.
 
 
 // --- Counting History Operations (Firestore) ---
@@ -353,10 +280,11 @@ export const saveCountingHistoryToFirestore = async (userId: string, historyEntr
   }
   try {
     const historyDocRef = doc(getCountingHistoryCollectionRef(userId), historyEntry.id);
+    // Add serverTimestamp for consistent ordering and to know when it was saved on the server
     await setDoc(historyDocRef, { ...historyEntry, firestoreTimestamp: serverTimestamp() });
   } catch (error) {
     console.error(`Error saving counting history ${historyEntry.id} for user ${userId}:`, error);
-    toast({ variant: "destructive", title: "Error DB", description: "No se pudo guardar el historial de conteo." });
+    toast({ variant: "destructive", title: "Error DB", description: "No se pudo guardar el historial de conteo en la nube." });
     throw error;
   }
 };
@@ -368,21 +296,28 @@ export const getCountingHistoryFromFirestore = async (userId: string): Promise<C
     return [];
   }
   try {
-    const q = query(getCountingHistoryCollectionRef(userId), orderBy('timestamp', 'desc'));
+    // Order by firestoreTimestamp if available, otherwise by client-side timestamp
+    const q = query(getCountingHistoryCollectionRef(userId), orderBy('firestoreTimestamp', 'desc'));
     const querySnapshot = await getDocs(q);
     const history: CountingHistoryEntry[] = [];
-    querySnapshot.forEach((doc) => {
-      const data = doc.data();
-      const products = data.products.map((p: any) => ({
+    querySnapshot.forEach((docSnap) => { // Changed doc to docSnap
+      const data = docSnap.data();
+      // Convert Firestore Timestamps in products array back to ISO strings if needed
+      const products = (data.products as DisplayProduct[]).map(p => ({
         ...p,
         lastUpdated: p.lastUpdated instanceof Timestamp ? p.lastUpdated.toDate().toISOString() : p.lastUpdated,
       }));
-      history.push({ id: doc.id, ...data, products } as CountingHistoryEntry);
+      history.push({ 
+        id: docSnap.id, 
+        ...data, 
+        timestamp: data.timestamp instanceof Timestamp ? data.timestamp.toDate().toISOString() : data.timestamp,
+        products 
+      } as CountingHistoryEntry);
     });
     return history;
   } catch (error) {
-    console.error(`Error getting counting history for user ${userId}:`, error);
-    toast({ variant: "destructive", title: "Error DB", description: "No se pudo cargar el historial de conteos." });
+    console.error(`Error getting counting history for user ${userId} from Firestore:`, error);
+    toast({ variant: "destructive", title: "Error DB", description: "No se pudo cargar el historial de conteos de la nube." });
     return [];
   }
 };
@@ -396,14 +331,19 @@ export const clearCountingHistoryInFirestore = async (userId: string): Promise<v
   try {
     const q = query(getCountingHistoryCollectionRef(userId));
     const querySnapshot = await getDocs(q);
+    if (querySnapshot.empty) {
+        console.log(`Counting history for user ${userId} in Firestore is already empty.`);
+        return;
+    }
     const batch = writeBatch(db!);
-    querySnapshot.forEach((doc) => {
-      batch.delete(doc.ref);
+    querySnapshot.forEach((docSnap) => { // Changed doc to docSnap
+      batch.delete(docSnap.ref);
     });
     await batch.commit();
+    console.log(`Counting history cleared for user ${userId} in Firestore.`);
   } catch (error) {
-    console.error(`Error clearing counting history for user ${userId}:`, error);
-    toast({ variant: "destructive", title: "Error DB", description: "No se pudo borrar el historial de conteos." });
+    console.error(`Error clearing counting history for user ${userId} in Firestore:`, error);
+    toast({ variant: "destructive", title: "Error DB", description: "No se pudo borrar el historial de conteos de la nube." });
     throw error;
   }
 };
@@ -416,34 +356,30 @@ export const clearAllUserDataInFirestore = async (userId: string): Promise<void>
     throw new Error("ID de usuario faltante.");
   }
   try {
-    // Clear product catalog for the user
-    const catalogRef = getProductCatalogCollectionRef(userId);
-    const catalogSnapshot = await getDocs(catalogRef);
-    const batch1 = writeBatch(db!);
-    catalogSnapshot.forEach(doc => batch1.delete(doc.ref));
-    await batch1.commit();
-    console.log(`Product catalog cleared for user ${userId}`);
-
-    // Clear counting history for the user
+    await clearProductCatalogInFirestore(userId);
     await clearCountingHistoryInFirestore(userId);
-    console.log(`Counting history cleared for user ${userId}`);
 
-    // Clear all counting lists for all warehouses of the user
-    const warehousesSnapshot = await getDocs(getWarehousesCollectionRef(userId));
-    for (const whDoc of warehousesSnapshot.docs) {
-      await clearCountingListForWarehouseInFirestore(userId, whDoc.id);
-      console.log(`Counting list for warehouse ${whDoc.id} cleared for user ${userId}`);
-    }
+    // Clear all counting lists for all warehouses of the user (if they were in Firestore)
+    // Since countingList is now local, this part is not strictly needed for countingList,
+    // but good to have if you decide to sync it again.
+    // const warehousesSnapshot = await getDocs(getWarehousesCollectionRef(userId));
+    // for (const whDoc of warehousesSnapshot.docs) {
+    //   await clearCountingListForWarehouseInFirestore(userId, whDoc.id); // This function was removed as countingList is local
+    //   console.log(`Counting list for warehouse ${whDoc.id} (Firestore) notionally cleared for user ${userId}`);
+    // }
     
-    // Optionally clear warehouses themselves if they are user-specific and should be wiped
-    // const batch2 = writeBatch(db!);
-    // warehousesSnapshot.forEach(doc => batch2.delete(doc.ref));
-    // await batch2.commit();
-    // console.log(`Warehouses cleared for user ${userId}`);
+    // Delete warehouses themselves
+    const warehousesSnapshot = await getDocs(getWarehousesCollectionRef(userId));
+    const warehouseBatch = writeBatch(db!);
+    warehousesSnapshot.forEach(docSnap => warehouseBatch.delete(docSnap.ref)); // Changed doc to docSnap
+    await warehouseBatch.commit();
+    console.log(`Warehouses cleared for user ${userId} in Firestore.`);
+
+    toast({ title: "Todos los Datos en la Nube Borrados", description: "Catálogo, historial y almacenes eliminados de Firestore."});
 
   } catch (error) {
     console.error(`Error clearing all data for user ${userId} in Firestore:`, error);
-    toast({ variant: "destructive", title: "Error DB", description: "No se pudieron borrar todos los datos del usuario." });
+    toast({ variant: "destructive", title: "Error DB", description: "No se pudieron borrar todos los datos del usuario de la nube." });
     throw error;
   }
 };

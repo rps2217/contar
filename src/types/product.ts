@@ -10,7 +10,7 @@ export interface ProductDetail {
   description: string;
   provider: string;
   stock?: number; // Optional: Base stock level (if managed centrally)
-  expirationDate?: string; // Optional: ISO 8601 format YYYY-MM-DD
+  expirationDate?: string | null; // Optional: ISO 8601 format YYYY-MM-DD or null
   // Potential future fields:
   // category?: string;
   // unit?: string; // e.g., 'pcs', 'kg', 'm'

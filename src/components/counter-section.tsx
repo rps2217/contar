@@ -1,3 +1,4 @@
+
 // src/components/counter-section.tsx
 "use client";
 
@@ -7,14 +8,14 @@ import { BarcodeEntry } from '@/components/barcode-entry';
 import { CountingListTable } from '@/components/counting-list-table';
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
-import { Search, Loader2, Save, Download, Trash, MoreVertical } from "lucide-react";
+import { Search, Loader2, Save, Download, Trash, MoreVertical, Camera } from "lucide-react"; // Added Camera icon
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { debounce } from '@/lib/utils'; // Import debounce
+import { debounce, cn } from '@/lib/utils';
 
 interface CounterSectionProps {
   barcode: string;
@@ -24,8 +25,8 @@ interface CounterSectionProps {
   isLoading: boolean;
   isRefreshingStock: boolean;
   inputRef: React.RefObject<HTMLInputElement>;
-  searchTerm: string; 
-  setSearchTerm: (term: string) => void; 
+  searchTerm: string;
+  setSearchTerm: (term: string) => void;
   filteredCountingList: DisplayProduct[];
   warehouseName: string;
   onDeleteRequest: (product: DisplayProduct) => void;
@@ -34,16 +35,16 @@ interface CounterSectionProps {
   onDecrement: (barcode: string, type: 'count' | 'stock') => void;
   onIncrement: (barcode: string, type: 'count' | 'stock') => void;
   onEditDetailRequest: (product: DisplayProduct) => void;
-  countingList: DisplayProduct[]; 
+  countingList: DisplayProduct[];
   currentWarehouseId: string;
-  // isSavingToHistory: boolean; // Prop removed
-  // onSaveToHistory: () => Promise<void>; // Prop removed
   onExport: () => void;
   onSetIsDeleteListDialogOpen: (isOpen: boolean) => void;
   isMobile: boolean;
   toast: (options: any) => void;
-  isDbLoading: boolean; 
-  isTransitionPending: boolean; 
+  isDbLoading: boolean;
+  isTransitionPending: boolean;
+  onToggleCameraScanMode: () => void; // New prop
+  isCameraScanModeActive: boolean; // New prop
 }
 
 const CounterSectionComponent: React.FC<CounterSectionProps> = ({
@@ -51,11 +52,11 @@ const CounterSectionComponent: React.FC<CounterSectionProps> = ({
   setBarcode,
   onAddProduct,
   onRefreshStock,
-  isLoading, 
-  isRefreshingStock, 
+  isLoading,
+  isRefreshingStock,
   inputRef,
-  searchTerm, 
-  setSearchTerm, 
+  searchTerm,
+  setSearchTerm: setParentSearchTerm, // Renamed to avoid conflict
   filteredCountingList,
   warehouseName,
   onDeleteRequest,
@@ -64,18 +65,18 @@ const CounterSectionComponent: React.FC<CounterSectionProps> = ({
   onDecrement,
   onIncrement,
   onEditDetailRequest,
-  countingList, 
+  countingList,
   currentWarehouseId,
-  // isSavingToHistory, // Prop removed
-  // onSaveToHistory, // Prop removed
   onExport,
   onSetIsDeleteListDialogOpen,
   isMobile,
   toast,
-  isDbLoading, 
-  isTransitionPending
+  isDbLoading,
+  isTransitionPending,
+  onToggleCameraScanMode,
+  isCameraScanModeActive,
 }) => {
-  const currentListForWarehouse = React.useMemo(() => 
+  const currentListForWarehouse = React.useMemo(() =>
     countingList.filter(p => p.warehouseId === currentWarehouseId),
     [countingList, currentWarehouseId]
   );
@@ -91,9 +92,9 @@ const CounterSectionComponent: React.FC<CounterSectionProps> = ({
 
   const debouncedSetParentSearchTerm = React.useMemo(
     () => debounce((term: string) => {
-      setSearchTerm(term); 
-    }, 300), 
-    [setSearchTerm] 
+      setParentSearchTerm(term);
+    }, 300),
+    [setParentSearchTerm]
   );
 
   const handleLocalSearchChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -101,7 +102,7 @@ const CounterSectionComponent: React.FC<CounterSectionProps> = ({
     setLocalSearchTerm(newTerm);
     debouncedSetParentSearchTerm(newTerm);
   };
-  
+
   React.useEffect(() => {
     return () => {
       debouncedSetParentSearchTerm.clear?.();
@@ -111,32 +112,51 @@ const CounterSectionComponent: React.FC<CounterSectionProps> = ({
 
   return (
     <div id="contador-content" className="flex flex-col h-full">
-      <BarcodeEntry
-        barcode={barcode}
-        setBarcode={setBarcode}
-        onAddProduct={onAddProduct}
-        onRefreshStock={onRefreshStock}
-        isLoading={isLoading} 
-        isRefreshingStock={isRefreshingStock}
-        inputRef={inputRef}
-      />
-      <div className="relative mb-4">
-        <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
-        <Input
-          type="search"
-          placeholder="Buscar en inventario actual..."
-          value={localSearchTerm} 
-          onChange={handleLocalSearchChange} 
-          className="pl-8 w-full bg-blue-50 dark:bg-blue-900/30 border-blue-300 dark:border-blue-600"
-          aria-label="Buscar en lista de conteo"
-          disabled={isLoading}
-        />
-      </div>
-      <div className="flex-1 overflow-hidden">
+      {/* BarcodeEntry, Camera toggle, and search are hidden if camera scan mode is active (logic in page.tsx) */}
+      {/* This component (CounterSection) is only rendered when camera mode is NOT active */}
+      <>
+        <div className="flex items-center gap-2 mb-4">
+          <div className="flex-grow">
+            <BarcodeEntry
+              barcode={barcode}
+              setBarcode={setBarcode}
+              onAddProduct={onAddProduct}
+              onRefreshStock={onRefreshStock}
+              isLoading={isLoading || isDbLoading || isTransitionPending}
+              isRefreshingStock={isRefreshingStock}
+              inputRef={inputRef}
+            />
+          </div>
+          <Button
+            variant="outline"
+            size="icon"
+            onClick={onToggleCameraScanMode}
+            className="h-10 w-10 text-white border-primary bg-red-500 hover:bg-red-700 hover:text-white" // Modified style for visibility
+            title="Activar Escáner de Cámara"
+            aria-label="Activar Escáner de Cámara"
+          >
+            <Camera className="h-5 w-5" />
+          </Button>
+        </div>
+        <div className="relative mb-4">
+          <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+          <Input
+            type="search"
+            placeholder="Buscar en inventario actual..."
+            value={localSearchTerm}
+            onChange={handleLocalSearchChange}
+            className="pl-8 w-full bg-blue-50 dark:bg-blue-900/30 border-blue-300 dark:border-blue-600"
+            aria-label="Buscar en lista de conteo"
+            disabled={isLoading || isDbLoading || isTransitionPending}
+          />
+        </div>
+      </>
+
+      <div className={cn("flex-1 overflow-hidden", isCameraScanModeActive ? "h-[calc(50vh-120px)]" : "h-full")}>
         <CountingListTable
           countingList={filteredCountingList}
           warehouseName={warehouseName}
-          isLoading={isLoading}
+          isLoading={isLoading || isDbLoading || isTransitionPending}
           onDeleteRequest={onDeleteRequest}
           onOpenStockDialog={onOpenStockDialog}
           onOpenQuantityDialog={onOpenQuantityDialog}
@@ -157,7 +177,6 @@ const CounterSectionComponent: React.FC<CounterSectionProps> = ({
               </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end" className="w-[calc(100vw-4rem)] sm:w-56">
-              {/* Save History item removed */}
               <DropdownMenuItem
                 onSelect={onExport}
                 disabled={currentListForWarehouse.length === 0 || isLoading}
@@ -183,7 +202,6 @@ const CounterSectionComponent: React.FC<CounterSectionProps> = ({
           </DropdownMenu>
         ) : (
           <>
-            {/* Save History button removed */}
             <Button
               onClick={onExport}
               disabled={currentListForWarehouse.length === 0 || isLoading}
@@ -216,3 +234,4 @@ const CounterSectionComponent: React.FC<CounterSectionProps> = ({
 };
 
 export const CounterSection = React.memo(CounterSectionComponent);
+

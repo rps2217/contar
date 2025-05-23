@@ -35,17 +35,17 @@ const CountingListTableComponent: React.FC<CountingListTableProps> = ({
   tableHeightClass = "h-[calc(100vh-360px)] md:h-[calc(100vh-330px)]"
 }) => {
   return (
-    <ScrollArea className={cn(tableHeightClass, "border rounded-lg shadow-sm bg-white dark:bg-gray-800")}>
+    <ScrollArea className={cn(tableHeightClass, "border rounded-lg shadow-sm bg-card dark:bg-gray-800")}>
       <Table>
-        <TableCaption className="py-3 text-sm text-gray-500 dark:text-gray-400">Inventario para {warehouseName}.</TableCaption>
-        <TableHeader className="bg-gray-50 dark:bg-gray-700 sticky top-0 z-10 shadow-sm">
+        <TableCaption className="py-3 text-sm text-muted-foreground dark:text-gray-400">Inventario para {warehouseName}.</TableCaption>
+        <TableHeader className="bg-muted/50 dark:bg-gray-700 sticky top-0 z-10 shadow-sm">
           <TableRow>
-            <TableHead className="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider w-[30%] sm:w-[30%]">Descripción</TableHead>
-            <TableHead className="px-4 py-3 text-center text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider w-[15%] sm:w-[10%]">Stock</TableHead>
-            <TableHead className="px-4 py-3 text-center text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider w-[15%] sm:w-[10%]">Cantidad</TableHead>
-            <TableHead className="hidden md:table-cell px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider w-[15%]">Vencimiento</TableHead>
-            <TableHead className="hidden md:table-cell px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider w-[15%]">Últ. Act.</TableHead>
-            <TableHead className="hidden md:table-cell px-4 py-3 text-center text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider w-[5%]">Validación</TableHead>
+            <TableHead className="px-4 py-3 text-left text-xs font-medium text-muted-foreground dark:text-gray-300 uppercase tracking-wider w-[30%] sm:w-[30%]">Descripción</TableHead>
+            <TableHead className="px-4 py-3 text-center text-xs font-medium text-muted-foreground dark:text-gray-300 uppercase tracking-wider w-[15%] sm:w-[10%]">Stock</TableHead>
+            <TableHead className="px-4 py-3 text-center text-xs font-medium text-muted-foreground dark:text-gray-300 uppercase tracking-wider w-[15%] sm:w-[10%]">Cantidad</TableHead>
+            <TableHead className="hidden md:table-cell px-4 py-3 text-left text-xs font-medium text-muted-foreground dark:text-gray-300 uppercase tracking-wider w-[15%]">Vencimiento</TableHead>
+            <TableHead className="hidden md:table-cell px-4 py-3 text-left text-xs font-medium text-muted-foreground dark:text-gray-300 uppercase tracking-wider w-[15%]">Últ. Act.</TableHead>
+            <TableHead className="hidden md:table-cell px-4 py-3 text-center text-xs font-medium text-muted-foreground dark:text-gray-300 uppercase tracking-wider w-[5%]">Validación</TableHead>
           </TableRow>
         </TableHeader>
         <TableBody>
@@ -54,23 +54,23 @@ const CountingListTableComponent: React.FC<CountingListTableProps> = ({
              const isValidLastUpdate = lastUpdatedDate && isValid(lastUpdatedDate);
              const expirationDate = product.expirationDate ? parseISO(product.expirationDate) : null;
              const isValidExpiration = expirationDate && isValid(expirationDate);
-             const uniqueKey = product.barcode; 
+             const uniqueKey = product.barcode;
             return (
                 <TableRow
                 key={uniqueKey}
                   className={cn(
-                    "hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors duration-150",
-                    product.count === product.stock && product.stock !== 0 ? "bg-green-50 dark:bg-green-900/30" : ""
+                    "hover:bg-muted/10 dark:hover:bg-gray-700/50 transition-colors duration-150",
+                    product.count === product.stock && product.stock !== 0 ? "bg-green-500/10 dark:bg-green-700/20" : ""
                 )}
                 aria-rowindex={countingList.indexOf(product) + 1}
                 >
                 <TableCell
-                    className="px-4 py-3 font-semibold text-gray-900 dark:text-gray-100"
+                    className="px-4 py-3 font-semibold text-foreground"
                     aria-label={`Detalles para ${product.description}`}
                 >
                     <span
-                        onClick={() => onDeleteRequest(product)} 
-                        className="cursor-pointer hover:text-red-600 dark:hover:text-red-400 hover:underline"
+                        onClick={() => onDeleteRequest(product)}
+                        className="cursor-pointer hover:text-destructive dark:hover:text-red-400 hover:underline"
                         title={`Eliminar ${product.description} de la lista actual`}
                     >
                         {product.description}
@@ -79,7 +79,7 @@ const CountingListTableComponent: React.FC<CountingListTableProps> = ({
                         <Button
                             variant="ghost"
                             size="icon"
-                            className="h-6 w-6 text-blue-500 hover:text-blue-600 p-0"
+                            className="h-6 w-6 text-accent hover:text-accent/80 p-0"
                             onClick={() => onEditDetailRequest(product)}
                             title={`Editar detalles de ${product.description}`}
                         >
@@ -88,7 +88,7 @@ const CountingListTableComponent: React.FC<CountingListTableProps> = ({
                         <Button
                             variant="ghost"
                             size="icon"
-                            className="h-6 w-6 text-red-500 hover:text-red-600 p-0"
+                            className="h-6 w-6 text-destructive hover:text-destructive/80 p-0"
                             onClick={() => onDeleteRequest(product)}
                             title={`Eliminar ${product.description}`}
                         >
@@ -104,7 +104,7 @@ const CountingListTableComponent: React.FC<CountingListTableProps> = ({
                     </div>
                 </TableCell>
                 <TableCell
-                    className="px-4 py-3 text-center text-gray-600 dark:text-gray-300 cursor-pointer hover:text-teal-700 dark:hover:text-teal-400 hover:font-semibold tabular-nums"
+                    className="px-4 py-3 text-center text-foreground cursor-pointer hover:text-primary dark:hover:text-primary hover:font-semibold tabular-nums text-lg md:text-base"
                     onClick={() => onOpenStockDialog(product)}
                     title={`Editar stock para ${product.description} en ${warehouseName}`}
                     aria-label={`Editar stock para ${product.description}`}
@@ -112,21 +112,21 @@ const CountingListTableComponent: React.FC<CountingListTableProps> = ({
                     {product.stock ?? 0}
                 </TableCell>
                 <TableCell
-                    className="px-4 py-3 text-center text-gray-600 dark:text-gray-300 cursor-pointer hover:text-teal-700 dark:hover:text-teal-400 hover:font-semibold tabular-nums"
+                    className="px-4 py-3 text-center text-foreground cursor-pointer hover:text-primary dark:hover:text-primary hover:font-semibold tabular-nums text-lg md:text-base"
                     onClick={() => onOpenQuantityDialog(product)}
                     title={`Editar cantidad para ${product.description} en ${warehouseName}`}
                     aria-label={`Editar cantidad para ${product.description}`}
                 >
                     {product.count ?? 0}
                 </TableCell>
-                <TableCell className="hidden md:table-cell px-4 py-3 text-gray-500 dark:text-gray-400 text-xs">
+                <TableCell className="hidden md:table-cell px-4 py-3 text-muted-foreground text-xs">
                      {isValidExpiration ? (
                         <span className={cn(new Date() > expirationDate! && 'text-red-500 font-semibold')}>
                              {format(expirationDate!, 'PP', {locale: es})}
                         </span>
                      ) : product.expirationDate === undefined ? 'N/A' : 'Fecha Inválida'}
                  </TableCell>
-                 <TableCell className="hidden md:table-cell px-4 py-3 text-gray-500 dark:text-gray-400 text-xs">
+                 <TableCell className="hidden md:table-cell px-4 py-3 text-muted-foreground text-xs">
                       {isValidLastUpdate ? format(lastUpdatedDate!, 'PPpp', { timeZone: 'auto', locale: es }) : product.lastUpdated || 'N/A'}
                   </TableCell>
                 <TableCell className="hidden md:table-cell px-4 py-3 text-center">
@@ -142,7 +142,7 @@ const CountingListTableComponent: React.FC<CountingListTableProps> = ({
             );})}
           {countingList.length === 0 && (
             <TableRow>
-              <TableCell colSpan={6} className="text-center px-4 py-10 text-gray-500 dark:text-gray-400">
+              <TableCell colSpan={6} className="text-center px-4 py-10 text-muted-foreground">
                 No hay productos en este inventario. Agrega uno para empezar.
               </TableCell>
             </TableRow>

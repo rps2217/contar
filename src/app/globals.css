@@ -9,78 +9,78 @@ body {
 
 @layer base {
   :root {
-    /* Sober, High-Contrast Light Theme */
-    --background: 0 0% 100%; /* White */
-    --foreground: 0 0% 7%; /* Near Black */
+    /* Striking yet Elegant - Light Theme */
+    --background: 210 20% 98%; /* Very light, cool gray-blue */
+    --foreground: 210 10% 23%; /* Dark desaturated blue */
     --card: 0 0% 100%; /* White */
-    --card-foreground: 0 0% 7%; /* Near Black */
+    --card-foreground: 210 10% 23%; /* Dark desaturated blue */
     --popover: 0 0% 100%; /* White */
-    --popover-foreground: 0 0% 7%; /* Near Black */
-    --primary: 220 15% 25%; /* Dark Slate Blue - Sober */
-    --primary-foreground: 0 0% 98%; /* Very Light Grey/Off-white */
-    --secondary: 0 0% 96%; /* Light Grey */
-    --secondary-foreground: 0 0% 9%; /* Dark Grey */
-    --muted: 0 0% 96%; /* Light Grey */
-    --muted-foreground: 0 0% 40%; /* Mid Grey */
-    --accent: 220 20% 45%; /* Slightly lighter Slate Blue for accents */
-    --accent-foreground: 0 0% 98%; /* Very Light Grey/Off-white */
-    --destructive: 0 70% 50%; /* Clear destructive red */
-    --destructive-foreground: 0 0% 98%;
-    --border: 0 0% 88%; /* Light Grey Border */
-    --input: 0 0% 88%; /* Light Grey Input Border */
-    --ring: 220 25% 55%; /* Ring color based on accent */
-    --chart-1: 220 15% 35%; /* Darker primary shade */
-    --chart-2: 220 20% 50%; /* Accent shade */
-    --chart-3: 0 0% 50%; /* Mid Grey */
-    --chart-4: 40 50% 50%; /* Muted Brown/Orange */
-    --chart-5: 180 20% 50%; /* Muted Teal */
+    --popover-foreground: 210 10% 23%; /* Dark desaturated blue */
+    --primary: 210 80% 50%; /* A confident, striking blue */
+    --primary-foreground: 0 0% 100%; /* White */
+    --secondary: 210 20% 91%; /* Light gray-blue */
+    --secondary-foreground: 210 10% 30%; /* Darker gray-blue */
+    --muted: 210 20% 94%; /* Very light gray-blue */
+    --muted-foreground: 210 10% 45%; /* Mid gray-blue */
+    --accent: 200 85% 55%; /* A slightly brighter, more energetic blue/cyan */
+    --accent-foreground: 0 0% 100%; /* White */
+    --destructive: 0 72% 51%; /* Vivid red */
+    --destructive-foreground: 0 0% 98%; /* Very light grey/Off-white for destructive text */
+    --border: 210 20% 88%; /* Light gray-blue border */
+    --input: 210 20% 85%; /* Slightly darker input border for definition */
+    --ring: 210 80% 60%; /* Ring color based on primary */
+    --chart-1: 210 70% 40%; /* Darker primary shade */
+    --chart-2: 200 75% 50%; /* Accent shade */
+    --chart-3: 210 10% 50%; /* Mid gray-blue */
+    --chart-4: 30 60% 55%; /* Muted Orange */
+    --chart-5: 150 50% 50%; /* Muted Teal/Green */
     --radius: 0.5rem;
 
-    /* Sidebar Light Theme */
-    --sidebar-background: 0 0% 97%; /* Slightly off-white */
-    --sidebar-foreground: 0 0% 10%; /* Dark */
+    /* Sidebar Light Theme (derives from main theme) */
+    --sidebar-background: 0 0% 97%; /* Slightly off-white, can be adjusted for more contrast */
+    --sidebar-foreground: hsl(var(--foreground));
     --sidebar-primary: hsl(var(--primary));
     --sidebar-primary-foreground: hsl(var(--primary-foreground));
-    --sidebar-accent: 0 0% 90%; /* Light grey for active/hover items */
-    --sidebar-accent-foreground: 0 0% 7%; /* Dark text on accent */
+    --sidebar-accent: hsl(var(--secondary)); /* Use secondary as base for active/hover */
+    --sidebar-accent-foreground: hsl(var(--secondary-foreground));
     --sidebar-border: hsl(var(--border));
     --sidebar-ring: hsl(var(--ring));
   }
 
   .dark {
-    /* Sober, High-Contrast Dark Theme */
-    --background: 0 0% 8%; /* Very Dark Grey, Near Black */
-    --foreground: 0 0% 95%; /* Off-white */
-    --card: 0 0% 12%; /* Slightly lighter than background */
-    --card-foreground: 0 0% 95%;
-    --popover: 0 0% 12%;
-    --popover-foreground: 0 0% 95%;
-    --primary: 220 30% 65%; /* Lighter Slate Blue for Dark Mode */
-    --primary-foreground: 0 0% 10%; /* Very Dark Grey for contrast on primary */
-    --secondary: 0 0% 15%; /* Darker Grey */
-    --secondary-foreground: 0 0% 85%; /* Lighter Grey */
-    --muted: 0 0% 15%;
-    --muted-foreground: 0 0% 60%; /* Mid-Light Grey */
-    --accent: 220 40% 70%; /* Brighter Slate Blue for accents in dark mode */
-    --accent-foreground: 0 0% 10%; /* Very Dark Grey */
-    --destructive: 0 60% 55%; /* Slightly desaturated red for dark mode */
+    /* Striking yet Elegant - Dark Theme */
+    --background: 210 15% 12%; /* Very dark, cool blue-gray */
+    --foreground: 210 15% 95%; /* Light off-white with a hint of blue */
+    --card: 210 15% 18%; /* Slightly lighter than background */
+    --card-foreground: 210 15% 95%;
+    --popover: 210 15% 18%;
+    --popover-foreground: 210 15% 95%;
+    --primary: 210 80% 60%; /* Lighter, but still striking blue for dark mode */
+    --primary-foreground: 210 10% 15%; /* Very dark blue for contrast on primary */
+    --secondary: 210 15% 25%; /* Darker gray-blue */
+    --secondary-foreground: 210 15% 80%; /* Lighter gray-blue */
+    --muted: 210 15% 25%;
+    --muted-foreground: 210 15% 60%; /* Mid-light gray-blue */
+    --accent: 200 85% 65%; /* Brighter accent for dark mode */
+    --accent-foreground: 210 10% 15%; /* Very dark blue for contrast on accent */
+    --destructive: 0 70% 60%; /* Slightly desaturated red for dark mode */
     --destructive-foreground: 0 0% 98%;
-    --border: 0 0% 20%; /* Darker Border */
-    --input: 0 0% 20%; /* Darker Input Border */
-    --ring: 220 40% 75%; /* Lighter ring color based on accent */
-    --chart-1: 220 30% 55%;
-    --chart-2: 220 40% 75%;
-    --chart-3: 0 0% 65%;
-    --chart-4: 40 50% 60%;
-    --chart-5: 180 20% 60%;
+    --border: 210 15% 28%; /* Darker cool border */
+    --input: 210 15% 30%; /* Slightly distinct input border */
+    --ring: 210 80% 70%; /* Lighter ring for dark mode */
+    --chart-1: 210 70% 50%;
+    --chart-2: 200 75% 60%;
+    --chart-3: 210 15% 65%;
+    --chart-4: 30 60% 65%;
+    --chart-5: 150 50% 60%;
 
-    /* Sidebar Dark Theme */
-    --sidebar-background: 0 0% 10%; /* Slightly lighter than main dark background */
-    --sidebar-foreground: 0 0% 90%; /* Light */
+    /* Sidebar Dark Theme (derives from main theme) */
+    --sidebar-background: 210 15% 10%; /* Slightly darker than main dark background */
+    --sidebar-foreground: hsl(var(--foreground));
     --sidebar-primary: hsl(var(--primary));
     --sidebar-primary-foreground: hsl(var(--primary-foreground));
-    --sidebar-accent: 0 0% 20%; /* Dark grey for active/hover items */
-    --sidebar-accent-foreground: 0 0% 95%; /* Light text on accent */
+    --sidebar-accent: hsl(var(--secondary)); /* Use secondary for active/hover */
+    --sidebar-accent-foreground: hsl(var(--secondary-foreground));
     --sidebar-border: hsl(var(--border));
     --sidebar-ring: hsl(var(--ring));
   }
@@ -114,6 +114,7 @@ body {
 /* Additional styling adjustments for better visual comfort */
 h1, h2, h3, h4, h5, h6 {
     letter-spacing: -0.02em; /* Slightly tighter letter spacing for headings */
+    @apply font-semibold; /* Ensure headings have some weight */
 }
 
 input, button, select, textarea {
@@ -121,13 +122,14 @@ input, button, select, textarea {
     @apply focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 focus:ring-offset-background;
 }
 
-/* Slightly softer shadows */
-.shadow-sm { box-shadow: 0 1px 2px 0 hsla(var(--foreground) / 0.04); }
-.shadow { box-shadow: 0 1px 3px 0 hsla(var(--foreground) / 0.06), 0 1px 2px -1px hsla(var(--foreground) / 0.05); }
-.shadow-md { box-shadow: 0 4px 6px -1px hsla(var(--foreground) / 0.06), 0 2px 4px -2px hsla(var(--foreground) / 0.05); }
-.shadow-lg { box-shadow: 0 10px 15px -3px hsla(var(--foreground) / 0.06), 0 4px 6px -4px hsla(var(--foreground) / 0.05); }
-.shadow-xl { box-shadow: 0 20px 25px -5px hsla(var(--foreground) / 0.06), 0 8px 10px -6px hsla(var(--foreground) / 0.05); }
-.shadow-inner { box-shadow: inset 0 2px 4px 0 hsla(var(--foreground) / 0.04); }
+/* Slightly softer shadows - adjust opacity if needed */
+.shadow-sm { box-shadow: 0 1px 2px 0 hsla(var(--foreground) / 0.03); }
+.shadow { box-shadow: 0 1px 3px 0 hsla(var(--foreground) / 0.04), 0 1px 2px -1px hsla(var(--foreground) / 0.04); }
+.shadow-md { box-shadow: 0 4px 6px -1px hsla(var(--foreground) / 0.04), 0 2px 4px -2px hsla(var(--foreground) / 0.04); }
+.shadow-lg { box-shadow: 0 10px 15px -3px hsla(var(--foreground) / 0.05), 0 4px 6px -4px hsla(var(--foreground) / 0.04); }
+.shadow-xl { box-shadow: 0 20px 25px -5px hsla(var(--foreground) / 0.05), 0 8px 10px -6px hsla(var(--foreground) / 0.04); }
+.shadow-inner { box-shadow: inset 0 2px 4px 0 hsla(var(--foreground) / 0.03); }
+
 
 /* Login form specific styles */
 .login-container {
@@ -135,12 +137,16 @@ input, button, select, textarea {
   justify-content: center;
   align-items: center;
   min-height: 100vh;
-  background-color: hsl(var(--background)); /* Use theme background */
+  background-color: hsl(var(--background));
 }
 
 .login-form {
-  /* Using theme variables for card-like appearance */
   background-color: hsl(var(--card));
   color: hsl(var(--card-foreground));
   border: 1px solid hsl(var(--border));
+  padding: 2rem; /* Equivalent to p-8 */
+  border-radius: 0.5rem; /* Equivalent to rounded-lg */
+  box-shadow: 0 10px 15px -3px hsla(var(--foreground) / 0.05), 0 4px 6px -4px hsla(var(--foreground) / 0.04); /* Equivalent to shadow-xl */
+  width: 100%;
+  max-width: 24rem; /* Equivalent to max-w-sm */
 }

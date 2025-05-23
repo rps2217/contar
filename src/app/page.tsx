@@ -1,7 +1,7 @@
 // src/app/page.tsx
 "use client";
 
-import type { DisplayProduct, ProductDetail, Warehouse } from '@/types/product';
+import type { DisplayProduct, ProductDetail, Warehouse, ConsolidatedProductViewItem } from '@/types/product';
 import { useToast } from "@/hooks/use-toast";
 import { cn, getLocalStorageItem, setLocalStorageItem, debounce } from "@/lib/utils";
 import {
@@ -23,7 +23,7 @@ import { CountingListTable } from '@/components/counting-list-table';
 import { WarehouseManagement } from "@/components/warehouse-management";
 import { format, isValid, parseISO } from 'date-fns';
 import { es } from 'date-fns/locale';
-import { Minus, Plus, Trash, RefreshCw, Search, Boxes, Loader2, CalendarClock, BookOpenText, Users2, ClipboardList, MoreVertical, Warehouse as WarehouseIconLucide, LockKeyhole, CheckCircle, PackageSearch, AlertTriangle, Menu as MenuIcon, User, ShieldAlert, Filter, PanelLeftClose, PanelRightOpen, Save, Library, X, Check, Camera } from "lucide-react"; // Added Camera icon
+import { Minus, Plus, Trash, RefreshCw, Search, Boxes, Loader2, CalendarClock, BookOpenText, Users2, ClipboardList, MoreVertical, Warehouse as WarehouseIconLucide, LockKeyhole, CheckCircle, PackageSearch, AlertTriangle, Menu as MenuIcon, User, ShieldAlert, Filter, PanelLeftClose, PanelRightOpen, Save, Library, X, Check, Camera, Download } from "lucide-react"; // Added Download icon
 import React, { useCallback, useEffect, useRef, useState, useMemo, useTransition } from "react";
 import { playBeep } from '@/lib/helpers';
 import { ModifyValueDialog } from '@/components/modify-value-dialog';
@@ -42,9 +42,9 @@ import {
   addOrUpdateWarehouseInFirestore,
   deleteWarehouseFromFirestore,
   // History related functions (save, get, clear) are for Firestore
-  saveCountingHistoryToFirestore,
-  getCountingHistoryFromFirestore,
-  clearCountingHistoryInFirestore,
+  // saveCountingHistoryToFirestore,
+  // getCountingHistoryFromFirestore,
+  // clearCountingHistoryInFirestore,
 } from '@/lib/firestore-service';
 import { SidebarLayout } from '@/components/sidebar-layout';
 import { Sheet, SheetContent, SheetTrigger, SheetHeader, SheetTitle } from "@/components/ui/sheet";
@@ -57,7 +57,6 @@ import {
 import { useIsMobile } from '@/hooks/use-mobile';
 import { CounterSection } from '@/components/counter-section';
 import { useLocalStorage } from '@/hooks/use-local-storage';
-import { BarcodeEntry } from '@/components/barcode-entry';
 import {
     LOCAL_STORAGE_USER_ID_KEY,
     LOCAL_STORAGE_ACTIVE_SECTION_KEY,
@@ -84,6 +83,7 @@ export default function Home() {
   const barcodeInputRef = useRef<HTMLInputElement>(null);
   const isMountedRef = useRef(false);
   const lastScannedTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const videoRef = useRef<HTMLVideoElement>(null); // Ref for the video element used by barcode scanner
 
   // --- React Transition Hook ---
   const [isTransitionPending, startTransition] = useTransition();
@@ -161,7 +161,7 @@ export default function Home() {
                     barcodeInputRef.current.focus();
                 }
             }
-        }, 100);
+        }, 100); // Ajustado de 50ms a 100ms
     }
   }, [activeSection]);
 
@@ -198,9 +198,10 @@ export default function Home() {
   useEffect(() => {
     if (!currentUserId || !db) {
         if (isMountedRef.current) {
-            setWarehouses(PREDEFINED_WAREHOUSES_LIST);
+            let localDefaultWarehouses = [...PREDEFINED_WAREHOUSES_LIST];
+            setWarehouses(localDefaultWarehouses);
             const storedWarehouseId = currentUserId ? getLocalStorageItem<string>(`${LOCAL_STORAGE_CURRENT_WAREHOUSE_ID_KEY_PREFIX}${currentUserId}`, DEFAULT_WAREHOUSE_ID) : DEFAULT_WAREHOUSE_ID;
-            const currentSelectionIsValid = PREDEFINED_WAREHOUSES_LIST.some(w => w.id === storedWarehouseId);
+            const currentSelectionIsValid = localDefaultWarehouses.some(w => w.id === storedWarehouseId);
             setCurrentWarehouseId(currentSelectionIsValid ? storedWarehouseId : DEFAULT_WAREHOUSE_ID);
             setIsDbLoading(false);
         }
@@ -230,13 +231,17 @@ export default function Home() {
                             batch.set(warehouseDocRef, wh);
                         });
                         await batch.commit();
-                        // Firestore listener will pick up these changes
+                        // Firestore listener will pick up these changes, so we don't manually merge here.
+                        // The listener will update `finalWarehousesToSet` in a subsequent call.
                     } catch (err) {
                         console.error(`Failed to add predefined warehouses for user ${currentUserId}:`, err);
                         if(isMountedRef.current) requestAnimationFrame(() => toast({ variant: "destructive", title: "Error DB", description: `No se pudieron agregar almacenes predefinidos.`}));
-                        finalWarehousesToSet = [...fetchedWarehouses, ...warehousesToAddBatch].filter((v,i,a)=>a.findIndex(t=>(t.id === v.id))===i);
+                        // If batch fails, we still want to show the predefined ones locally
+                        finalWarehousesToSet = [...fetchedWarehouses, ...warehousesToAddBatch].filter((v,i,a)=>a.findIndex(t=>(t.id === v.id))===i); // Deduplicate
                     }
                 }
+                // If Firestore is empty for the user, AND no batch was needed (meaning predefined also somehow empty),
+                // ensure we have at least the defaults.
                  if (finalWarehousesToSet.length === 0 && warehousesToAddBatch.length === 0) {
                      finalWarehousesToSet = [...PREDEFINED_WAREHOUSES_LIST];
                 }
@@ -264,7 +269,7 @@ export default function Home() {
         unsubscribe();
         if (isMountedRef.current) setIsDbLoading(false);
     };
-  }, [currentUserId, toast]);
+  }, [currentUserId, toast]); // Removed currentWarehouseId from deps as it's handled by localStorage
 
 
   useEffect(() => {
@@ -354,7 +359,7 @@ export default function Home() {
     const stockToCheck = product.stock ?? 0;
 
     if (stockToCheck > 0 && countToCheck !== stockToCheck) {
-        if (isMountedRef.current && activeSection !== 'Contador' && activeSection !== 'Contador Cámara') {
+        if (isMountedRef.current && activeSection !== 'Contador' && activeSection !== 'Contador Cámara') { // No mostrar en secciones de conteo
             requestAnimationFrame(() => {
                 if(isMountedRef.current) {
                     toast({
@@ -636,6 +641,7 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
     const productInList = countingList[productIndexInList];
     const originalValue = type === 'count' ? productInList.count ?? 0 : productInList.stock ?? 0;
     
+    // Si el valor no cambia y no es una suma, no hacer nada
     if (type === 'count' && !sumValue && newValue === originalValue) {
         if(isMountedRef.current) setOpenModifyDialog(null);
         requestAnimationFrame(() => {
@@ -651,7 +657,6 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
     productForToast = { ...productInList, [type]: finalValue, lastUpdated: new Date().toISOString() };
 
     if (type === 'count') {
-        // Show confirmation only if new value is GREATER than stock (and stock is > 0, and original value was not already > stock)
         const stockVal = productInList.stock ?? 0;
         needsConfirmation = finalValue > stockVal && stockVal > 0 && originalValue <= stockVal;
     }
@@ -729,12 +734,15 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
                  }
              } else if (type === 'count' && productForToast) {
                  showDiscrepancyToastIfNeeded(productForToast, finalValue);
-                 if(isMountedRef.current && (activeSection === 'Contador' || activeSection === 'Contador Cámara')) {
-                    requestAnimationFrame(() => {
-                        if (isMountedRef.current) {
-                            toast({ title: "Cantidad Modificada" });
-                        }
-                    });
+                 // Mostrar toast de "Cantidad Modificada" solo si no se mostró un toast de discrepancia
+                 // y estamos en las secciones de conteo.
+                 const didShowDiscrepancy = showDiscrepancyToastIfNeeded(productForToast, finalValue);
+                 if (!didShowDiscrepancy && isMountedRef.current && (activeSection === 'Contador' || activeSection === 'Contador Cámara')) {
+                     requestAnimationFrame(() => {
+                         if (isMountedRef.current) {
+                             toast({ title: "Cantidad Modificada" });
+                         }
+                     });
                  }
              }
          }
@@ -798,14 +806,17 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
             if (productInList) {
                 const tempProductForToast = {...productInList, count: confirmedValue};
                 showDiscrepancyToastIfNeeded(tempProductForToast, confirmedValue);
-                if (!showDiscrepancyToastIfNeeded(tempProductForToast, confirmedValue) || activeSection === 'Contador' || activeSection === 'Contador Cámara') {
+                // Mostrar toast de "Cantidad Modificada" solo si no se mostró toast de discrepancia
+                // y estamos en las secciones de conteo.
+                 const didShowDiscrepancy = showDiscrepancyToastIfNeeded(tempProductForToast, confirmedValue);
+                if (!didShowDiscrepancy && isMountedRef.current && (activeSection === 'Contador' || activeSection === 'Contador Cámara')) {
                      requestAnimationFrame(() => {
                         if (isMountedRef.current) {
                             toast({ title: "Cantidad Modificada" });
                         }
                      });
                 }
-            } else {
+            } else { // Si el producto no estaba en la lista (improbable aquí), mostrar el toast
                  requestAnimationFrame(() => {
                     if (isMountedRef.current) {
                         toast({ title: "Cantidad Modificada" });
@@ -854,8 +865,7 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
                 if (isMountedRef.current) {
                     toast({
                         title: "Producto eliminado",
-                        description: `"${descriptionForToast}" (${barcodeForToast}) se eliminó de la lista actual.`,
-                        variant: "default"
+                        description: `"${descriptionForToast}" (${barcodeForToast}) se eliminó de la lista.`,
                     });
                 }
             });
@@ -888,7 +898,7 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
          if(isMountedRef.current) {
             requestAnimationFrame(() => {
                 if (isMountedRef.current) {
-                    toast({ title: "Lista Actual Borrada" });
+                    toast({ title: "Lista Borrada" });
                 }
             });
           }
@@ -1048,7 +1058,7 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
               if(isMountedRef.current) {
                 requestAnimationFrame(() => {
                     if (isMountedRef.current) {
-                        toast({ title: "Datos Actualizados", description: `${updatedProductCount} actualizado(s), ${addedProductCount} agregado(s) desde catálogo local.` });
+                        toast({ title: "Datos Actualizados", description: `${updatedProductCount} actualizado(s), ${addedProductCount} agregado(s).` });
                     }
                 });
               }
@@ -1191,7 +1201,7 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
              if(isMountedRef.current) {
                 requestAnimationFrame(() => {
                     if (isMountedRef.current) {
-                        toast({ title: "Producto Actualizado en Catálogo Local" });
+                        toast({ title: "Producto Actualizado" });
                     }
                 });
              }
@@ -1333,7 +1343,7 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
           requestAnimationFrame(() => {
               toast({title: "Almacén Agregado", description: `Cambiado a: ${newWarehouse.name}`});
           });
-          handleWarehouseChange(newWarehouse.id);
+          handleWarehouseChange(newWarehouse.id); // Switch to the new warehouse
       } catch (error) {
           // Error toast handled by firestore-service
       }
@@ -1358,6 +1368,7 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
        }
        try {
            await deleteWarehouseFromFirestore(currentUserId, warehouseIdToDelete);
+           // The onSnapshot listener will update the UI and handle re-selection if needed
        } catch (error) {
            // Error toast handled by firestore-service
        }
@@ -1392,7 +1403,7 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
           if(isMountedRef.current) {
             requestAnimationFrame(() => {
                 if (isMountedRef.current) {
-                    toast({ title: "Catálogo Local Borrado" });
+                    toast({ title: "Catálogo Borrado" });
                 }
             });
           }
@@ -1402,7 +1413,7 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
           if(isMountedRef.current) {
             requestAnimationFrame(() => {
                 if (isMountedRef.current) {
-                    toast({ variant: "destructive", title: "Error al Borrar Catálogo Local", description: `No se pudieron borrar datos: ${error.message}` });
+                    toast({ variant: "destructive", title: "Error al Borrar Catálogo", description: `No se pudieron borrar datos: ${error.message}` });
                 }
             });
           }
@@ -1435,12 +1446,12 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
         setCurrentUserId(null);
         setCountingList([]);
         setCatalogProducts([]);
-        setWarehouses(PREDEFINED_WAREHOUSES_LIST);
+        setWarehouses(PREDEFINED_WAREHOUSES_LIST); // Reset to default local list
         setCurrentWarehouseId(DEFAULT_WAREHOUSE_ID);
         if (typeof window !== 'undefined') {
             localStorage.removeItem(LOCAL_STORAGE_USER_ID_KEY);
         }
-        isInitialFetchDoneForUser.current = {};
+        isInitialFetchDoneForUser.current = {}; // Reset initial fetch flag
         requestAnimationFrame(() => toast({title: "Sesión cerrada"}));
     }
   };
@@ -1490,7 +1501,7 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
             setLocalStorageItem(LOCAL_STORAGE_USER_ID_KEY, LOGIN_USER);
             const storedWarehouseId = getLocalStorageItem<string>(`${LOCAL_STORAGE_CURRENT_WAREHOUSE_ID_KEY_PREFIX}${LOGIN_USER}`, DEFAULT_WAREHOUSE_ID);
             setCurrentWarehouseId(storedWarehouseId);
-            isInitialFetchDoneForUser.current[LOGIN_USER] = false;
+            isInitialFetchDoneForUser.current[LOGIN_USER] = false; // Ensure this resets for new login
 
             requestAnimationFrame(() => {
                 toast({ title: "Inicio de sesión exitoso" });
@@ -1509,13 +1520,12 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
   };
 
   // --- Barcode Camera Scan Specific Logic ---
-  const [isCameraScanMode, setIsCameraScanMode] = useState(false); // Renamed from isCameraScanning for clarity
+  const [isCameraScanMode, setIsCameraScanMode] = useState(false); 
 
   const toggleCameraScanMode = useCallback(() => {
     if (isMountedRef.current) {
       setIsCameraScanMode(prev => !prev);
-      // Ensure barcode input is focused when switching back to manual mode
-      if (isCameraScanMode) { // If we are turning it OFF
+      if (isCameraScanMode) { 
         requestAnimationFrame(() => {
           focusBarcodeIfCounting();
         });
@@ -1526,9 +1536,7 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
 
   const handleBarcodeScannedFromCamera = useCallback((scannedBarcode: string) => {
     if (isMountedRef.current) {
-      // Optionally, provide haptic feedback or a quick sound distinct from manual add
-      // playBeep(750, 80); // Slightly different beep for camera scan
-      handleAddProduct(scannedBarcode); // Use the existing add product logic
+      handleAddProduct(scannedBarcode); 
     }
   }, [handleAddProduct]);
 
@@ -1610,19 +1618,18 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
       <main className="flex-1 p-6 overflow-y-auto">
         {activeSection === 'Contador' && currentUserId && (
           <div id="contador-content" className="space-y-4 h-full flex flex-col">
-             <div className="flex items-center gap-2 mb-4">
-                <div className="flex-grow">
-                    <BarcodeEntry
-                        barcode={barcode}
-                        setBarcode={setBarcode}
-                        onAddProduct={() => handleAddProduct()}
-                        onRefreshStock={handleRefreshStock}
-                        isLoading={isDbLoading || isTransitionPending}
-                        isRefreshingStock={isRefreshingStock}
-                        inputRef={barcodeInputRef}
-                    />
-                </div>
-                 {/* Removed Camera Toggle Button from here as requested previously */}
+            <div className="flex items-center gap-2 mb-4">
+              <div className="flex-grow">
+                <BarcodeEntry
+                    barcode={barcode}
+                    setBarcode={setBarcode}
+                    onAddProduct={handleAddProduct}
+                    onRefreshStock={handleRefreshStock}
+                    isLoading={isDbLoading || isTransitionPending}
+                    isRefreshingStock={isRefreshingStock}
+                    inputRef={barcodeInputRef}
+                />
+              </div>
             </div>
             <div className="relative">
                 <Search className="absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
@@ -1879,7 +1886,7 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
                     catalogProducts={catalogProducts}
                     warehouses={warehouses}
                     currentUserId={currentUserId}
-                    getWarehouseName={getWarehouseName}
+                    // getWarehouseName={getWarehouseName} // Esta prop ya no es necesaria en ConsolidatedView
                 />
              </div>
             )}
@@ -1957,8 +1964,8 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
                 });
             }
          }}
-         title="Confirmar Eliminación (Lista Actual)"
-         description={ productToDelete ? `¿Seguro que deseas eliminar "${productToDelete?.description}" (${productToDelete?.barcode}) del inventario actual (${getWarehouseName(productToDelete?.warehouseId)})? Esta acción no se puede deshacer.` : `¿Seguro que deseas eliminar este producto?`}
+         title="Confirmar Eliminación"
+         description={ productToDelete ? `¿Seguro que deseas eliminar "${productToDelete?.description}" (${productToDelete?.barcode}) de la lista actual (${getWarehouseName(productToDelete?.warehouseId)})?` : `¿Seguro que deseas eliminar este producto?`}
          onConfirm={confirmDelete}
          onCancel={() => {
             if(isMountedRef.current) setIsDeleteDialogOpen(false);
@@ -1985,7 +1992,7 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
             }
           }}
           title="Confirmar Borrado de Lista"
-          description={`¿Estás seguro de que deseas borrar todos los productos del inventario actual (${getWarehouseName(currentWarehouseId)})? Esta acción no se puede deshacer.`}
+          description={`¿Estás seguro de que deseas borrar todos los productos del inventario actual (${getWarehouseName(currentWarehouseId)})?`}
           onConfirm={handleClearCurrentList}
           onCancel={() => {
             if(isMountedRef.current) setIsDeleteListDialogOpen(false);
@@ -2011,7 +2018,7 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
                     });
                 }
             }}
-            title="Confirmar Borrado Catálogos"
+            title="Confirmar Borrado Catálogo"
             description={ 
                  <div className="space-y-2">
                     <div className="flex items-center gap-2 text-destructive">
@@ -2068,7 +2075,7 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
                         if(isMountedRef.current) {
                           requestAnimationFrame(() => {
                               if (isMountedRef.current) {
-                                  toast({title: "Producto eliminado del catálogo local"});
+                                  toast({title: "Producto eliminado del catálogo"});
                               }
                           });
                         }
@@ -2111,5 +2118,6 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
     
 
     
+
 
 

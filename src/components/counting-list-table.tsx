@@ -1,10 +1,11 @@
+
 // src/components/counting-list-table.tsx
 import React from 'react';
 import type { DisplayProduct } from '@/types/product';
 import { Table, TableBody, TableCaption, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Button } from "@/components/ui/button";
-import { Check, Minus, Plus, Edit, Trash, CalendarIcon } from "lucide-react";
+import { Check, Edit, Minus, Plus, Trash, CalendarIcon } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { format, isValid, parseISO } from 'date-fns';
 import { es } from 'date-fns/locale';
@@ -49,20 +50,21 @@ const CountingListTableComponent: React.FC<CountingListTableProps> = ({
           </TableRow>
         </TableHeader>
         <TableBody>
-          {countingList.map((product) => {
+          {countingList.map((product, index) => {
              const lastUpdatedDate = product.lastUpdated ? new Date(product.lastUpdated) : null;
              const isValidLastUpdate = lastUpdatedDate && isValid(lastUpdatedDate);
              const expirationDate = product.expirationDate ? parseISO(product.expirationDate) : null;
              const isValidExpiration = expirationDate && isValid(expirationDate);
-             const uniqueKey = product.barcode;
+             const uniqueKey = product.barcode; // Barcode should be unique within a warehouse's counting list
             return (
                 <TableRow
-                key={uniqueKey}
+                  key={uniqueKey}
                   className={cn(
                     "hover:bg-muted/10 dark:hover:bg-gray-700/50 transition-colors duration-150",
-                    product.count === product.stock && product.stock !== 0 ? "bg-green-500/10 dark:bg-green-700/20" : ""
-                )}
-                aria-rowindex={countingList.indexOf(product) + 1}
+                    (product.count ?? 0) > (product.stock ?? 0) ? "bg-rose-100 dark:bg-rose-900/40" : // Pastel pink if count > stock
+                    ((product.count ?? 0) === (product.stock ?? 0) && (product.stock ?? 0) !== 0 ? "bg-green-500/10 dark:bg-green-700/20" : "") // Pastel green if count === stock (and stock is not 0)
+                  )}
+                  aria-rowindex={index + 1}
                 >
                 <TableCell
                     className="px-4 py-3 font-semibold text-foreground"
@@ -100,7 +102,7 @@ const CountingListTableComponent: React.FC<CountingListTableProps> = ({
                             <span className={cn(new Date() > expirationDate! && 'text-red-500 font-semibold')}>
                                 Vence: {format(expirationDate!, 'dd/MM/yy', {locale: es})}
                             </span>
-                        ) : product.expirationDate === undefined ? 'Venc: N/A' : 'Venc: Inválido'}
+                        ) : product.expirationDate === undefined || product.expirationDate === null ? 'Venc: N/A' : 'Venc: Inválido'}
                     </div>
                 </TableCell>
                 <TableCell
@@ -124,18 +126,18 @@ const CountingListTableComponent: React.FC<CountingListTableProps> = ({
                         <span className={cn(new Date() > expirationDate! && 'text-red-500 font-semibold')}>
                              {format(expirationDate!, 'PP', {locale: es})}
                         </span>
-                     ) : product.expirationDate === undefined ? 'N/A' : 'Fecha Inválida'}
+                     ) : product.expirationDate === undefined || product.expirationDate === null ? 'N/A' : 'Fecha Inválida'}
                  </TableCell>
                  <TableCell className="hidden md:table-cell px-4 py-3 text-muted-foreground text-xs">
-                      {isValidLastUpdate ? format(lastUpdatedDate!, 'PPpp', { timeZone: 'auto', locale: es }) : product.lastUpdated || 'N/A'}
+                      {isValidLastUpdate ? format(lastUpdatedDate!, 'PPpp', { locale: es }) : product.lastUpdated || 'N/A'}
                   </TableCell>
                 <TableCell className="hidden md:table-cell px-4 py-3 text-center">
-                    {product.count === product.stock && product.stock !== 0 ? (
+                    {(product.count ?? 0) === (product.stock ?? 0) && (product.stock ?? 0) !== 0 ? (
                     <Check className="h-5 w-5 text-green-600 dark:text-green-400 mx-auto" />
-                    ) : product.count > (product.stock ?? 0) ? (
-                    <span className="text-yellow-600 dark:text-yellow-400 font-semibold">+{product.count - (product.stock ?? 0)}</span>
-                    ) : (product.stock ?? 0) > 0 && product.count < (product.stock ?? 0) ? (
-                    <span className="text-red-600 dark:text-red-400 font-semibold">{product.count - (product.stock ?? 0)}</span>
+                    ) : (product.count ?? 0) > (product.stock ?? 0) ? (
+                    <span className="text-yellow-600 dark:text-yellow-400 font-semibold">+{ (product.count ?? 0) - (product.stock ?? 0)}</span>
+                    ) : (product.stock ?? 0) > 0 && (product.count ?? 0) < (product.stock ?? 0) ? (
+                    <span className="text-red-600 dark:text-red-400 font-semibold">{(product.count ?? 0) - (product.stock ?? 0)}</span>
                     ) : null}
                 </TableCell>
                 </TableRow>
@@ -154,3 +156,4 @@ const CountingListTableComponent: React.FC<CountingListTableProps> = ({
 };
 
 export const CountingListTable = React.memo(CountingListTableComponent);
+

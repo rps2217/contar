@@ -24,8 +24,8 @@ interface CounterSectionProps {
   isLoading: boolean;
   isRefreshingStock: boolean;
   inputRef: React.RefObject<HTMLInputElement>;
-  searchTerm: string; // searchTerm from parent (Home)
-  setSearchTerm: (term: string) => void; // setSearchTerm from parent (Home)
+  searchTerm: string; 
+  setSearchTerm: (term: string) => void; 
   filteredCountingList: DisplayProduct[];
   warehouseName: string;
   onDeleteRequest: (product: DisplayProduct) => void;
@@ -36,8 +36,8 @@ interface CounterSectionProps {
   onEditDetailRequest: (product: DisplayProduct) => void;
   countingList: DisplayProduct[]; 
   currentWarehouseId: string;
-  isSavingToHistory: boolean;
-  onSaveToHistory: () => Promise<void>;
+  // isSavingToHistory: boolean; // Prop removed
+  // onSaveToHistory: () => Promise<void>; // Prop removed
   onExport: () => void;
   onSetIsDeleteListDialogOpen: (isOpen: boolean) => void;
   isMobile: boolean;
@@ -54,8 +54,8 @@ const CounterSectionComponent: React.FC<CounterSectionProps> = ({
   isLoading, 
   isRefreshingStock, 
   inputRef,
-  searchTerm, // Prop from Home
-  setSearchTerm, // Prop from Home
+  searchTerm, 
+  setSearchTerm, 
   filteredCountingList,
   warehouseName,
   onDeleteRequest,
@@ -66,8 +66,8 @@ const CounterSectionComponent: React.FC<CounterSectionProps> = ({
   onEditDetailRequest,
   countingList, 
   currentWarehouseId,
-  isSavingToHistory,
-  onSaveToHistory,
+  // isSavingToHistory, // Prop removed
+  // onSaveToHistory, // Prop removed
   onExport,
   onSetIsDeleteListDialogOpen,
   isMobile,
@@ -83,8 +83,6 @@ const CounterSectionComponent: React.FC<CounterSectionProps> = ({
   const [localSearchTerm, setLocalSearchTerm] = React.useState(searchTerm);
 
   React.useEffect(() => {
-    // Sync localSearchTerm if the prop searchTerm changes from parent
-    // (e.g., if Home component resets it or changes it for other reasons)
     if (localSearchTerm !== searchTerm) {
       setLocalSearchTerm(searchTerm);
     }
@@ -93,9 +91,9 @@ const CounterSectionComponent: React.FC<CounterSectionProps> = ({
 
   const debouncedSetParentSearchTerm = React.useMemo(
     () => debounce((term: string) => {
-      setSearchTerm(term); // Call the parent's setSearchTerm
-    }, 300), // 300ms debounce time
-    [setSearchTerm] // setSearchTerm from Home is stable
+      setSearchTerm(term); 
+    }, 300), 
+    [setSearchTerm] 
   );
 
   const handleLocalSearchChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -105,7 +103,6 @@ const CounterSectionComponent: React.FC<CounterSectionProps> = ({
   };
   
   React.useEffect(() => {
-    // Cleanup debounce timer on unmount
     return () => {
       debouncedSetParentSearchTerm.clear?.();
     };
@@ -128,8 +125,8 @@ const CounterSectionComponent: React.FC<CounterSectionProps> = ({
         <Input
           type="search"
           placeholder="Buscar en inventario actual..."
-          value={localSearchTerm} // Use localSearchTerm for input value
-          onChange={handleLocalSearchChange} // Use local handler
+          value={localSearchTerm} 
+          onChange={handleLocalSearchChange} 
           className="pl-8 w-full bg-blue-50 dark:bg-blue-900/30 border-blue-300 dark:border-blue-600"
           aria-label="Buscar en lista de conteo"
           disabled={isLoading}
@@ -160,13 +157,7 @@ const CounterSectionComponent: React.FC<CounterSectionProps> = ({
               </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end" className="w-[calc(100vw-4rem)] sm:w-56">
-              <DropdownMenuItem
-                onSelect={onSaveToHistory}
-                disabled={currentListForWarehouse.length === 0 || isLoading || isSavingToHistory}
-              >
-                {isSavingToHistory ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <Save className="h-4 w-4 mr-2" />}
-                {isSavingToHistory ? "Guardando..." : "Guardar Historial"}
-              </DropdownMenuItem>
+              {/* Save History item removed */}
               <DropdownMenuItem
                 onSelect={onExport}
                 disabled={currentListForWarehouse.length === 0 || isLoading}
@@ -192,15 +183,7 @@ const CounterSectionComponent: React.FC<CounterSectionProps> = ({
           </DropdownMenu>
         ) : (
           <>
-            <Button
-              onClick={onSaveToHistory}
-              disabled={currentListForWarehouse.length === 0 || isLoading || isSavingToHistory}
-              variant="outline"
-              className="flex items-center gap-1 w-full sm:w-auto"
-            >
-              {isSavingToHistory ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
-              {isSavingToHistory ? "Guardando..." : "Guardar Historial"}
-            </Button>
+            {/* Save History button removed */}
             <Button
               onClick={onExport}
               disabled={currentListForWarehouse.length === 0 || isLoading}

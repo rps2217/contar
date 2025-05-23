@@ -3,9 +3,9 @@ import type { ProductDetail, CountingHistoryEntry } from '@/types/product';
 import type { DBSchema, IDBPDatabase, StoreNames, IDBPTransaction, OpenDBCallbacks } from 'idb';
 
 const DB_NAME = 'StockCounterProDB';
-const DB_VERSION = 3; // Incremented version for schema change
+const DB_VERSION = 3; 
 const PRODUCT_STORE = 'products';
-const HISTORY_STORE = 'countingHistory'; 
+// const HISTORY_STORE = 'countingHistory'; // History store no longer actively used
 
 // --- Database Initialization ---
 let dbInstance: IDBPDatabase<StockCounterDBSchema> | null = null;
@@ -16,14 +16,14 @@ let openPromise: Promise<IDBPDatabase<StockCounterDBSchema>> | null = null;
 interface StockCounterDBSchema extends DBSchema {
   [PRODUCT_STORE]: {
     key: string; // barcode
-    value: ProductDetail; // Includes expirationDate
-    indexes: { 'by-barcode': string, 'by-provider': string, 'by-expirationDate'?: string }; // Added expirationDate index
+    value: ProductDetail; 
+    indexes: { 'by-barcode': string, 'by-provider': string, 'by-expirationDate'?: string }; 
   };
-  [HISTORY_STORE]: {
-    key: string; // id (e.g., timestamp-based string)
-    value: CountingHistoryEntry;
-    indexes: { 'by-timestamp': string, 'by-warehouseId': string, 'by-userId'?: string };
-  };
+  // [HISTORY_STORE]: { // History store definition kept for schema integrity if old data exists
+  //   key: string; 
+  //   value: CountingHistoryEntry;
+  //   indexes: { 'by-timestamp': string, 'by-warehouseId': string, 'by-userId'?: string };
+  // };
 }
 
 // Callbacks for database upgrade, blocking, etc.
@@ -35,7 +35,7 @@ const dbCallbacks: OpenDBCallbacks<StockCounterDBSchema> = {
             const productStore = db.createObjectStore(PRODUCT_STORE, { keyPath: 'barcode' });
             productStore.createIndex('by-barcode', 'barcode', { unique: true });
             productStore.createIndex('by-provider', 'provider');
-            productStore.createIndex('by-expirationDate', 'expirationDate'); // Add index for expirationDate
+            productStore.createIndex('by-expirationDate', 'expirationDate'); 
             console.log(`Object store "${PRODUCT_STORE}" created with expirationDate index.`);
         } else {
             const productStore = transaction.objectStore(PRODUCT_STORE);
@@ -45,20 +45,20 @@ const dbCallbacks: OpenDBCallbacks<StockCounterDBSchema> = {
             }
         }
 
-
-        if (!db.objectStoreNames.contains(HISTORY_STORE)) {
-            const historyStore = db.createObjectStore(HISTORY_STORE, { keyPath: 'id' });
-            historyStore.createIndex('by-timestamp', 'timestamp');
-            historyStore.createIndex('by-warehouseId', 'warehouseId');
-            historyStore.createIndex('by-userId', 'userId');
-            console.log(`Object store "${HISTORY_STORE}" created.`);
-        } else {
-            const historyStore = transaction.objectStore(HISTORY_STORE);
-            if (!historyStore.indexNames.contains('by-userId')) {
-                historyStore.createIndex('by-userId', 'userId');
-                console.log(`Index "by-userId" created on store "${HISTORY_STORE}".`);
-            }
-        }
+        // History store creation logic is kept for schema versioning but functions are removed
+        // if (!db.objectStoreNames.contains(HISTORY_STORE)) {
+        //     const historyStore = db.createObjectStore(HISTORY_STORE, { keyPath: 'id' });
+        //     historyStore.createIndex('by-timestamp', 'timestamp');
+        //     historyStore.createIndex('by-warehouseId', 'warehouseId');
+        //     historyStore.createIndex('by-userId', 'userId');
+        //     console.log(`Object store "${HISTORY_STORE}" created.`);
+        // } else {
+        //     const historyStore = transaction.objectStore(HISTORY_STORE);
+        //     if (!historyStore.indexNames.contains('by-userId')) {
+        //         historyStore.createIndex('by-userId', 'userId');
+        //         console.log(`Index "by-userId" created on store "${HISTORY_STORE}".`);
+        //     }
+        // }
     },
     blocked(currentVersion, blockedVersion, event) {
         console.error(`IndexedDB upgrade from version ${currentVersion} to ${blockedVersion} blocked. Please close other tabs using this app.`);
@@ -82,54 +82,46 @@ const dbCallbacks: OpenDBCallbacks<StockCounterDBSchema> = {
 async function getDB(): Promise<IDBPDatabase<StockCounterDBSchema>> {
     if (dbInstance) {
         try {
-            // Check if connection is still alive by trying to access a property
-             // that would throw if the connection is closed.
-            dbInstance.objectStoreNames; // This will throw if db is closed
+            dbInstance.objectStoreNames; 
             return dbInstance;
         } catch (error) {
             console.warn("IndexedDB connection seems closed or broken, reopening.", error);
-            dbInstance = null; // Mark as closed
-            openPromise = null; // Reset promise to allow reopening
+            dbInstance = null; 
+            openPromise = null; 
         }
     }
 
     if (!openPromise) {
         if (typeof window === 'undefined') {
-             // This check might be redundant if openDB is only called client-side,
-             // but it's a good safeguard.
              return Promise.reject(new Error("IndexedDB cannot be accessed in this environment."));
         }
         console.log("Opening IndexedDB connection...");
         openPromise = import('idb').then(({ openDB: idbOpenDB }) => {
-             // Ensure idbOpenDB is correctly referenced if openDB is a local const
              return idbOpenDB<StockCounterDBSchema>(DB_NAME, DB_VERSION, dbCallbacks);
         }).then(db => {
             console.log("IndexedDB opened successfully.");
             dbInstance = db;
-             // Listen for close events to reset the dbInstance
              db.addEventListener('close', () => {
                 console.warn('IndexedDB connection closed.');
                 dbInstance = null;
-                openPromise = null; // Allow re-opening
+                openPromise = null; 
              });
-             // Optional: Listen for versionchange events if needed for specific handling
              db.addEventListener('versionchange', (event) => {
                 console.warn('IndexedDB version change detected. Closing connection to allow upgrade.');
-                db.close(); // Close the connection to allow the upgrade to proceed.
+                db.close(); 
                 dbInstance = null;
                 openPromise = null;
              });
              db.addEventListener('error', (event) => {
-                // Generic error handling for the DB connection itself
                 console.error('IndexedDB error:', (event.target as any)?.error);
              });
-            openPromise = null; // Clear the promise once resolved
+            openPromise = null; 
             return db;
         }).catch(error => {
             console.error("Failed to open IndexedDB:", error);
-            dbInstance = null; // Ensure instance is null on failure
-            openPromise = null; // Clear promise on failure
-            throw error; // Re-throw error to be handled by caller
+            dbInstance = null; 
+            openPromise = null; 
+            throw error; 
         });
     }
     return openPromise;
@@ -163,7 +155,7 @@ export async function addOrUpdateProductToDB(product: ProductDetail): Promise<vo
         stock: Number.isFinite(Number(product.stock)) ? Number(product.stock) : 0,
         description: product.description?.trim() || `Producto ${product.barcode}`,
         provider: product.provider?.trim() || "Desconocido",
-        expirationDate: product.expirationDate || undefined, // Ensure it's undefined if empty
+        expirationDate: product.expirationDate || undefined, 
     };
     await performWriteTransaction(PRODUCT_STORE, store => store.put(productToSave));
 }
@@ -174,7 +166,7 @@ export async function getProductFromDB(barcode: string): Promise<ProductDetail |
     return await db.get(PRODUCT_STORE, barcode);
   } catch (error) {
     console.error(`Error getting product ${barcode} from IndexedDB:`, error);
-    throw error; // Re-throw to allow caller to handle
+    throw error; 
   }
 }
 
@@ -184,12 +176,12 @@ export async function getAllProductsFromDB(): Promise<ProductDetail[]> {
     return await db.getAll(PRODUCT_STORE);
   } catch (error) {
     console.error('Error getting all products from IndexedDB:', error);
-    throw error; // Re-throw
+    throw error; 
   }
 }
 
 export async function deleteProductFromDB(barcode: string): Promise<void> {
-    if (!barcode) return; // Or throw an error if barcode is essential
+    if (!barcode) return; 
     await performWriteTransaction(PRODUCT_STORE, store => store.delete(barcode));
 }
 
@@ -197,19 +189,15 @@ export async function addProductsToDB(products: ProductDetail[]): Promise<void> 
   if (!products || products.length === 0) return;
 
   await performWriteTransaction(PRODUCT_STORE, async (store) => {
-    // Using Promise.all to execute puts in parallel within the transaction
-    // Note: For extremely large arrays, this might still hit browser limits.
-    // Consider batching within the transaction for very large datasets if issues arise.
     await Promise.all(products.map(product => {
         if (product && typeof product.barcode === 'string') {
              const stock = Number.isFinite(Number(product.stock)) ? Number(product.stock) : 0;
-             // Ensure expirationDate is either a valid date string or undefined
              const expirationDate = product.expirationDate && /^\d{4}-\d{2}-\d{2}$/.test(product.expirationDate) ? product.expirationDate : undefined;
 
              const productToPut: ProductDetail = { ...product, stock, expirationDate };
              return store.put(productToPut);
         }
-        return Promise.resolve(); // Resolve for invalid/empty product entries
+        return Promise.resolve(); 
     }));
   });
 }
@@ -220,56 +208,18 @@ export async function clearProductDatabase(): Promise<void> {
 }
 
 // --- Operations for Counting History (Optimized) ---
-export async function saveCountingHistory(historyEntry: CountingHistoryEntry): Promise<void> {
-   // Basic validation for required fields
-   if (!historyEntry.id || !historyEntry.timestamp || !historyEntry.warehouseId || !historyEntry.warehouseName || !Array.isArray(historyEntry.products)) {
-       console.error("Invalid history entry data:", historyEntry);
-       throw new Error("Invalid history entry data. Required fields are missing.");
-   }
-   // userId is optional, so no validation for it here, but it will be stored if present
-   await performWriteTransaction(HISTORY_STORE, store => store.add(historyEntry));
-   console.log(`Counting history entry saved with ID: ${historyEntry.id} for user: ${historyEntry.userId || 'N/A'}`);
-}
+// Functions related to counting history (saveCountingHistory, getCountingHistory, clearCountingHistory)
+// have been removed as per user request to remove the "Save History" button and related UI.
 
-export async function getCountingHistory(userId?: string): Promise<CountingHistoryEntry[]> { // Optional userId for filtering
-  try {
-    const db = await getDB();
-    const tx = db.transaction(HISTORY_STORE, 'readonly');
-    let history: CountingHistoryEntry[];
-
-    if (userId && tx.store.indexNames.contains('by-userId')) {
-        const index = tx.store.index('by-userId');
-        history = await index.getAll(userId);
-    } else {
-        // Fallback to timestamp sort if no userId or index not available (shouldn't happen with schema v2+)
-        const index = tx.store.index('by-timestamp');
-        history = await index.getAll();
-    }
-    
-    // Ensure sorting is done correctly after fetching
-    history.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
-    return history;
-  } catch (error) {
-    console.error('Error getting counting history from IndexedDB:', error);
-    throw error; // Re-throw
-  }
-}
-
-export async function clearCountingHistory(): Promise<void> {
-    await performWriteTransaction(HISTORY_STORE, store => store.clear());
-}
 
 // --- Combined Database Operations ---
 export async function clearAllDatabases(): Promise<void> {
-    // This can be done in a single transaction if all stores are known,
-    // or sequentially as implemented here. Sequential is simpler to manage.
     try {
         await clearProductDatabase();
-        await clearCountingHistory();
-        // Add other store clear operations here if new stores are added
+        // await clearCountingHistory(); // History clearing removed
     } catch (error) {
         console.error("Error clearing all databases:", error);
-        throw error; // Re-throw
+        throw error; 
     }
 }
 

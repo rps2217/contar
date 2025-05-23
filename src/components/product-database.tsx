@@ -16,12 +16,12 @@ import {
 } from '@/lib/database'; // Assuming these are still used for local fallback or specific features
 import {
   // Functions for Firestore (cloud catalog)
-  getAllProductsFromCatalog, // <<< IMPORT THIS
+  getAllProductsFromCatalog, 
   addOrUpdateProductInCatalog,
   deleteProductFromCatalog,
   addProductsToCatalog,
   clearProductCatalogInFirestore,
-} from '@/lib/firestore-service'; // Adjust path as necessary
+} from '@/lib/firestore-service'; 
 
 import {
     Filter, Play, Loader2, Save, Trash, Upload, Edit, AlertTriangle
@@ -145,30 +145,38 @@ async function fetchGoogleSheetData(sheetUrlOrId: string): Promise<ProductDetail
                     return;
                 }
                 
-                // Assuming a fixed column order as per your last request:
                 // Col 1 (index 0): barcode
                 // Col 2 (index 1): description
                 // Col 6 (index 5): stock
                 // Col 10 (index 9): provider
+                // New: Expiration Date (e.g., Col 3, index 2)
+                const BARCODE_COLUMN_INDEX = 0;
+                const DESCRIPTION_COLUMN_INDEX = 1;
+                const STOCK_COLUMN_INDEX = 5;
+                const PROVIDER_COLUMN_INDEX = 9;
+                // ! IMPORTANT: Adjust this index to match your actual CSV column for expiration dates !
+                const EXPIRATION_DATE_COLUMN_INDEX = 2; // Example, adjust this!
+
 
                 // Skip header row (index 0)
                 for (let i = 1; i < csvData.length; i++) {
                     const values = csvData[i];
                     if (!values || values.length === 0) continue; // Skip empty rows
 
-                    // Ensure enough columns exist to prevent out-of-bounds errors
-                    const barcode = values[0]?.trim();
-                    const description = values[1]?.trim();
-                    const stockStr = values[5]?.trim(); // Stock is at index 5 (column 6)
-                    const provider = values[9]?.trim(); // Provider is at index 9 (column 10)
+                    const barcode = values[BARCODE_COLUMN_INDEX]?.trim();
+                    const description = values[DESCRIPTION_COLUMN_INDEX]?.trim();
+                    const stockStr = values[STOCK_COLUMN_INDEX]?.trim();
+                    const provider = values[PROVIDER_COLUMN_INDEX]?.trim();
+                    const expirationDateStr = values[EXPIRATION_DATE_COLUMN_INDEX]?.trim();
 
-                    if (!barcode) { // Barcode is mandatory
+
+                    if (!barcode) { 
                         console.warn(`Fila ${i + 1} omitida: Código de barras vacío o faltante.`);
                         continue;
                     }
 
-                    const finalDescription = description || `Producto ${barcode}`; // Default description if empty
-                    const finalProvider = provider || "Desconocido"; // Default provider if empty
+                    const finalDescription = description || `Producto ${barcode}`; 
+                    const finalProvider = provider || "Desconocido"; 
 
                     let stock = 0;
                     if (stockStr) {
@@ -178,18 +186,9 @@ async function fetchGoogleSheetData(sheetUrlOrId: string): Promise<ProductDetail
                         } else {
                              console.warn(`Valor de stock inválido "${stockStr}" para código ${barcode} en fila ${i + 1}. Usando 0.`);
                         }
-                    } else {
-                        // console.warn(`Columna de stock vacía para el código ${barcode} en la fila ${i + 1}. Usando stock 0.`);
                     }
                     
-                    // Expiration date handling remains flexible or can be mapped if a column is designated
-                    let expirationDate: string | undefined = undefined;
-                    // Example: if expiration date was column 11 (index 10)
-                    // const expDateStr = values[10]?.trim();
-                    // if (expDateStr) {
-                    //    // Validate or parse expDateStr
-                    //    expirationDate = expDateStr; // Placeholder, add validation
-                    // }
+                    const expirationDate: string | null = expirationDateStr ? expirationDateStr : null;
 
                     products.push({ barcode, description: finalDescription, provider: finalProvider, stock, expirationDate });
                 }
@@ -222,11 +221,11 @@ const ProductDatabaseComponent: React.FC<ProductDatabaseProps> = ({
     onClearCatalogRequest
 }) => {
   const { toast } = useToast();
-  const [isLoading, setIsLoading] = useState(false); // Changed initial state to false
+  const [isLoading, setIsLoading] = useState(false); 
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
   const [selectedProduct, setSelectedProduct] = useState<ProductDetail | null>(null);
   const [uploadProgress, setUploadProgress] = useState(0);
-  const [isProcessing, setIsProcessing] = useState(false);
+  const [isProcessing, setIsProcessing] = useState(false); 
   const [processingStatus, setProcessingStatus] = useState<string>("");
   const [googleSheetUrlOrId, setGoogleSheetUrlOrId] = useLocalStorage<string>(
       GOOGLE_SHEET_URL_LOCALSTORAGE_KEY,
@@ -265,7 +264,7 @@ const ProductDatabaseComponent: React.FC<ProductDatabaseProps> = ({
         .catch(error => {
             console.error("Failed to load catalog from Firestore:", error);
             if (isMountedRef.current) {
-                toast({ variant: "destructive", title: "Error de Catálogo", description: "No se pudo cargar el catálogo de Firestore." });
+                requestAnimationFrame(() => toast({ variant: "destructive", title: "Error de Catálogo", description: "No se pudo cargar el catálogo de Firestore." }));
             }
         })
         .finally(() => {
@@ -287,13 +286,13 @@ const ProductDatabaseComponent: React.FC<ProductDatabaseProps> = ({
         requestAnimationFrame(() => toast({ variant: "destructive", title: "Error", description: "ID de usuario no disponible." }));
         return;
     }
-    const isUpdating = !!selectedProduct; // Check if it's an update or new product
+    const isUpdating = !!selectedProduct; 
     const productData: ProductDetail = {
         barcode: isUpdating ? selectedProduct!.barcode : data.barcode.trim(),
         description: data.description.trim() || `Producto ${data.barcode.trim()}`,
         provider: data.provider?.trim() || "Desconocido",
         stock: Number.isFinite(Number(data.stock)) ? Number(data.stock) : 0,
-        expirationDate: data.expirationDate || undefined,
+        expirationDate: data.expirationDate || null,
     };
 
     if (!productData.barcode) {
@@ -339,24 +338,9 @@ const ProductDatabaseComponent: React.FC<ProductDatabaseProps> = ({
 
   const handleDeleteProductRequest = useCallback((product: ProductDetail) => {
     if (!product) return;
-    setSelectedProduct(product); // Product to be deleted
-    // Here you might want to open a confirmation dialog before actually deleting
-    // For now, directly proceeding to delete for simplicity as per previous flow
-    // Or, if you always want confirmation for catalog deletion:
-    setShowClearConfirm(true); // Re-purpose or create a new confirm dialog state for single product delete
-    // For now, let's assume we have a confirmation dialog for single product deletion
-    // If not, the delete logic should be wrapped in a confirmation step.
-    // The current `showClearConfirm` is for clearing the whole catalog.
-    // Let's assume there's a specific confirmation for deleting a single product.
-    // For now, I'll call handleDeleteProduct directly, but it's better with confirmation.
-    // Let's assume the delete button in the table calls a function that sets productToDelete
-    // and opens a specific dialog for single item deletion.
-    // For this example, I'm re-purposing selectedProduct.
-    // A more robust solution would be a separate state for `productToDelete`.
-    requestAnimationFrame(() => toast({ title: "Confirmar Eliminación", description: `¿Eliminar "${product.description}" del catálogo? Esta acción no se puede deshacer.`}));
-    // This should ideally open a dialog, then the dialog's confirm action calls handleDeleteProduct.
-    // Simulating that flow by setting selectedProduct, then a conceptual confirmation.
-  }, [toast]);
+    setSelectedProduct(product); 
+    setShowClearConfirm(true); 
+  }, []);
 
   const handleDeleteProduct = useCallback(async (barcode: string | null) => {
     if (!userId || !barcode) {
@@ -373,7 +357,6 @@ const ProductDatabaseComponent: React.FC<ProductDatabaseProps> = ({
           setCatalogProducts(prev => prev.filter(p => p.barcode !== barcode));
           requestAnimationFrame(() => toast({
             title: "Producto Eliminado",
-            description: `${productDesc} ha sido eliminado del catálogo.`,
           }));
       }
     } catch (error: any) {
@@ -384,7 +367,7 @@ const ProductDatabaseComponent: React.FC<ProductDatabaseProps> = ({
         if (isMountedRef.current) {
             setIsProcessing(false);
             setProcessingStatus("");
-            setIsEditModalOpen(false); // Close edit modal if it was open for this product
+            setIsEditModalOpen(false); 
             setSelectedProduct(null);
         }
     }
@@ -392,7 +375,7 @@ const ProductDatabaseComponent: React.FC<ProductDatabaseProps> = ({
 
 
   const handleOpenEditDialog = useCallback((product: ProductDetail | null) => {
-    setSelectedProduct(product); // If null, it's for adding a new product
+    setSelectedProduct(product); 
     setIsEditModalOpen(true);
   }, []);
 
@@ -423,13 +406,13 @@ const ProductDatabaseComponent: React.FC<ProductDatabaseProps> = ({
              }
              if (isMountedRef.current) setProcessingStatus(`Cargando ${totalItemsToLoad} productos a Firestore...`);
 
-             await addProductsToCatalog(userId, parsedProducts); // Batch add to Firestore
+             await addProductsToCatalog(userId, parsedProducts); 
 
-             // Update local catalog state by re-fetching or merging
+             
              if (isMountedRef.current) {
-                const updatedCatalog = await getAllProductsFromCatalog(userId); // Re-fetch for consistency
+                const updatedCatalog = await getAllProductsFromCatalog(userId); 
                 setCatalogProducts(updatedCatalog.sort((a, b) => a.description.localeCompare(b.description)));
-                setUploadProgress(100); // Mark as complete
+                setUploadProgress(100); 
                 requestAnimationFrame(() => toast({ title: "Carga Completa", description: `Se procesaron y guardaron ${totalItemsToLoad} productos en Firestore.` }));
              }
 
@@ -442,7 +425,6 @@ const ProductDatabaseComponent: React.FC<ProductDatabaseProps> = ({
             if (isMountedRef.current) {
                 setIsProcessing(false);
                 setProcessingStatus("");
-                // setUploadProgress(0); // Keep progress at 100 or reset based on UX preference
             }
         }
     }, [userId, googleSheetUrlOrId, toast, setCatalogProducts]);
@@ -505,7 +487,7 @@ const ProductDatabaseComponent: React.FC<ProductDatabaseProps> = ({
     setProcessingStatus(`Buscando productos de ${selectedProviderFilter}...`);
 
     try {
-      // catalogProducts is already up-to-date from Firestore
+      
       const providerProducts = catalogProducts.filter(product => (product.provider || "Desconocido") === selectedProviderFilter);
 
       if (providerProducts.length === 0) {
@@ -515,7 +497,7 @@ const ProductDatabaseComponent: React.FC<ProductDatabaseProps> = ({
         return;
       }
 
-      onStartCountByProvider(providerProducts); // This function is passed from Home to switch view and populate counter
+      onStartCountByProvider(providerProducts); 
 
     } catch (error) {
       if (isMountedRef.current) requestAnimationFrame(() => toast({ variant: "destructive", title: "Error", description: "No se pudo iniciar el conteo por proveedor." }));
@@ -556,7 +538,7 @@ const ProductDatabaseComponent: React.FC<ProductDatabaseProps> = ({
 
       return matchesSearch && matchesProvider;
     }).sort((a, b) => {
-        // Sort alphabetically by description
+        
         return a.description.localeCompare(b.description);
     });
   }, [catalogProducts, searchTerm, selectedProviderFilter]);
@@ -576,8 +558,8 @@ const ProductDatabaseComponent: React.FC<ProductDatabaseProps> = ({
     try {
         await clearProductCatalogInFirestore(userId);
         if(isMountedRef.current) {
-            setCatalogProducts([]); // Clear local state immediately
-            requestAnimationFrame(() => toast({ title: "Catálogo Borrado", description: "Todos los productos han sido eliminados de Firestore." }));
+            setCatalogProducts([]); 
+            requestAnimationFrame(() => toast({ title: "Catálogo Borrado" }));
         }
     } catch (error: any) {
         if(isMountedRef.current) {
@@ -601,10 +583,10 @@ const ProductDatabaseComponent: React.FC<ProductDatabaseProps> = ({
               onValueChange={(value) => {
                 if (value === "add") handleOpenEditDialog(null);
                 else if (value === "export") handleExportDatabase();
-                else if (value === "clear") setShowClearConfirm(true); // Use prop for this one onClearCatalogRequest();
+                else if (value === "clear") onClearCatalogRequest();
               }}
               disabled={isProcessing || isLoading || isTransitionPending}
-              value="" // Control the value to reset selection after action
+              value="" 
             >
               <SelectTrigger className="w-full sm:w-auto md:w-[200px] h-10 bg-card">
                 <SelectValue placeholder="Acciones Catálogo" />
@@ -686,7 +668,7 @@ const ProductDatabaseComponent: React.FC<ProductDatabaseProps> = ({
              </Button>
          </div>
          <p id="google-sheet-info" className="text-xs text-muted-foreground mt-1">
-             La hoja debe tener permisos de 'cualquiera con el enlace puede ver'. Se espera: Col 1: Código, Col 2: Descripción, Col 6: Stock, Col 10: Proveedor.
+             La hoja debe tener permisos de 'cualquiera con el enlace puede ver'. Se espera: Col 1: Código, Col 2: Descripción, Col 6: Stock, Col 10: Proveedor. Col 3 para Fecha de Vencimiento (opcional, YYYY-MM-DD).
          </p>
          {isProcessing && uploadProgress > 0 && (
              <div className="mt-4 space-y-1">
@@ -696,7 +678,7 @@ const ProductDatabaseComponent: React.FC<ProductDatabaseProps> = ({
                  </p>
              </div>
          )}
-         {isLoading && !isProcessing && ( // Show loading for initial catalog fetch
+         {isLoading && !isProcessing && ( 
               <div className="flex justify-center items-center py-6">
                  <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
                  <span className="ml-2 text-muted-foreground">Cargando catálogo de productos...</span>
@@ -708,22 +690,19 @@ const ProductDatabaseComponent: React.FC<ProductDatabaseProps> = ({
            products={filteredProducts}
            isLoading={isLoading || isTransitionPending}
            onEdit={handleOpenEditDialog}
-           onDeleteRequest={(product) => {
-             setSelectedProduct(product); // Set product for deletion confirmation
-             setShowClearConfirm(true); // Use the same dialog, but it will check `selectedProduct`
-           }}
+           onDeleteRequest={handleDeleteProductRequest}
        />
 
       <EditProductDialog
           isOpen={isEditModalOpen}
           setIsOpen={(open) => {
             setIsEditModalOpen(open);
-            if (!open) setSelectedProduct(null); // Clear selected product on dialog close
+            if (!open) setSelectedProduct(null); 
           }}
           selectedDetail={selectedProduct}
-          setSelectedDetail={setSelectedProduct} // Allow dialog to clear it on successful submit
+          setSelectedDetail={setSelectedProduct} 
           onSubmit={handleAddOrUpdateProductSubmit}
-          onDelete={handleDeleteProduct} // Pass the actual delete handler
+          onDelete={handleDeleteProduct} 
           isProcessing={isProcessing || isTransitionPending}
           initialStock={selectedProduct?.stock}
           context="database"
@@ -733,7 +712,7 @@ const ProductDatabaseComponent: React.FC<ProductDatabaseProps> = ({
             isOpen={showClearConfirm}
             onOpenChange={(open) => {
                 setShowClearConfirm(open);
-                if (!open) setSelectedProduct(null); // Clear product if dialog is cancelled
+                if (!open) setSelectedProduct(null); 
             }}
             title={selectedProduct ? "Confirmar Eliminación Producto" : "Confirmar Borrado Catálogo Completo"}
             description={
@@ -803,7 +782,7 @@ const ProductTable: React.FC<ProductTableProps> = React.memo(({
           </TableRow>
         </TableHeader>
         <TableBody>
-          {isLoading && !products.length ? ( // Show loading only if products array is empty
+          {isLoading && !products.length ? ( 
             <TableRow>
               <TableCell colSpan={6} className="text-center py-10 text-muted-foreground">
                 <div className="flex justify-center items-center">

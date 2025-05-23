@@ -55,13 +55,13 @@ const CountingListTableComponent: React.FC<CountingListTableProps> = ({
              const isValidLastUpdate = lastUpdatedDate && isValid(lastUpdatedDate);
              const expirationDate = product.expirationDate ? parseISO(product.expirationDate) : null;
              const isValidExpiration = expirationDate && isValid(expirationDate);
-             const uniqueKey = product.barcode; // Barcode should be unique within a warehouse's counting list
+             const uniqueKey = product.barcode; 
             return (
                 <TableRow
                   key={uniqueKey}
                   className={cn(
                     "hover:bg-muted/10 dark:hover:bg-gray-700/50 transition-colors duration-150",
-                    (product.count ?? 0) > (product.stock ?? 0) ? "bg-rose-100 dark:bg-rose-900/40" : // Pastel pink if count > stock
+                    (product.count ?? 0) > (product.stock ?? 0) ? "bg-rose-100 dark:bg-rose-900/30" : // Pastel pink if count > stock
                     ((product.count ?? 0) === (product.stock ?? 0) && (product.stock ?? 0) !== 0 ? "bg-green-500/10 dark:bg-green-700/20" : "") // Pastel green if count === stock (and stock is not 0)
                   )}
                   aria-rowindex={index + 1}

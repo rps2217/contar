@@ -53,7 +53,7 @@ export const WarehouseManagement: React.FC<WarehouseManagementProps> = ({
   const { toast } = useToast();
 
   const deleteDialogDescriptionId = useId();
-  const editDialogDescriptionId = useId(); // For EditWarehouseDialog if it uses DialogDescription directly
+  const editDialogDescriptionId = useId(); 
 
   const handleAddNewWarehouse = async () => {
     if (!newWarehouseName.trim()) {
@@ -64,7 +64,7 @@ export const WarehouseManagement: React.FC<WarehouseManagementProps> = ({
     try {
       await onAddWarehouse(newWarehouseName.trim());
       setNewWarehouseName("");
-      toast({ title: "Almacén Agregado", description: `El almacén "${newWarehouseName.trim()}" ha sido agregado.` });
+      toast({ title: "Almacén Agregado" });
     } catch (error) {
       // Error toast is handled by parent
     } finally {

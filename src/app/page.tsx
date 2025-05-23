@@ -73,6 +73,7 @@ import { db } from '@/lib/firebase';
 import { writeBatch, doc, collection } from 'firebase/firestore';
 import { ConsolidatedView } from '@/components/consolidated-view';
 import { BarcodeScannerCamera } from '@/components/barcode-scanner-camera';
+import { BarcodeEntry } from '@/components/barcode-entry';
 
 
 // --- Main Component ---
@@ -658,7 +659,7 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
 
     if (type === 'count') {
         const stockVal = productInList.stock ?? 0;
-        needsConfirmation = finalValue > stockVal && stockVal > 0 && originalValue <= stockVal;
+        needsConfirmation = finalValue > stockVal && stockVal > 0; // Show confirm only if new value is greater than positive stock
     }
 
     if (needsConfirmation) {
@@ -1931,6 +1932,8 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
                if (stock > 0 && confirmQuantityNewValue > stock) {
                    return `La cantidad contada (${confirmQuantityNewValue}) ahora SUPERA el stock del sistema (${stock}) para "${description}". ¿Confirmar?`;
                }
+               // No mostrar diálogo si la cantidad es menor o igual al stock, o si el stock es 0
+               // Este return implícito es manejado por la lógica `needsConfirmation` en `handleSetProductValue`
                return `Está a punto de modificar la cantidad contada para "${description}" a ${confirmQuantityNewValue}. ¿Continuar?`;
              })()
           }
@@ -2118,6 +2121,7 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
     
 
     
+
 
 
 

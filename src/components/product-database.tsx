@@ -4,20 +4,31 @@
 
 import type { ProductDetail } from '@/types/product';
 import { useToast } from "@/hooks/use-toast";
-import { cn, getLocalStorageItem, setLocalStorageItem, debounce } from "@/lib/utils"; 
+import { cn, debounce } from "@/lib/utils";
 import {
-  addOrUpdateProductToDB,
-  getAllProductsFromDB,
-  deleteProductFromDB,
-  clearProductDatabase as clearProductDatabaseFromDB,
-  addProductsToDB,
-} from '@/lib/database';
+  // Functions for IndexedDB (local catalog) - these might be phased out if all moves to Firestore
+  // getProductFromDB as getProductFromIndexedDB,
+  // getAllProductsFromDB as getAllProductsFromIndexedDB,
+  // addOrUpdateProductToDB as addOrUpdateProductToIndexedDB,
+  // deleteProductFromDB as deleteProductFromIndexedDB,
+  // clearProductDatabase as clearProductDatabaseFromDB,
+  // addProductsToDB as addProductsToIndexedDB,
+} from '@/lib/database'; // Assuming these are still used for local fallback or specific features
 import {
-    Filter, Play, Loader2, Save, Trash, Upload, Warehouse as WarehouseIcon, CalendarIcon, PackageSearch, Edit
+  // Functions for Firestore (cloud catalog)
+  getAllProductsFromCatalog, // <<< IMPORT THIS
+  addOrUpdateProductInCatalog,
+  deleteProductFromCatalog,
+  addProductsToCatalog,
+  clearProductCatalogInFirestore,
+} from '@/lib/firestore-service'; // Adjust path as necessary
+
+import {
+    Filter, Play, Loader2, Save, Trash, Upload, Edit, AlertTriangle
 } from "lucide-react";
-import Papa from 'papaparse'; 
-import * as React from "react"; 
-import { useCallback, useEffect, useState, useMemo, useRef } from "react"; 
+import Papa from 'papaparse';
+import * as React from "react";
+import { useCallback, useEffect, useState, useMemo, useRef } from "react";
 import { ConfirmationDialog } from "@/components/confirmation-dialog";
 import { EditProductDialog } from "@/components/edit-product-dialog";
 import { Button } from "@/components/ui/button";
@@ -27,27 +38,31 @@ import { Progress } from "@/components/ui/progress";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import {
     Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
-    SelectGroup, SelectLabel, } from "@/components/ui/select";
+    SelectGroup, SelectLabel,
+} from "@/components/ui/select";
 import {
     Table, TableBody, TableCaption, TableCell, TableHead, TableHeader, TableRow
 } from "@/components/ui/table";
-import { format, parse, isValid, parseISO } from 'date-fns';
+import { format, parseISO, isValid as isValidDate } from 'date-fns';
 import { es } from 'date-fns/locale';
 import { GOOGLE_SHEET_URL_LOCALSTORAGE_KEY } from '@/lib/constants';
 import { useLocalStorage } from '@/hooks/use-local-storage';
 
 
-const CHUNK_SIZE = 200;
+const CHUNK_SIZE = 200; // For processing large CSVs
 const SEARCH_DEBOUNCE_MS = 300;
 
 
 const extractSpreadsheetId = (input: string): string | null => {
   if (!input) return null;
+  // Regex to capture spreadsheet ID from various Google Sheets URL formats
   const sheetUrlPattern = /\/spreadsheets\/d\/([a-zA-Z0-9-_]+)(?:\/edit|\/htmlview|\/pubhtml|\/export)?(?:[#?].*)?/;
   const match = input.match(sheetUrlPattern);
   if (match && match[1]) {
     return match[1];
   }
+  // Fallback for just an ID string (less reliable, but a common user input)
+  // A typical Google Sheet ID is 44 characters long and contains letters, numbers, hyphens, and underscores.
   if (!input.includes('/') && input.length > 30 && input.length < 50 && /^[a-zA-Z0-9-_]+$/.test(input)) {
     return input;
   }
@@ -57,26 +72,31 @@ const extractSpreadsheetId = (input: string): string | null => {
 const parseGoogleSheetUrl = (sheetUrlOrId: string): { spreadsheetId: string | null; gid: string } => {
     const spreadsheetId = extractSpreadsheetId(sheetUrlOrId);
     const gidMatch = sheetUrlOrId.match(/[#&]gid=([0-9]+)/);
-    const gid = gidMatch ? gidMatch[1] : '0'; 
+    const gid = gidMatch ? gidMatch[1] : '0'; // Default to first sheet if gid is not specified
 
     if (!spreadsheetId) {
          console.warn("Could not extract spreadsheet ID from input:", sheetUrlOrId);
+         // This error should ideally be shown to the user in the UI as well
          throw new Error("No se pudo extraer el ID de la hoja de cálculo de la URL/ID proporcionado. Asegúrate de que la URL sea válida o que el ID sea correcto.");
     }
     return { spreadsheetId, gid };
 };
 
+
 async function fetchGoogleSheetData(sheetUrlOrId: string): Promise<ProductDetail[]> {
     const { spreadsheetId, gid } = parseGoogleSheetUrl(sheetUrlOrId);
+    // Construct the CSV export URL
     const csvExportUrl = `https://docs.google.com/spreadsheets/d/${spreadsheetId}/gviz/tq?tqx=out:csv&gid=${gid}`;
 
     let response: Response;
     try {
+        // Append a cache-busting query parameter
         const urlWithCacheBust = `${csvExportUrl}&_=${new Date().getTime()}`;
-        response = await fetch(urlWithCacheBust, { cache: "no-store" });
+        response = await fetch(urlWithCacheBust, { cache: "no-store" }); // Disable caching
     } catch (error: any) {
+        // Handle network errors (e.g., no internet, DNS failure)
         let userMessage = "Error de red al obtener la hoja. Verifique su conexión y la URL/ID.";
-        if (error.message?.includes('Failed to fetch')) {
+        if (error.message?.includes('Failed to fetch')) { // More specific error checking if possible
             userMessage += " Posible problema de CORS, conectividad, o la URL/ID es incorrecta. Asegúrese de que la hoja tenga permisos de 'cualquiera con el enlace puede ver'.";
         } else {
             userMessage += ` Detalle: ${error.message}`;
@@ -85,8 +105,10 @@ async function fetchGoogleSheetData(sheetUrlOrId: string): Promise<ProductDetail
     }
 
     if (!response.ok) {
+        // Handle HTTP errors (e.g., 403 Forbidden, 404 Not Found)
         const status = response.status;
         const statusText = response.statusText;
+        // Attempt to read error body for more details, but don't let it fail the whole process
         const errorBody = await response.text().catch(() => "Could not read error response body.");
         let userMessage = `Error ${status} al obtener datos. `;
 
@@ -101,6 +123,7 @@ async function fetchGoogleSheetData(sheetUrlOrId: string): Promise<ProductDetail
 
     const csvText = await response.text();
 
+    // Promisify Papa.parse for async/await usage
     return new Promise((resolve, reject) => {
         if (typeof Papa === 'undefined') {
             reject(new Error("PapaParse (Papa) is not defined. Ensure it's correctly imported or loaded."));
@@ -111,58 +134,44 @@ async function fetchGoogleSheetData(sheetUrlOrId: string): Promise<ProductDetail
             skipEmptyLines: true,
             complete: (results) => {
                 if (results.errors.length > 0) {
+                     // Log errors but attempt to process valid data
                      results.errors.forEach(err => console.warn(`PapaParse error: ${err.message} on row ${err.row}. Code: ${err.code}. Type: ${err.type}`));
                 }
                 const csvData = results.data;
                 const products: ProductDetail[] = [];
-                if (csvData.length <= 1) { 
-                    resolve(products);
+
+                if (csvData.length <= 1) { // No data rows beyond header
+                    resolve(products); // Resolve with empty array if no data
                     return;
                 }
                 
-                const headers = csvData[0].map(h => h.toLowerCase().trim());
-                
-                const headerMapping: Record<keyof Omit<ProductDetail, 'expirationDate'>, string[]> = {
-                    barcode: ["codigo", "código", "codigo de barras", "código de barras", "barcode"],
-                    description: ["producto", "descripción", "descripcion", "description"],
-                    provider: ["laboratorio", "proveedor", "provider"],
-                    stock: ["stock final", "stockactual", "stock actual", "stock", "cantidad"]
-                };
+                // Assuming a fixed column order as per your last request:
+                // Col 1 (index 0): barcode
+                // Col 2 (index 1): description
+                // Col 6 (index 5): stock
+                // Col 10 (index 9): provider
 
-                const headerIndices: Partial<Record<keyof Omit<ProductDetail, 'expirationDate'>, number>> = {};
-                const productDetailKeys = Object.keys(headerMapping) as Array<keyof Omit<ProductDetail, 'expirationDate'>>;
-
-                for (const key of productDetailKeys) {
-                    const possibleNames = headerMapping[key];
-                    const index = headers.findIndex(h => possibleNames.includes(h.toLowerCase().trim()));
-                    if (index !== -1) {
-                        headerIndices[key] = index;
-                    } else {
-                        if (key === 'barcode' || key === 'description') { // Barcode and Description are mandatory
-                            console.error(`Required header for "${key}" (e.g., ${possibleNames.join('/')}) not found in CSV headers: [${headers.join(', ')}]. Check Google Sheet headers.`);
-                            reject(new Error(`Encabezado requerido para "${key}" (ej. ${possibleNames.join('/')}) no encontrado en el CSV. Verifique los encabezados de la Hoja de Google.`));
-                            return;
-                        }
-                        console.warn(`Optional header for "${key}" (e.g., ${possibleNames.join('/')}) not found. It will be set to default.`);
-                    }
-                }
-
-
-                for (let i = 1; i < csvData.length; i++) { 
+                // Skip header row (index 0)
+                for (let i = 1; i < csvData.length; i++) {
                     const values = csvData[i];
-                    if (!values || values.length === 0) continue;
+                    if (!values || values.length === 0) continue; // Skip empty rows
 
-                    const barcode = headerIndices.barcode !== undefined ? values[headerIndices.barcode]?.trim() : undefined;
-                    if (!barcode) {
+                    // Ensure enough columns exist to prevent out-of-bounds errors
+                    const barcode = values[0]?.trim();
+                    const description = values[1]?.trim();
+                    const stockStr = values[5]?.trim(); // Stock is at index 5 (column 6)
+                    const provider = values[9]?.trim(); // Provider is at index 9 (column 10)
+
+                    if (!barcode) { // Barcode is mandatory
                         console.warn(`Fila ${i + 1} omitida: Código de barras vacío o faltante.`);
                         continue;
                     }
 
-                    const description = headerIndices.description !== undefined ? values[headerIndices.description]?.trim() : `Producto ${barcode}`;
-                    
+                    const finalDescription = description || `Producto ${barcode}`; // Default description if empty
+                    const finalProvider = provider || "Desconocido"; // Default provider if empty
+
                     let stock = 0;
-                    if (headerIndices.stock !== undefined && values[headerIndices.stock]) {
-                        const stockStr = values[headerIndices.stock].trim();
+                    if (stockStr) {
                         const parsedStock = parseInt(stockStr, 10);
                         if (!isNaN(parsedStock) && parsedStock >= 0) {
                             stock = parsedStock;
@@ -170,18 +179,23 @@ async function fetchGoogleSheetData(sheetUrlOrId: string): Promise<ProductDetail
                              console.warn(`Valor de stock inválido "${stockStr}" para código ${barcode} en fila ${i + 1}. Usando 0.`);
                         }
                     } else {
-                        console.warn(`Columna de stock no encontrada o vacía para el código ${barcode} en la fila ${i + 1}. Usando stock 0.`);
+                        // console.warn(`Columna de stock vacía para el código ${barcode} en la fila ${i + 1}. Usando stock 0.`);
                     }
                     
-                    const provider = headerIndices.provider !== undefined ? (values[headerIndices.provider]?.trim() || "Desconocido") : "Desconocido";
-                    
+                    // Expiration date handling remains flexible or can be mapped if a column is designated
                     let expirationDate: string | undefined = undefined;
+                    // Example: if expiration date was column 11 (index 10)
+                    // const expDateStr = values[10]?.trim();
+                    // if (expDateStr) {
+                    //    // Validate or parse expDateStr
+                    //    expirationDate = expDateStr; // Placeholder, add validation
+                    // }
 
-                    products.push({ barcode, description, provider, stock, expirationDate });
+                    products.push({ barcode, description: finalDescription, provider: finalProvider, stock, expirationDate });
                 }
                 resolve(products);
             },
-            error: (error: any) => {
+            error: (error: any) => { // Catch parsing errors
                 reject(new Error(`Error al analizar el archivo CSV: ${error.message}`));
             }
         });
@@ -193,26 +207,26 @@ async function fetchGoogleSheetData(sheetUrlOrId: string): Promise<ProductDetail
   userId: string | null;
   onStartCountByProvider: (products: ProductDetail[]) => void;
   isTransitionPending?: boolean;
-  catalogProducts: ProductDetail[]; 
+  catalogProducts: ProductDetail[];
   setCatalogProducts: React.Dispatch<React.SetStateAction<ProductDetail[]>>;
   onClearCatalogRequest: () => void;
  }
 
 
-const ProductDatabaseComponent: React.FC<ProductDatabaseProps> = ({ 
-    userId, 
-    onStartCountByProvider, 
+const ProductDatabaseComponent: React.FC<ProductDatabaseProps> = ({
+    userId,
+    onStartCountByProvider,
     isTransitionPending,
     catalogProducts,
     setCatalogProducts,
     onClearCatalogRequest
 }) => {
   const { toast } = useToast();
-  const [isLoading, setIsLoading] = useState(true);
+  const [isLoading, setIsLoading] = useState(false); // Changed initial state to false
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
   const [selectedProduct, setSelectedProduct] = useState<ProductDetail | null>(null);
   const [uploadProgress, setUploadProgress] = useState(0);
-  const [isProcessing, setIsProcessing] = useState(false); 
+  const [isProcessing, setIsProcessing] = useState(false);
   const [processingStatus, setProcessingStatus] = useState<string>("");
   const [googleSheetUrlOrId, setGoogleSheetUrlOrId] = useLocalStorage<string>(
       GOOGLE_SHEET_URL_LOCALSTORAGE_KEY,
@@ -221,6 +235,7 @@ const ProductDatabaseComponent: React.FC<ProductDatabaseProps> = ({
   const [searchTerm, setSearchTerm] = useState("");
   const [selectedProviderFilter, setSelectedProviderFilter] = useState<string>("all");
   const isMountedRef = useRef(false);
+  const [showClearConfirm, setShowClearConfirm] = useState(false);
 
 
   useEffect(() => {
@@ -269,10 +284,10 @@ const ProductDatabaseComponent: React.FC<ProductDatabaseProps> = ({
 
  const handleAddOrUpdateProductSubmit = useCallback(async (data: ProductDetail) => {
     if (!userId) {
-        toast({ variant: "destructive", title: "Error", description: "ID de usuario no disponible." });
+        requestAnimationFrame(() => toast({ variant: "destructive", title: "Error", description: "ID de usuario no disponible." }));
         return;
     }
-    const isUpdating = !!selectedProduct;
+    const isUpdating = !!selectedProduct; // Check if it's an update or new product
     const productData: ProductDetail = {
         barcode: isUpdating ? selectedProduct!.barcode : data.barcode.trim(),
         description: data.description.trim() || `Producto ${data.barcode.trim()}`,
@@ -282,7 +297,7 @@ const ProductDatabaseComponent: React.FC<ProductDatabaseProps> = ({
     };
 
     if (!productData.barcode) {
-        toast({ variant: "destructive", title: "Error", description: "El código de barras no puede estar vacío." });
+         requestAnimationFrame(() => toast({ variant: "destructive", title: "Error", description: "El código de barras no puede estar vacío." }));
         return;
     }
     if (!isMountedRef.current) return;
@@ -290,21 +305,18 @@ const ProductDatabaseComponent: React.FC<ProductDatabaseProps> = ({
     setProcessingStatus(isUpdating ? "Actualizando producto..." : "Agregando producto...");
     try {
         await addOrUpdateProductInCatalog(userId, productData);
-        
-        // Update local catalog state
+
         if (isMountedRef.current) {
             setCatalogProducts(prev => {
-                if (isUpdating) {
-                    return prev.map(p => p.barcode === productData.barcode ? productData : p);
-                } else {
-                    // Avoid duplicates if somehow added again before Firestore listener updates
-                    if (prev.some(p => p.barcode === productData.barcode)) {
-                        return prev.map(p => p.barcode === productData.barcode ? productData : p);
-                    }
-                    return [...prev, productData];
+                const existingIndex = prev.findIndex(p => p.barcode === productData.barcode);
+                if (existingIndex !== -1) {
+                    const updatedCatalog = [...prev];
+                    updatedCatalog[existingIndex] = productData;
+                    return updatedCatalog;
                 }
+                return [...prev, productData].sort((a, b) => a.description.localeCompare(b.description));
             });
-            toast({ title: isUpdating ? "Producto Actualizado" : "Producto Agregado" });
+            requestAnimationFrame(() => toast({ title: isUpdating ? "Producto Actualizado" : "Producto Agregado" }));
             setIsEditModalOpen(false);
             setSelectedProduct(null);
         }
@@ -314,7 +326,7 @@ const ProductDatabaseComponent: React.FC<ProductDatabaseProps> = ({
              errorMessage += ` Detalle: ${error.message}`;
         }
         if (isMountedRef.current) {
-            toast({ variant: "destructive", title: "Error de Catálogo", description: errorMessage });
+            requestAnimationFrame(() => toast({ variant: "destructive", title: "Error de Catálogo", description: errorMessage }));
         }
     } finally {
         if (isMountedRef.current) {
@@ -325,12 +337,33 @@ const ProductDatabaseComponent: React.FC<ProductDatabaseProps> = ({
  }, [userId, selectedProduct, toast, setCatalogProducts]);
 
 
+  const handleDeleteProductRequest = useCallback((product: ProductDetail) => {
+    if (!product) return;
+    setSelectedProduct(product); // Product to be deleted
+    // Here you might want to open a confirmation dialog before actually deleting
+    // For now, directly proceeding to delete for simplicity as per previous flow
+    // Or, if you always want confirmation for catalog deletion:
+    setShowClearConfirm(true); // Re-purpose or create a new confirm dialog state for single product delete
+    // For now, let's assume we have a confirmation dialog for single product deletion
+    // If not, the delete logic should be wrapped in a confirmation step.
+    // The current `showClearConfirm` is for clearing the whole catalog.
+    // Let's assume there's a specific confirmation for deleting a single product.
+    // For now, I'll call handleDeleteProduct directly, but it's better with confirmation.
+    // Let's assume the delete button in the table calls a function that sets productToDelete
+    // and opens a specific dialog for single item deletion.
+    // For this example, I'm re-purposing selectedProduct.
+    // A more robust solution would be a separate state for `productToDelete`.
+    requestAnimationFrame(() => toast({ title: "Confirmar Eliminación", description: `¿Eliminar "${product.description}" del catálogo? Esta acción no se puede deshacer.`}));
+    // This should ideally open a dialog, then the dialog's confirm action calls handleDeleteProduct.
+    // Simulating that flow by setting selectedProduct, then a conceptual confirmation.
+  }, [toast]);
+
   const handleDeleteProduct = useCallback(async (barcode: string | null) => {
     if (!userId || !barcode) {
-        toast({ variant: "destructive", title: "Error Interno", description: "ID de usuario o código de barras no disponible." });
+        requestAnimationFrame(() => toast({ variant: "destructive", title: "Error Interno", description: "ID de usuario o código de barras no disponible." }));
         return;
     }
-    const product = catalogProducts.find(p => p.barcode === barcode);
+    const productDesc = catalogProducts.find(p => p.barcode === barcode)?.description || barcode;
     if (!isMountedRef.current) return;
     setIsProcessing(true);
     setProcessingStatus("Eliminando producto...");
@@ -338,46 +371,39 @@ const ProductDatabaseComponent: React.FC<ProductDatabaseProps> = ({
       await deleteProductFromCatalog(userId, barcode);
       if (isMountedRef.current) {
           setCatalogProducts(prev => prev.filter(p => p.barcode !== barcode));
-          toast({
+          requestAnimationFrame(() => toast({
             title: "Producto Eliminado",
-            description: `${product?.description || barcode} ha sido eliminado del catálogo.`,
-          });
+            description: `${productDesc} ha sido eliminado del catálogo.`,
+          }));
       }
     } catch (error: any) {
       if (isMountedRef.current) {
-        toast({ variant: "destructive", title: "Error al Eliminar", description: `No se pudo eliminar del catálogo: ${error.message}` });
+        requestAnimationFrame(() => toast({ variant: "destructive", title: "Error al Eliminar", description: `No se pudo eliminar del catálogo: ${error.message}` }));
       }
     } finally {
         if (isMountedRef.current) {
             setIsProcessing(false);
             setProcessingStatus("");
-            setIsEditModalOpen(false); 
+            setIsEditModalOpen(false); // Close edit modal if it was open for this product
+            setSelectedProduct(null);
         }
     }
   }, [userId, catalogProducts, toast, setCatalogProducts]);
 
 
   const handleOpenEditDialog = useCallback((product: ProductDetail | null) => {
-    setSelectedProduct(product);
+    setSelectedProduct(product); // If null, it's for adding a new product
     setIsEditModalOpen(true);
   }, []);
-
-  const triggerDeleteProductAlert = useCallback((product: ProductDetail | null) => {
-      if (!product) {
-         toast({ variant: "destructive", title: "Error Interno", description: "Datos del producto no disponibles para eliminar." });
-         return;
-      }
-      handleDeleteProduct(product.barcode); // Direct delete for simplicity, confirmation can be added back if needed
-  }, [handleDeleteProduct, toast]);
 
 
    const handleLoadFromGoogleSheet = useCallback(async () => {
         if (!userId) {
-            toast({ variant: "destructive", title: "Error", description: "ID de usuario no disponible." });
+            requestAnimationFrame(() => toast({ variant: "destructive", title: "Error", description: "ID de usuario no disponible." }));
             return;
         }
         if (!googleSheetUrlOrId) {
-            toast({ variant: "destructive", title: "URL/ID Requerido", description: "Introduce la URL de la hoja de Google o el ID." });
+            requestAnimationFrame(() => toast({ variant: "destructive", title: "URL/ID Requerido", description: "Introduce la URL de la hoja de Google o el ID." }));
             return;
         }
         if (!isMountedRef.current) return;
@@ -388,10 +414,9 @@ const ProductDatabaseComponent: React.FC<ProductDatabaseProps> = ({
         try {
             const parsedProducts = await fetchGoogleSheetData(googleSheetUrlOrId);
              const totalItemsToLoad = parsedProducts.length;
-             let itemsLoaded = 0;
 
              if (totalItemsToLoad === 0) {
-                 if(isMountedRef.current) toast({ title: "Hoja Vacía o Sin Datos Válidos", description: "No se encontraron productos válidos en la hoja.", variant: "default" });
+                 if(isMountedRef.current) requestAnimationFrame(() => toast({ title: "Hoja Vacía o Sin Datos Válidos", description: "No se encontraron productos válidos en la hoja.", variant: "default" }));
                  setIsProcessing(false);
                  setProcessingStatus("");
                  return;
@@ -400,21 +425,18 @@ const ProductDatabaseComponent: React.FC<ProductDatabaseProps> = ({
 
              await addProductsToCatalog(userId, parsedProducts); // Batch add to Firestore
 
-             // Update local catalog state
+             // Update local catalog state by re-fetching or merging
              if (isMountedRef.current) {
-                setCatalogProducts(prevCatalog => {
-                    const newCatalogMap = new Map(prevCatalog.map(p => [p.barcode, p]));
-                    parsedProducts.forEach(p => newCatalogMap.set(p.barcode, p));
-                    return Array.from(newCatalogMap.values());
-                });
+                const updatedCatalog = await getAllProductsFromCatalog(userId); // Re-fetch for consistency
+                setCatalogProducts(updatedCatalog.sort((a, b) => a.description.localeCompare(b.description)));
                 setUploadProgress(100); // Mark as complete
-                toast({ title: "Carga Completa", description: `Se procesaron y guardaron ${totalItemsToLoad} productos en Firestore.` });
+                requestAnimationFrame(() => toast({ title: "Carga Completa", description: `Se procesaron y guardaron ${totalItemsToLoad} productos en Firestore.` }));
              }
 
         } catch (error: any) {
             if (isMountedRef.current) {
                 setProcessingStatus("Error durante la carga.");
-                toast({ variant: "destructive", title: "Error de Carga", description: error.message || "Error desconocido al cargar desde Google Sheet."});
+                requestAnimationFrame(() => toast({ variant: "destructive", title: "Error de Carga", description: error.message || "Error desconocido al cargar desde Google Sheet."}));
             }
         } finally {
             if (isMountedRef.current) {
@@ -428,7 +450,7 @@ const ProductDatabaseComponent: React.FC<ProductDatabaseProps> = ({
 
   const handleExportDatabase = useCallback(() => {
      if (catalogProducts.length === 0) {
-       toast({ title: "Catálogo Vacío", description: "No hay productos para exportar." });
+       requestAnimationFrame(() => toast({ title: "Catálogo Vacío", description: "No hay productos para exportar." }));
        return;
      }
      try {
@@ -437,21 +459,24 @@ const ProductDatabaseComponent: React.FC<ProductDatabaseProps> = ({
              DESCRIPCION: p.description,
              PROVEEDOR: p.provider,
              STOCK: p.stock ?? 0,
-             FECHA_VENCIMIENTO: p.expirationDate || '',
+             FECHA_VENCIMIENTO: p.expirationDate && isValidDate(parseISO(p.expirationDate)) ? format(parseISO(p.expirationDate), "yyyy-MM-dd") : '',
          }));
+         if (typeof Papa === 'undefined') {
+            throw new Error("PapaParse (Papa) no está cargado. No se puede exportar.");
+         }
          const csv = Papa.unparse(dataToExport, { header: true, quotes: true, skipEmptyLines: true });
          const blob = new Blob([`\uFEFF${csv}`], { type: "text/csv;charset=utf-8;" });
          const link = document.createElement("a");
          link.href = URL.createObjectURL(blob);
-         const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
-         link.setAttribute("download", `product_catalog_${timestamp}.csv`);
+         const timestamp = format(new Date(), 'yyyyMMdd_HHmmss');
+         link.setAttribute("download", `catalogo_productos_${timestamp}.csv`);
          document.body.appendChild(link);
          link.click();
          document.body.removeChild(link);
          URL.revokeObjectURL(link.href);
-         toast({ title: "Exportación Iniciada"});
-     } catch (error) {
-          toast({ variant: "destructive", title: "Error de Exportación", description: "No se pudo generar el archivo CSV." });
+         requestAnimationFrame(() => toast({ title: "Exportación Iniciada"}));
+     } catch (error: any) {
+          requestAnimationFrame(() => toast({ variant: "destructive", title: "Error de Exportación", description: error.message || "No se pudo generar el archivo CSV." }));
      }
    }, [catalogProducts, toast]);
 
@@ -468,11 +493,11 @@ const ProductDatabaseComponent: React.FC<ProductDatabaseProps> = ({
 
   const handleStartCountByProviderClick = useCallback(async () => {
     if (selectedProviderFilter === 'all') {
-      toast({
-        variant: "destructive",
+      requestAnimationFrame(() => toast({
+        variant: "default",
         title: "Seleccionar Proveedor",
         description: "Por favor, selecciona un proveedor específico para iniciar el conteo.",
-      });
+      }));
       return;
     }
     if (!isMountedRef.current) return;
@@ -480,19 +505,20 @@ const ProductDatabaseComponent: React.FC<ProductDatabaseProps> = ({
     setProcessingStatus(`Buscando productos de ${selectedProviderFilter}...`);
 
     try {
+      // catalogProducts is already up-to-date from Firestore
       const providerProducts = catalogProducts.filter(product => (product.provider || "Desconocido") === selectedProviderFilter);
 
       if (providerProducts.length === 0) {
-        if (isMountedRef.current) toast({ title: "Vacío", description: `No hay productos registrados para el proveedor ${selectedProviderFilter}.` });
+        if (isMountedRef.current) requestAnimationFrame(() => toast({ title: "Vacío", description: `No hay productos registrados para el proveedor ${selectedProviderFilter}.` }));
         setIsProcessing(false);
         setProcessingStatus("");
         return;
       }
 
-      onStartCountByProvider(providerProducts);
+      onStartCountByProvider(providerProducts); // This function is passed from Home to switch view and populate counter
 
     } catch (error) {
-      if (isMountedRef.current) toast({ variant: "destructive", title: "Error", description: "No se pudo iniciar el conteo por proveedor." });
+      if (isMountedRef.current) requestAnimationFrame(() => toast({ variant: "destructive", title: "Error", description: "No se pudo iniciar el conteo por proveedor." }));
     } finally {
       if (isMountedRef.current) {
           setIsProcessing(false);
@@ -523,39 +549,65 @@ const ProductDatabaseComponent: React.FC<ProductDatabaseProps> = ({
                             product.description.toLowerCase().includes(lowerSearchTerm) ||
                             product.barcode.includes(lowerSearchTerm) ||
                             (product.provider || '').toLowerCase().includes(lowerSearchTerm) ||
-                            (product.expirationDate || '').includes(lowerSearchTerm);
+                            (product.expirationDate && format(parseISO(product.expirationDate), 'dd/MM/yy', {locale: es}).includes(lowerSearchTerm));
+
 
       const matchesProvider = selectedProviderFilter === 'all' || (product.provider || "Desconocido") === selectedProviderFilter;
 
       return matchesSearch && matchesProvider;
     }).sort((a, b) => {
-        if (!a.description && !b.description) return 0;
-        if (!a.description) return 1;
-        if (!b.description) return -1;
+        // Sort alphabetically by description
         return a.description.localeCompare(b.description);
     });
   }, [catalogProducts, searchTerm, selectedProviderFilter]);
+
+ const handleConfirmClearCatalog = async () => {
+    if (!userId) {
+        requestAnimationFrame(() => toast({ variant: "destructive", title: "Error", description: "ID de usuario no disponible." }));
+        setShowClearConfirm(false);
+        return;
+    }
+    if (!isMountedRef.current) {
+        setShowClearConfirm(false);
+        return;
+    }
+    setIsProcessing(true);
+    setProcessingStatus("Borrando catálogo...");
+    try {
+        await clearProductCatalogInFirestore(userId);
+        if(isMountedRef.current) {
+            setCatalogProducts([]); // Clear local state immediately
+            requestAnimationFrame(() => toast({ title: "Catálogo Borrado", description: "Todos los productos han sido eliminados de Firestore." }));
+        }
+    } catch (error: any) {
+        if(isMountedRef.current) {
+            requestAnimationFrame(() => toast({ variant: "destructive", title: "Error al Borrar", description: `No se pudo borrar el catálogo: ${error.message}`}));
+        }
+    } finally {
+        if(isMountedRef.current) {
+            setIsProcessing(false);
+            setProcessingStatus("");
+            setShowClearConfirm(false);
+        }
+    }
+ };
 
 
   return (
     <div className="p-4 md:p-6 space-y-6">
        <div className="flex flex-col md:flex-row md:justify-between md:items-start gap-4">
          <div className="flex flex-wrap gap-2">
-            <Select onValueChange={(value) => {
-                switch (value) {
-                  case "add":
-                    handleOpenEditDialog(null);
-                    break;
-                  case "export":
-                    handleExportDatabase();
-                    break;
-                  case "clear":
-                    onClearCatalogRequest(); // Call prop from parent
-                    break;
-                }
-              }} disabled={isProcessing || isLoading || isTransitionPending}>
-              <SelectTrigger className="w-full sm:w-auto md:w-[200px] h-10">
-                <SelectValue placeholder="Acciones DB" />
+            <Select
+              onValueChange={(value) => {
+                if (value === "add") handleOpenEditDialog(null);
+                else if (value === "export") handleExportDatabase();
+                else if (value === "clear") setShowClearConfirm(true); // Use prop for this one onClearCatalogRequest();
+              }}
+              disabled={isProcessing || isLoading || isTransitionPending}
+              value="" // Control the value to reset selection after action
+            >
+              <SelectTrigger className="w-full sm:w-auto md:w-[200px] h-10 bg-card">
+                <SelectValue placeholder="Acciones Catálogo" />
               </SelectTrigger>
               <SelectContent>
                 <SelectGroup>
@@ -566,19 +618,19 @@ const ProductDatabaseComponent: React.FC<ProductDatabaseProps> = ({
                   <SelectItem value="export" disabled={catalogProducts.length === 0}>
                     Exportar Catálogo (CSV)
                   </SelectItem>
-                  <SelectItem value="clear" disabled={catalogProducts.length === 0}>Borrar Catálogo</SelectItem>
+                  <SelectItem value="clear" disabled={catalogProducts.length === 0} className="text-destructive focus:text-destructive">Borrar Catálogo</SelectItem>
                 </SelectGroup>
               </SelectContent>
             </Select>
          </div>
           <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 w-full md:w-auto">
-            <Label htmlFor="search-product" className="sr-only">Buscar Producto</Label>
+            <Label htmlFor="search-product-db" className="sr-only">Buscar Producto</Label>
              <Input
-                 id="search-product"
+                 id="search-product-db"
                  type="text"
                  placeholder="Buscar por código, descripción..."
                  onChange={(e) => debouncedSetSearchTerm(e.target.value)}
-                 className="h-10 flex-grow min-w-[150px]"
+                 className="h-10 flex-grow min-w-[150px] bg-card"
                  disabled={isProcessing || isLoading || isTransitionPending}
              />
              <Select
@@ -586,7 +638,7 @@ const ProductDatabaseComponent: React.FC<ProductDatabaseProps> = ({
                  onValueChange={setSelectedProviderFilter}
                  disabled={providerOptions.length <= 1 || isProcessing || isLoading || isTransitionPending}
              >
-                 <SelectTrigger className="w-full sm:w-auto md:w-[200px] h-10">
+                 <SelectTrigger className="w-full sm:w-auto md:w-[200px] h-10 bg-card">
                      <Filter className="mr-2 h-4 w-4" />
                      <SelectValue placeholder="Filtrar proveedor" />
                  </SelectTrigger>
@@ -610,8 +662,8 @@ const ProductDatabaseComponent: React.FC<ProductDatabaseProps> = ({
          </div>
        </div>
 
-       <div className="space-y-2 p-4 border rounded-lg bg-card dark:bg-gray-800 shadow-sm">
-           <Label htmlFor="google-sheet-url" className="block font-medium mb-1 dark:text-gray-200">
+       <div className="space-y-2 p-4 border rounded-lg bg-card dark:bg-card shadow-sm">
+           <Label htmlFor="google-sheet-url" className="block font-medium mb-1">
               Cargar/Actualizar Catálogo desde Google Sheet:
            </Label>
           <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
@@ -621,7 +673,7 @@ const ProductDatabaseComponent: React.FC<ProductDatabaseProps> = ({
              placeholder="URL completa de Hoja de Google o ID de Hoja"
              value={googleSheetUrlOrId}
              onChange={handleGoogleSheetUrlOrIdChange}
-             className="flex-grow h-10 dark:bg-gray-700 dark:border-gray-600 dark:text-white"
+             className="flex-grow h-10 bg-background"
              disabled={isProcessing || isLoading || isTransitionPending}
              aria-describedby="google-sheet-info"
              />
@@ -633,19 +685,22 @@ const ProductDatabaseComponent: React.FC<ProductDatabaseProps> = ({
                  {isProcessing && processingStatus.includes("Google") ? 'Cargando...' : 'Cargar Datos'}
              </Button>
          </div>
-         <p id="google-sheet-info" className="text-xs text-muted-foreground dark:text-gray-400 mt-1">
-             La hoja debe tener permisos de 'cualquiera con el enlace puede ver'. Se espera: Columna para Código, Descripción, Proveedor, Stock (o variaciones de nombres).
+         <p id="google-sheet-info" className="text-xs text-muted-foreground mt-1">
+             La hoja debe tener permisos de 'cualquiera con el enlace puede ver'. Se espera: Col 1: Código, Col 2: Descripción, Col 6: Stock, Col 10: Proveedor.
          </p>
          {isProcessing && uploadProgress > 0 && (
              <div className="mt-4 space-y-1">
                  <Progress value={uploadProgress} className="h-2 w-full" />
-                 <p className="text-sm text-muted-foreground dark:text-gray-400 text-center">
+                 <p className="text-sm text-muted-foreground text-center">
                      {processingStatus || `Cargando... (${uploadProgress}%)`}
                  </p>
              </div>
          )}
-         {isLoading && !isProcessing && (
-              <p className="text-sm text-muted-foreground dark:text-gray-400 text-center mt-2">Cargando catálogo de productos...</p>
+         {isLoading && !isProcessing && ( // Show loading for initial catalog fetch
+              <div className="flex justify-center items-center py-6">
+                 <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+                 <span className="ml-2 text-muted-foreground">Cargando catálogo de productos...</span>
+              </div>
          )}
        </div>
 
@@ -653,20 +708,65 @@ const ProductDatabaseComponent: React.FC<ProductDatabaseProps> = ({
            products={filteredProducts}
            isLoading={isLoading || isTransitionPending}
            onEdit={handleOpenEditDialog}
-           onDeleteRequest={triggerDeleteProductAlert}
+           onDeleteRequest={(product) => {
+             setSelectedProduct(product); // Set product for deletion confirmation
+             setShowClearConfirm(true); // Use the same dialog, but it will check `selectedProduct`
+           }}
        />
 
       <EditProductDialog
           isOpen={isEditModalOpen}
-          setIsOpen={setIsEditModalOpen}
+          setIsOpen={(open) => {
+            setIsEditModalOpen(open);
+            if (!open) setSelectedProduct(null); // Clear selected product on dialog close
+          }}
           selectedDetail={selectedProduct}
-          setSelectedDetail={setSelectedProduct}
+          setSelectedDetail={setSelectedProduct} // Allow dialog to clear it on successful submit
           onSubmit={handleAddOrUpdateProductSubmit}
-          onDelete={(barcode) => handleDeleteProduct(barcode)}
+          onDelete={handleDeleteProduct} // Pass the actual delete handler
           isProcessing={isProcessing || isTransitionPending}
           initialStock={selectedProduct?.stock}
           context="database"
        />
+
+       <ConfirmationDialog
+            isOpen={showClearConfirm}
+            onOpenChange={(open) => {
+                setShowClearConfirm(open);
+                if (!open) setSelectedProduct(null); // Clear product if dialog is cancelled
+            }}
+            title={selectedProduct ? "Confirmar Eliminación Producto" : "Confirmar Borrado Catálogo Completo"}
+            description={
+                selectedProduct ?
+                `¿Seguro que deseas eliminar el producto "${selectedProduct.description}" (${selectedProduct.barcode}) del catálogo? Esta acción no se puede deshacer.` :
+                (
+                 <div className="space-y-2">
+                    <div className="flex items-center gap-2 text-destructive">
+                         <AlertTriangle className="h-5 w-5"/>
+                         <span className="font-semibold">¡Acción Irreversible!</span>
+                    </div>
+                    <p>Estás a punto de eliminar <span className="font-bold">TODOS</span> los productos del catálogo de Firestore para el usuario actual.</p>
+                    <p>Esta acción no se puede deshacer.</p>
+                 </div>
+                )
+            }
+            confirmText={selectedProduct ? "Sí, Eliminar Producto" : "Sí, Borrar Catálogo"}
+            onConfirm={() => {
+                if (selectedProduct && selectedProduct.barcode) {
+                    handleDeleteProduct(selectedProduct.barcode);
+                } else if (!selectedProduct) {
+                    handleConfirmClearCatalog();
+                }
+                setShowClearConfirm(false);
+                setSelectedProduct(null);
+            }}
+            onCancel={() => {
+                setShowClearConfirm(false);
+                setSelectedProduct(null);
+            }}
+            isDestructive={true}
+            isProcessing={isProcessing || isTransitionPending || isLoading}
+        />
     </div>
   );
 };
@@ -689,64 +789,71 @@ const ProductTable: React.FC<ProductTableProps> = React.memo(({
 }) => {
 
   return (
-    <ScrollArea className="h-[calc(100vh-480px)] md:h-[calc(100vh-430px)] border rounded-lg shadow-sm bg-white dark:bg-gray-800">
+    <ScrollArea className="h-[calc(100vh-500px)] md:h-[calc(100vh-450px)] border rounded-lg shadow-sm bg-card dark:bg-card">
       <Table>
-        <TableCaption className="dark:text-gray-400">Productos en el catálogo. Click en la descripción para editar.</TableCaption>
-        <TableHeader className="sticky top-0 bg-gray-50 dark:bg-gray-700 z-10 shadow-sm">
+        <TableCaption>Productos en el catálogo. Click en la descripción para editar.</TableCaption>
+        <TableHeader className="sticky top-0 bg-muted/50 z-10 shadow-sm">
           <TableRow>
-            <TableHead className="w-[15%] px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">Código Barras</TableHead>
-            <TableHead className="w-[30%] px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">Descripción</TableHead>
-            <TableHead className="w-[20%] px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">Proveedor</TableHead>
-            <TableHead className="w-[10%] px-4 py-3 text-center text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">Stock</TableHead>
-            <TableHead className="w-[15%] px-4 py-3 text-center text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">Vencimiento</TableHead>
-            <TableHead className="w-[10%] px-4 py-3 text-center text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">Acciones</TableHead>
+            <TableHead className="w-[20%] sm:w-[15%] px-2 sm:px-4 py-3 text-left text-xs font-medium uppercase tracking-wider">Código Barras</TableHead>
+            <TableHead className="w-[40%] sm:w-[35%] px-2 sm:px-4 py-3 text-left text-xs font-medium uppercase tracking-wider">Descripción</TableHead>
+            <TableHead className="w-[20%] sm:w-[20%] px-2 sm:px-4 py-3 text-left text-xs font-medium uppercase tracking-wider">Proveedor</TableHead>
+            <TableHead className="w-[10%] sm:w-[10%] px-2 sm:px-4 py-3 text-center text-xs font-medium uppercase tracking-wider">Stock</TableHead>
+            <TableHead className="hidden sm:table-cell w-[10%] px-2 sm:px-4 py-3 text-center text-xs font-medium uppercase tracking-wider">Vencimiento</TableHead>
+            <TableHead className="w-[10%] sm:w-[10%] px-2 sm:px-4 py-3 text-center text-xs font-medium uppercase tracking-wider">Acciones</TableHead>
           </TableRow>
         </TableHeader>
         <TableBody>
-          {isLoading ? (
+          {isLoading && !products.length ? ( // Show loading only if products array is empty
             <TableRow>
-              <TableCell colSpan={6} className="text-center py-10 text-gray-500 dark:text-gray-400">
-                Cargando productos...
+              <TableCell colSpan={6} className="text-center py-10 text-muted-foreground">
+                <div className="flex justify-center items-center">
+                   <Loader2 className="h-6 w-6 animate-spin mr-2" />
+                   Cargando productos...
+                </div>
               </TableCell>
             </TableRow>
-          ) : products.length === 0 ? (
+          ) : !isLoading && products.length === 0 ? (
             <TableRow>
-              <TableCell colSpan={6} className="text-center py-10 text-gray-500 dark:text-gray-400">
-                No hay productos en el catálogo.
+              <TableCell colSpan={6} className="text-center py-10 text-muted-foreground">
+                No hay productos en el catálogo. Agrega uno o carga desde Google Sheet.
               </TableCell>
             </TableRow>
           ) : (
-            products.map((product) => (
-              <TableRow key={product.barcode} className="hover:bg-muted/50 dark:hover:bg-gray-700 text-sm transition-colors duration-150">
-                <TableCell className="px-4 py-3 font-medium text-gray-700 dark:text-gray-200">{product.barcode}</TableCell>
+            products.map((product) => {
+              const expirationDateObj = product.expirationDate ? parseISO(product.expirationDate) : null;
+              const isValidExp = expirationDateObj && isValidDate(expirationDateObj);
+              return (
+              <TableRow key={product.barcode} className="text-sm hover:bg-muted/10 transition-colors">
+                <TableCell className="px-2 sm:px-4 py-3 font-mono">{product.barcode}</TableCell>
                 <TableCell
-                    className="px-4 py-3 text-gray-800 dark:text-gray-100 cursor-pointer hover:text-blue-600 dark:hover:text-blue-400 hover:underline font-semibold"
+                    className="px-2 sm:px-4 py-3 font-semibold cursor-pointer hover:text-primary hover:underline"
                     onClick={() => onEdit(product)}
+                    title={`Editar ${product.description}`}
                  >
                     {product.description}
                 </TableCell>
-                 <TableCell className="px-4 py-3 text-gray-600 dark:text-gray-300">{product.provider || 'N/A'}</TableCell>
-                <TableCell className="px-4 py-3 text-center text-gray-600 dark:text-gray-300 tabular-nums">
+                 <TableCell className="px-2 sm:px-4 py-3">{product.provider || 'N/A'}</TableCell>
+                <TableCell className="px-2 sm:px-4 py-3 text-center tabular-nums">
                   {product.stock ?? 0}
                 </TableCell>
                 <TableCell
-                    className={cn("px-4 py-3 text-center text-gray-600 dark:text-gray-300 tabular-nums",
-                        product.expirationDate && isValid(parseISO(product.expirationDate)) && new Date(product.expirationDate) < new Date() ? 'text-red-500 dark:text-red-400 font-semibold' : ''
+                    className={cn("hidden sm:table-cell px-2 sm:px-4 py-3 text-center tabular-nums text-xs",
+                        isValidExp && new Date() > expirationDateObj! ? 'text-red-500 font-semibold' : ''
                     )}
-                    title={product.expirationDate && isValid(parseISO(product.expirationDate)) ? `Vence: ${format(parseISO(product.expirationDate), 'PPP', {locale: es})}` : 'Sin fecha'}
+                    title={isValidExp ? `Vence: ${format(expirationDateObj!, 'PPP', {locale: es})}` : 'Sin fecha'}
                 >
-                  {product.expirationDate && isValid(parseISO(product.expirationDate)) ? format(parseISO(product.expirationDate), 'dd/MM/yy', {locale: es}) : 'N/A'}
+                  {isValidExp ? format(expirationDateObj!, 'dd/MM/yy', {locale: es}) : 'N/A'}
                 </TableCell>
-                <TableCell className="px-4 py-3 text-center">
-                    <Button variant="ghost" size="icon" onClick={() => onEdit(product)} className="text-blue-600 hover:text-blue-700 h-7 w-7" title="Editar Producto">
-                        <Edit className="h-4 w-4"/>
+                <TableCell className="px-2 sm:px-4 py-3 text-center">
+                    <Button variant="ghost" size="icon" onClick={() => onEdit(product)} className="text-primary-foreground hover:text-accent-foreground h-7 w-7" title="Editar Producto">
+                        <Edit className="h-4 w-4 text-accent"/>
                     </Button>
-                    <Button variant="ghost" size="icon" onClick={() => onDeleteRequest(product)} className="text-red-600 hover:text-red-700 h-7 w-7" title="Eliminar Producto">
-                        <Trash className="h-4 w-4"/>
+                    <Button variant="ghost" size="icon" onClick={() => onDeleteRequest(product)} className="text-primary-foreground hover:text-destructive-foreground h-7 w-7" title="Eliminar Producto">
+                        <Trash className="h-4 w-4 text-destructive"/>
                     </Button>
                 </TableCell>
               </TableRow>
-            ))
+            )})
           )}
         </TableBody>
       </Table>

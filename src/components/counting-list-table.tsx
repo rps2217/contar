@@ -54,7 +54,7 @@ const CountingListTableComponent: React.FC<CountingListTableProps> = ({
              const isValidLastUpdate = lastUpdatedDate && isValid(lastUpdatedDate);
              const expirationDate = product.expirationDate ? parseISO(product.expirationDate) : null;
              const isValidExpiration = expirationDate && isValid(expirationDate);
-             const uniqueKey = product.barcode; // Use product.barcode directly as key
+             const uniqueKey = product.barcode; 
             return (
                 <TableRow
                 key={uniqueKey}
@@ -65,11 +65,11 @@ const CountingListTableComponent: React.FC<CountingListTableProps> = ({
                 aria-rowindex={countingList.indexOf(product) + 1}
                 >
                 <TableCell
-                    className="px-4 py-3 font-medium text-gray-900 dark:text-gray-100"
+                    className="px-4 py-3 font-semibold text-gray-900 dark:text-gray-100"
                     aria-label={`Detalles para ${product.description}`}
                 >
                     <span
-                        onClick={() => onDeleteRequest(product)} // Changed to onDeleteRequest
+                        onClick={() => onDeleteRequest(product)} 
                         className="cursor-pointer hover:text-red-600 dark:hover:text-red-400 hover:underline"
                         title={`Eliminar ${product.description} de la lista actual`}
                     >

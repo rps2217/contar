@@ -21,14 +21,14 @@ interface SidebarLayoutProps {
   isCollapsed: boolean;
   activeSection: string;
   sectionItems: SectionItem[];
-  currentUserId: string | null; // Can be null if not logged in
+  currentUserId: string | null; 
   warehouses: Warehouse[];
   currentWarehouseId: string;
   handleWarehouseChange: (id: string) => void;
   getWarehouseName: (id: string | null | undefined) => string;
   onSectionChange: (section: string) => void;
   onToggleCollapse?: () => void;
-  onSignOut: () => void; // Add signOut prop
+  onSignOut: () => void; 
 }
 
 export const SidebarLayout: React.FC<SidebarLayoutProps> = ({
@@ -43,17 +43,16 @@ export const SidebarLayout: React.FC<SidebarLayoutProps> = ({
   getWarehouseName,
   onSectionChange,
   onToggleCollapse,
-  onSignOut, // Destructure signOut
+  onSignOut, 
 }) => {
   return (
     <div className={cn("flex flex-col h-full", isMobileView ? "p-0" : "p-4")}>
-      {/* Header Section (Title & Collapse Button for Desktop) */}
       <div className={cn(
         "flex items-center",
         isCollapsed && !isMobileView ? "justify-center" : "justify-between",
         isMobileView ? "p-4 border-b mb-2" : "mb-2" 
       )}>
-        {!isCollapsed && <h2 className="text-xl font-semibold px-2 truncate">StockCounter Pro</h2>}
+        {!isCollapsed && <h2 className="text-xl font-bold px-2 truncate">StockCounter Pro</h2>}
         {!isMobileView && onToggleCollapse && (
           <Button
             variant="ghost"
@@ -67,7 +66,6 @@ export const SidebarLayout: React.FC<SidebarLayoutProps> = ({
         )}
       </div>
 
-      {/* Navigation Section */}
       <nav className={cn(
           "flex-grow space-y-1",
           isMobileView ? "px-4" : (isCollapsed ? "hidden md:block" : "block")
@@ -87,18 +85,34 @@ export const SidebarLayout: React.FC<SidebarLayoutProps> = ({
               !isCollapsed && "mr-1",
               isCollapsed && !isMobileView && "md:mr-0"
             )} />
-            {(!isCollapsed || isMobileView) && <span className="truncate">{item.label}</span>}
+            {(!isCollapsed || isMobileView) && <span className="truncate font-semibold">{item.label}</span>}
           </Button>
         ))}
       </nav>
 
-      {/* Footer Section (User ID & Warehouse Selector) */}
       {(!isCollapsed || isMobileView) && (
         <div className={cn(
             "mt-auto pt-4 border-t border-border",
              isMobileView ? "p-4" : "" 
             )}>
-          <div className="space-y-2 mb-4 px-2">
+          {warehouses.length > 0 && currentUserId && ( 
+            <div className="space-y-2 mb-4 px-2">
+              <Label htmlFor="warehouse-select-sidebar-layout" className="text-sm font-medium text-muted-foreground">Almacén Activo:</Label>
+              <Select value={currentWarehouseId} onValueChange={handleWarehouseChange} name="warehouse-select-sidebar-layout">
+                <SelectTrigger className="w-full bg-background border-border">
+                  <SelectValue placeholder="Seleccionar Almacén" />
+                </SelectTrigger>
+                <SelectContent>
+                  {warehouses.map((warehouse) => (
+                    <SelectItem key={warehouse.id} value={warehouse.id}>
+                      {warehouse.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          )}
+          <div className="space-y-2 px-2">
             <Label htmlFor="user-id-display-sidebar" className="text-sm font-medium text-muted-foreground">
               Usuario:
             </Label>
@@ -119,24 +133,6 @@ export const SidebarLayout: React.FC<SidebarLayoutProps> = ({
                 Cerrar Sesión
               </Button>
           </div>
-
-          {warehouses.length > 0 && currentUserId && ( // Only show if logged in
-            <div className="space-y-2 px-2">
-              <Label htmlFor="warehouse-select-sidebar-layout" className="text-sm font-medium text-muted-foreground">Almacén Activo:</Label>
-              <Select value={currentWarehouseId} onValueChange={handleWarehouseChange} name="warehouse-select-sidebar-layout">
-                <SelectTrigger className="w-full bg-background border-border">
-                  <SelectValue placeholder="Seleccionar Almacén" />
-                </SelectTrigger>
-                <SelectContent>
-                  {warehouses.map((warehouse) => (
-                    <SelectItem key={warehouse.id} value={warehouse.id}>
-                      {warehouse.name}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-          )}
         </div>
       )}
     </div>

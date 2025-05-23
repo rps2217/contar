@@ -4,8 +4,7 @@
 
 import type { ProductDetail } from '@/types/product';
 import { useToast } from "@/hooks/use-toast";
-import { cn, getLocalStorageItem, setLocalStorageItem, debounce } from "@/lib/utils"; // Import getLocalStorageItem and setLocalStorageItem
-import { useLocalStorage } from '@/hooks/use-local-storage'; // Import useLocalStorage
+import { cn, getLocalStorageItem, setLocalStorageItem, debounce } from "@/lib/utils"; 
 import {
   addOrUpdateProductToDB,
   getAllProductsFromDB,
@@ -16,8 +15,8 @@ import {
 import {
     Filter, Play, Loader2, Save, Trash, Upload, Warehouse as WarehouseIcon, CalendarIcon, PackageSearch, Edit
 } from "lucide-react";
-import Papa from 'papaparse';
-import * as React from "react"; // Import React
+import Papa from 'papaparse'; 
+import * as React from "react"; 
 import { useCallback, useEffect, useState, useMemo, useRef } from "react"; 
 import { ConfirmationDialog } from "@/components/confirmation-dialog";
 import { EditProductDialog } from "@/components/edit-product-dialog";
@@ -35,6 +34,7 @@ import {
 import { format, parse, isValid, parseISO } from 'date-fns';
 import { es } from 'date-fns/locale';
 import { GOOGLE_SHEET_URL_LOCALSTORAGE_KEY } from '@/lib/constants';
+import { useLocalStorage } from '@/hooks/use-local-storage';
 
 
 const CHUNK_SIZE = 200;
@@ -48,7 +48,6 @@ const extractSpreadsheetId = (input: string): string | null => {
   if (match && match[1]) {
     return match[1];
   }
-  // Allow raw ID if it looks like one
   if (!input.includes('/') && input.length > 30 && input.length < 50 && /^[a-zA-Z0-9-_]+$/.test(input)) {
     return input;
   }
@@ -58,7 +57,7 @@ const extractSpreadsheetId = (input: string): string | null => {
 const parseGoogleSheetUrl = (sheetUrlOrId: string): { spreadsheetId: string | null; gid: string } => {
     const spreadsheetId = extractSpreadsheetId(sheetUrlOrId);
     const gidMatch = sheetUrlOrId.match(/[#&]gid=([0-9]+)/);
-    const gid = gidMatch ? gidMatch[1] : '0'; // Default to first sheet if GID not present
+    const gid = gidMatch ? gidMatch[1] : '0'; 
 
     if (!spreadsheetId) {
          console.warn("Could not extract spreadsheet ID from input:", sheetUrlOrId);
@@ -116,15 +115,13 @@ async function fetchGoogleSheetData(sheetUrlOrId: string): Promise<ProductDetail
                 }
                 const csvData = results.data;
                 const products: ProductDetail[] = [];
-                if (csvData.length <= 1) { // Ensure there's more than just a header row
+                if (csvData.length <= 1) { 
                     resolve(products);
                     return;
                 }
-
-                // Assume first row is header
+                
                 const headers = csvData[0].map(h => h.toLowerCase().trim());
                 
-                // Define required headers and their possible names (English/Spanish, common variations)
                 const headerMapping: Record<keyof Omit<ProductDetail, 'expirationDate'>, string[]> = {
                     barcode: ["codigo", "código", "codigo de barras", "código de barras", "barcode"],
                     description: ["producto", "descripción", "descripcion", "description"],
@@ -132,33 +129,32 @@ async function fetchGoogleSheetData(sheetUrlOrId: string): Promise<ProductDetail
                     stock: ["stock final", "stockactual", "stock actual", "stock", "cantidad"]
                 };
 
-                // Find the index for each required header
                 const headerIndices: Partial<Record<keyof Omit<ProductDetail, 'expirationDate'>, number>> = {};
+                const productDetailKeys = Object.keys(headerMapping) as Array<keyof Omit<ProductDetail, 'expirationDate'>>;
 
-                for (const key in headerMapping) {
-                    const possibleNames = headerMapping[key as keyof Omit<ProductDetail, 'expirationDate'>];
-                    const index = headers.findIndex(h => possibleNames.includes(h));
+                for (const key of productDetailKeys) {
+                    const possibleNames = headerMapping[key];
+                    const index = headers.findIndex(h => possibleNames.includes(h.toLowerCase().trim()));
                     if (index !== -1) {
-                        headerIndices[key as keyof Omit<ProductDetail, 'expirationDate'>] = index;
+                        headerIndices[key] = index;
                     } else {
-                        // Allowing 'provider' and 'stock' to be optional for more flexibility
-                        if (key !== 'provider' && key !== 'stock') {
+                        if (key === 'barcode' || key === 'description') { // Barcode and Description are mandatory
                             console.error(`Required header for "${key}" (e.g., ${possibleNames.join('/')}) not found in CSV headers: [${headers.join(', ')}]. Check Google Sheet headers.`);
                             reject(new Error(`Encabezado requerido para "${key}" (ej. ${possibleNames.join('/')}) no encontrado en el CSV. Verifique los encabezados de la Hoja de Google.`));
                             return;
                         }
-                         console.warn(`Optional header for "${key}" (e.g., ${possibleNames.join('/')}) not found. It will be set to default.`);
+                        console.warn(`Optional header for "${key}" (e.g., ${possibleNames.join('/')}) not found. It will be set to default.`);
                     }
                 }
 
 
-                for (let i = 1; i < csvData.length; i++) { // Start from second row (data)
+                for (let i = 1; i < csvData.length; i++) { 
                     const values = csvData[i];
                     if (!values || values.length === 0) continue;
 
                     const barcode = headerIndices.barcode !== undefined ? values[headerIndices.barcode]?.trim() : undefined;
                     if (!barcode) {
-                        console.warn(`Fila ${i + 1} omitida: Código de barras vacío o faltante según el encabezado mapeado.`);
+                        console.warn(`Fila ${i + 1} omitida: Código de barras vacío o faltante.`);
                         continue;
                     }
 
@@ -179,7 +175,6 @@ async function fetchGoogleSheetData(sheetUrlOrId: string): Promise<ProductDetail
                     
                     const provider = headerIndices.provider !== undefined ? (values[headerIndices.provider]?.trim() || "Desconocido") : "Desconocido";
                     
-                    // Expiration date is not directly mapped from these columns for now, can be added if needed
                     let expirationDate: string | undefined = undefined;
 
                     products.push({ barcode, description, provider, stock, expirationDate });
@@ -195,20 +190,27 @@ async function fetchGoogleSheetData(sheetUrlOrId: string): Promise<ProductDetail
 
 
  interface ProductDatabaseProps {
+  userId: string | null;
   onStartCountByProvider: (products: ProductDetail[]) => void;
   isTransitionPending?: boolean;
+  catalogProducts: ProductDetail[]; 
+  setCatalogProducts: React.Dispatch<React.SetStateAction<ProductDetail[]>>;
+  onClearCatalogRequest: () => void;
  }
 
 
-const ProductDatabaseComponent: React.FC<ProductDatabaseProps> = ({ onStartCountByProvider, isTransitionPending }) => {
+const ProductDatabaseComponent: React.FC<ProductDatabaseProps> = ({ 
+    userId, 
+    onStartCountByProvider, 
+    isTransitionPending,
+    catalogProducts,
+    setCatalogProducts,
+    onClearCatalogRequest
+}) => {
   const { toast } = useToast();
-  const [products, setProducts] = useState<ProductDetail[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
   const [selectedProduct, setSelectedProduct] = useState<ProductDetail | null>(null);
-  const [isAlertOpen, setIsAlertOpen] = useState(false);
-  const [alertAction, setAlertAction] = useState<'deleteProduct' | 'clearDatabase' | null>(null);
-  const [productToDelete, setProductToDelete] = useState<ProductDetail | null>(null);
   const [uploadProgress, setUploadProgress] = useState(0);
   const [isProcessing, setIsProcessing] = useState(false); 
   const [processingStatus, setProcessingStatus] = useState<string>("");
@@ -228,29 +230,35 @@ const ProductDatabaseComponent: React.FC<ProductDatabaseProps> = ({ onStartCount
     };
   }, []);
 
-  const loadProductsFromDB = useCallback(async () => {
+  // Load products from Firestore when component mounts or userId changes
+  useEffect(() => {
+    if (!userId) {
+        if (isMountedRef.current) {
+            setCatalogProducts([]);
+            setIsLoading(false);
+        }
+        return;
+    }
     if (!isMountedRef.current) return;
     setIsLoading(true);
-    try {
-      const dbProducts = await getAllProductsFromDB();
-      if (isMountedRef.current) {
-        setProducts(dbProducts);
-      }
-    } catch (error) {
-      console.error("Failed to load products from IndexedDB:", error);
-      if (isMountedRef.current) {
-        toast({ variant: "destructive", title: "Error de Base de Datos", description: "No se pudo cargar la información de productos." });
-      }
-    } finally {
-      if (isMountedRef.current) {
-        setIsLoading(false);
-      }
-    }
-  }, [toast]);
-
-  useEffect(() => {
-    loadProductsFromDB();
-  }, [loadProductsFromDB]);
+    getAllProductsFromCatalog(userId)
+        .then(products => {
+            if (isMountedRef.current) {
+                setCatalogProducts(products);
+            }
+        })
+        .catch(error => {
+            console.error("Failed to load catalog from Firestore:", error);
+            if (isMountedRef.current) {
+                toast({ variant: "destructive", title: "Error de Catálogo", description: "No se pudo cargar el catálogo de Firestore." });
+            }
+        })
+        .finally(() => {
+            if (isMountedRef.current) {
+                setIsLoading(false);
+            }
+        });
+  }, [userId, setCatalogProducts, toast]);
 
 
   const handleGoogleSheetUrlOrIdChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -260,6 +268,10 @@ const ProductDatabaseComponent: React.FC<ProductDatabaseProps> = ({ onStartCount
 
 
  const handleAddOrUpdateProductSubmit = useCallback(async (data: ProductDetail) => {
+    if (!userId) {
+        toast({ variant: "destructive", title: "Error", description: "ID de usuario no disponible." });
+        return;
+    }
     const isUpdating = !!selectedProduct;
     const productData: ProductDetail = {
         barcode: isUpdating ? selectedProduct!.barcode : data.barcode.trim(),
@@ -277,24 +289,32 @@ const ProductDatabaseComponent: React.FC<ProductDatabaseProps> = ({ onStartCount
     setIsProcessing(true);
     setProcessingStatus(isUpdating ? "Actualizando producto..." : "Agregando producto...");
     try {
-        await addOrUpdateProductToDB(productData);
-        await loadProductsFromDB();
+        await addOrUpdateProductInCatalog(userId, productData);
+        
+        // Update local catalog state
         if (isMountedRef.current) {
-            toast({
-                title: isUpdating ? "Producto Actualizado" : "Producto Agregado",
+            setCatalogProducts(prev => {
+                if (isUpdating) {
+                    return prev.map(p => p.barcode === productData.barcode ? productData : p);
+                } else {
+                    // Avoid duplicates if somehow added again before Firestore listener updates
+                    if (prev.some(p => p.barcode === productData.barcode)) {
+                        return prev.map(p => p.barcode === productData.barcode ? productData : p);
+                    }
+                    return [...prev, productData];
+                }
             });
+            toast({ title: isUpdating ? "Producto Actualizado" : "Producto Agregado" });
             setIsEditModalOpen(false);
             setSelectedProduct(null);
         }
     } catch (error: any) {
         let errorMessage = `Error al ${isUpdating ? 'actualizar' : 'guardar'} el producto.`;
-        if (error.name === 'ConstraintError') {
-            errorMessage = `El producto con código de barras ${productData.barcode} ya existe.`;
-        } else if (error.message) {
+        if (error.message) {
              errorMessage += ` Detalle: ${error.message}`;
         }
         if (isMountedRef.current) {
-            toast({ variant: "destructive", title: "Error de Base de Datos", description: errorMessage });
+            toast({ variant: "destructive", title: "Error de Catálogo", description: errorMessage });
         }
     } finally {
         if (isMountedRef.current) {
@@ -302,67 +322,39 @@ const ProductDatabaseComponent: React.FC<ProductDatabaseProps> = ({ onStartCount
             setProcessingStatus("");
         }
     }
- }, [selectedProduct, toast, loadProductsFromDB]);
+ }, [userId, selectedProduct, toast, setCatalogProducts]);
 
 
   const handleDeleteProduct = useCallback(async (barcode: string | null) => {
-    if (!barcode) {
-        toast({ variant: "destructive", title: "Error Interno", description: "No se puede eliminar el producto sin código de barras." });
+    if (!userId || !barcode) {
+        toast({ variant: "destructive", title: "Error Interno", description: "ID de usuario o código de barras no disponible." });
         return;
     }
-    const product = products.find(p => p.barcode === barcode);
+    const product = catalogProducts.find(p => p.barcode === barcode);
     if (!isMountedRef.current) return;
     setIsProcessing(true);
     setProcessingStatus("Eliminando producto...");
     try {
-      await deleteProductFromDB(barcode);
-      await loadProductsFromDB();
+      await deleteProductFromCatalog(userId, barcode);
       if (isMountedRef.current) {
+          setCatalogProducts(prev => prev.filter(p => p.barcode !== barcode));
           toast({
             title: "Producto Eliminado",
-            description: `${product?.description || barcode} ha sido eliminado de la base de datos.`,
+            description: `${product?.description || barcode} ha sido eliminado del catálogo.`,
           });
       }
     } catch (error: any) {
       if (isMountedRef.current) {
-        toast({ variant: "destructive", title: "Error al Eliminar", description: `No se pudo eliminar: ${error.message}` });
+        toast({ variant: "destructive", title: "Error al Eliminar", description: `No se pudo eliminar del catálogo: ${error.message}` });
       }
     } finally {
         if (isMountedRef.current) {
             setIsProcessing(false);
             setProcessingStatus("");
-            setIsEditModalOpen(false);
-            setIsAlertOpen(false);
-            setProductToDelete(null);
-            setAlertAction(null);
+            setIsEditModalOpen(false); 
         }
     }
-  }, [products, toast, loadProductsFromDB]);
-
-
-  const handleClearProductDatabase = useCallback(async () => {
-    if (!isMountedRef.current) return;
-    setIsProcessing(true);
-    setProcessingStatus("Borrando base de datos...");
-    try {
-      await clearProductDatabaseFromDB();
-      if (isMountedRef.current) {
-          setProducts([]);
-          toast({ title: "Base de Datos Borrada" });
-      }
-    } catch (error: any) {
-      if (isMountedRef.current) {
-        toast({ variant: "destructive", title: "Error al Borrar DB", description: `No se pudo borrar la base de datos: ${error.message}` });
-      }
-    } finally {
-        if (isMountedRef.current) {
-            setIsProcessing(false);
-            setProcessingStatus("");
-            setIsAlertOpen(false);
-            setAlertAction(null);
-        }
-    }
-  }, [toast]);
+  }, [userId, catalogProducts, toast, setCatalogProducts]);
 
 
   const handleOpenEditDialog = useCallback((product: ProductDetail | null) => {
@@ -375,30 +367,15 @@ const ProductDatabaseComponent: React.FC<ProductDatabaseProps> = ({ onStartCount
          toast({ variant: "destructive", title: "Error Interno", description: "Datos del producto no disponibles para eliminar." });
          return;
       }
-      setProductToDelete(product);
-      setAlertAction('deleteProduct');
-      setIsAlertOpen(true);
-  }, [toast]);
-
-  const triggerClearDatabaseAlert = useCallback(() => {
-      if (products.length === 0) {
-           toast({ title: "Base de Datos Vacía", description: "La base de datos ya está vacía." });
-           return;
-      }
-      setAlertAction('clearDatabase');
-      setIsAlertOpen(true);
-  }, [products, toast]);
-
- const handleDeleteConfirmation = useCallback(() => {
-    if (alertAction === 'deleteProduct' && productToDelete) {
-        handleDeleteProduct(productToDelete.barcode);
-    } else if (alertAction === 'clearDatabase') {
-        handleClearProductDatabase();
-    }
-}, [alertAction, productToDelete, handleDeleteProduct, handleClearProductDatabase]);
+      handleDeleteProduct(product.barcode); // Direct delete for simplicity, confirmation can be added back if needed
+  }, [handleDeleteProduct, toast]);
 
 
    const handleLoadFromGoogleSheet = useCallback(async () => {
+        if (!userId) {
+            toast({ variant: "destructive", title: "Error", description: "ID de usuario no disponible." });
+            return;
+        }
         if (!googleSheetUrlOrId) {
             toast({ variant: "destructive", title: "URL/ID Requerido", description: "Introduce la URL de la hoja de Google o el ID." });
             return;
@@ -419,20 +396,20 @@ const ProductDatabaseComponent: React.FC<ProductDatabaseProps> = ({ onStartCount
                  setProcessingStatus("");
                  return;
              }
-             if (isMountedRef.current) setProcessingStatus(`Cargando ${totalItemsToLoad} productos...`);
+             if (isMountedRef.current) setProcessingStatus(`Cargando ${totalItemsToLoad} productos a Firestore...`);
 
-             for (let i = 0; i < totalItemsToLoad; i += CHUNK_SIZE) {
-                 const chunk = parsedProducts.slice(i, i + CHUNK_SIZE);
-                 await addProductsToDB(chunk);
-                 itemsLoaded += chunk.length;
-                 if (isMountedRef.current) {
-                     setUploadProgress(Math.round((itemsLoaded / totalItemsToLoad) * 100));
-                     setProcessingStatus(`Cargando ${itemsLoaded} de ${totalItemsToLoad} productos...`);
-                 }
+             await addProductsToCatalog(userId, parsedProducts); // Batch add to Firestore
+
+             // Update local catalog state
+             if (isMountedRef.current) {
+                setCatalogProducts(prevCatalog => {
+                    const newCatalogMap = new Map(prevCatalog.map(p => [p.barcode, p]));
+                    parsedProducts.forEach(p => newCatalogMap.set(p.barcode, p));
+                    return Array.from(newCatalogMap.values());
+                });
+                setUploadProgress(100); // Mark as complete
+                toast({ title: "Carga Completa", description: `Se procesaron y guardaron ${totalItemsToLoad} productos en Firestore.` });
              }
-
-             await loadProductsFromDB();
-             if (isMountedRef.current) toast({ title: "Carga Completa", description: `Se procesaron ${totalItemsToLoad} productos.` });
 
         } catch (error: any) {
             if (isMountedRef.current) {
@@ -443,19 +420,19 @@ const ProductDatabaseComponent: React.FC<ProductDatabaseProps> = ({ onStartCount
             if (isMountedRef.current) {
                 setIsProcessing(false);
                 setProcessingStatus("");
-                setUploadProgress(0);
+                // setUploadProgress(0); // Keep progress at 100 or reset based on UX preference
             }
         }
-    }, [googleSheetUrlOrId, toast, loadProductsFromDB]);
+    }, [userId, googleSheetUrlOrId, toast, setCatalogProducts]);
 
 
   const handleExportDatabase = useCallback(() => {
-     if (products.length === 0) {
-       toast({ title: "Base de Datos Vacía", description: "No hay productos para exportar." });
+     if (catalogProducts.length === 0) {
+       toast({ title: "Catálogo Vacío", description: "No hay productos para exportar." });
        return;
      }
      try {
-         const dataToExport = products.map(p => ({
+         const dataToExport = catalogProducts.map(p => ({
              CODIGO_BARRAS: p.barcode,
              DESCRIPCION: p.description,
              PROVEEDOR: p.provider,
@@ -467,7 +444,7 @@ const ProductDatabaseComponent: React.FC<ProductDatabaseProps> = ({ onStartCount
          const link = document.createElement("a");
          link.href = URL.createObjectURL(blob);
          const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
-         link.setAttribute("download", `product_database_${timestamp}.csv`);
+         link.setAttribute("download", `product_catalog_${timestamp}.csv`);
          document.body.appendChild(link);
          link.click();
          document.body.removeChild(link);
@@ -476,18 +453,18 @@ const ProductDatabaseComponent: React.FC<ProductDatabaseProps> = ({ onStartCount
      } catch (error) {
           toast({ variant: "destructive", title: "Error de Exportación", description: "No se pudo generar el archivo CSV." });
      }
-   }, [products, toast]);
+   }, [catalogProducts, toast]);
 
 
     const providerOptions = useMemo(() => {
-        const providers = new Set(products.map(p => p.provider || "Desconocido").filter(Boolean));
+        const providers = new Set(catalogProducts.map(p => p.provider || "Desconocido").filter(Boolean));
         const sortedProviders = ["all", ...Array.from(providers)].sort((a, b) => {
             if (a === 'all') return -1;
             if (b === 'all') return 1;
             return (a as string).localeCompare(b as string);
         });
         return sortedProviders;
-    }, [products]);
+    }, [catalogProducts]);
 
   const handleStartCountByProviderClick = useCallback(async () => {
     if (selectedProviderFilter === 'all') {
@@ -503,7 +480,7 @@ const ProductDatabaseComponent: React.FC<ProductDatabaseProps> = ({ onStartCount
     setProcessingStatus(`Buscando productos de ${selectedProviderFilter}...`);
 
     try {
-      const providerProducts = products.filter(product => (product.provider || "Desconocido") === selectedProviderFilter);
+      const providerProducts = catalogProducts.filter(product => (product.provider || "Desconocido") === selectedProviderFilter);
 
       if (providerProducts.length === 0) {
         if (isMountedRef.current) toast({ title: "Vacío", description: `No hay productos registrados para el proveedor ${selectedProviderFilter}.` });
@@ -522,7 +499,7 @@ const ProductDatabaseComponent: React.FC<ProductDatabaseProps> = ({ onStartCount
           setProcessingStatus("");
       }
     }
-  }, [selectedProviderFilter, products, onStartCountByProvider, toast]);
+  }, [selectedProviderFilter, catalogProducts, onStartCountByProvider, toast]);
 
 
   const debouncedSetSearchTerm = useMemo(
@@ -541,7 +518,7 @@ const ProductDatabaseComponent: React.FC<ProductDatabaseProps> = ({ onStartCount
 
   const filteredProducts = useMemo(() => {
     const lowerSearchTerm = searchTerm.toLowerCase();
-    return products.filter(product => {
+    return catalogProducts.filter(product => {
       const matchesSearch = !lowerSearchTerm ||
                             product.description.toLowerCase().includes(lowerSearchTerm) ||
                             product.barcode.includes(lowerSearchTerm) ||
@@ -557,7 +534,7 @@ const ProductDatabaseComponent: React.FC<ProductDatabaseProps> = ({ onStartCount
         if (!b.description) return -1;
         return a.description.localeCompare(b.description);
     });
-  }, [products, searchTerm, selectedProviderFilter]);
+  }, [catalogProducts, searchTerm, selectedProviderFilter]);
 
 
   return (
@@ -573,7 +550,7 @@ const ProductDatabaseComponent: React.FC<ProductDatabaseProps> = ({ onStartCount
                     handleExportDatabase();
                     break;
                   case "clear":
-                    triggerClearDatabaseAlert();
+                    onClearCatalogRequest(); // Call prop from parent
                     break;
                 }
               }} disabled={isProcessing || isLoading || isTransitionPending}>
@@ -582,14 +559,14 @@ const ProductDatabaseComponent: React.FC<ProductDatabaseProps> = ({ onStartCount
               </SelectTrigger>
               <SelectContent>
                 <SelectGroup>
-                  <SelectLabel>Acciones Base de Datos</SelectLabel>
+                  <SelectLabel>Acciones Catálogo</SelectLabel>
                   <SelectItem value="add">
                     Agregar Producto
                   </SelectItem>
-                  <SelectItem value="export" disabled={products.length === 0}>
-                    Exportar Base de Datos (CSV)
+                  <SelectItem value="export" disabled={catalogProducts.length === 0}>
+                    Exportar Catálogo (CSV)
                   </SelectItem>
-                  <SelectItem value="clear" disabled={products.length === 0}>Borrar Base de Datos</SelectItem>
+                  <SelectItem value="clear" disabled={catalogProducts.length === 0}>Borrar Catálogo</SelectItem>
                 </SelectGroup>
               </SelectContent>
             </Select>
@@ -635,7 +612,7 @@ const ProductDatabaseComponent: React.FC<ProductDatabaseProps> = ({ onStartCount
 
        <div className="space-y-2 p-4 border rounded-lg bg-card dark:bg-gray-800 shadow-sm">
            <Label htmlFor="google-sheet-url" className="block font-medium mb-1 dark:text-gray-200">
-              Cargar/Actualizar desde Google Sheet:
+              Cargar/Actualizar Catálogo desde Google Sheet:
            </Label>
           <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
              <Input
@@ -657,7 +634,7 @@ const ProductDatabaseComponent: React.FC<ProductDatabaseProps> = ({ onStartCount
              </Button>
          </div>
          <p id="google-sheet-info" className="text-xs text-muted-foreground dark:text-gray-400 mt-1">
-             La hoja debe tener permisos de 'cualquiera con el enlace puede ver'. Se leerá por posición: Col 1: Código, Col 2: Descripción, Col 6: Stock, Col 10: Proveedor.
+             La hoja debe tener permisos de 'cualquiera con el enlace puede ver'. Se espera: Columna para Código, Descripción, Proveedor, Stock (o variaciones de nombres).
          </p>
          {isProcessing && uploadProgress > 0 && (
              <div className="mt-4 space-y-1">
@@ -668,27 +645,9 @@ const ProductDatabaseComponent: React.FC<ProductDatabaseProps> = ({ onStartCount
              </div>
          )}
          {isLoading && !isProcessing && (
-              <p className="text-sm text-muted-foreground dark:text-gray-400 text-center mt-2">Cargando base de datos local...</p>
+              <p className="text-sm text-muted-foreground dark:text-gray-400 text-center mt-2">Cargando catálogo de productos...</p>
          )}
        </div>
-
-        <ConfirmationDialog
-            isOpen={isAlertOpen}
-            onOpenChange={setIsAlertOpen}
-            title={alertAction === 'deleteProduct' ? 'Confirmar Eliminación' : 'Confirmar Borrado Completo'}
-            description={
-                alertAction === 'deleteProduct' && productToDelete ?
-                `¿Estás seguro de que deseas eliminar permanentemente el producto "${productToDelete.description}" (${productToDelete.barcode}) de la base de datos? Esta acción no se puede deshacer.`
-                : alertAction === 'clearDatabase' ?
-                "Estás a punto de eliminar TODOS los productos de la base de datos permanentemente. Esta acción no se puede deshacer."
-                : "Esta acción no se puede deshacer."
-            }
-            confirmText={alertAction === 'deleteProduct' ? "Sí, Eliminar Producto" : "Sí, Borrar Todo"}
-            onConfirm={handleDeleteConfirmation}
-            onCancel={() => { setIsAlertOpen(false); setProductToDelete(null); setAlertAction(null); }}
-            isDestructive={true}
-            isProcessing={isProcessing || isTransitionPending}
-        />
 
        <ProductTable
            products={filteredProducts}
@@ -703,7 +662,7 @@ const ProductDatabaseComponent: React.FC<ProductDatabaseProps> = ({ onStartCount
           selectedDetail={selectedProduct}
           setSelectedDetail={setSelectedProduct}
           onSubmit={handleAddOrUpdateProductSubmit}
-          onDelete={(barcode) => triggerDeleteProductAlert(products.find(p => p.barcode === barcode) || null)}
+          onDelete={(barcode) => handleDeleteProduct(barcode)}
           isProcessing={isProcessing || isTransitionPending}
           initialStock={selectedProduct?.stock}
           context="database"
@@ -732,7 +691,7 @@ const ProductTable: React.FC<ProductTableProps> = React.memo(({
   return (
     <ScrollArea className="h-[calc(100vh-480px)] md:h-[calc(100vh-430px)] border rounded-lg shadow-sm bg-white dark:bg-gray-800">
       <Table>
-        <TableCaption className="dark:text-gray-400">Productos en la base de datos. Click en la descripción para editar.</TableCaption>
+        <TableCaption className="dark:text-gray-400">Productos en el catálogo. Click en la descripción para editar.</TableCaption>
         <TableHeader className="sticky top-0 bg-gray-50 dark:bg-gray-700 z-10 shadow-sm">
           <TableRow>
             <TableHead className="w-[15%] px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">Código Barras</TableHead>
@@ -753,7 +712,7 @@ const ProductTable: React.FC<ProductTableProps> = React.memo(({
           ) : products.length === 0 ? (
             <TableRow>
               <TableCell colSpan={6} className="text-center py-10 text-gray-500 dark:text-gray-400">
-                No hay productos en la base de datos.
+                No hay productos en el catálogo.
               </TableCell>
             </TableRow>
           ) : (
@@ -761,7 +720,7 @@ const ProductTable: React.FC<ProductTableProps> = React.memo(({
               <TableRow key={product.barcode} className="hover:bg-muted/50 dark:hover:bg-gray-700 text-sm transition-colors duration-150">
                 <TableCell className="px-4 py-3 font-medium text-gray-700 dark:text-gray-200">{product.barcode}</TableCell>
                 <TableCell
-                    className="px-4 py-3 text-gray-800 dark:text-gray-100 cursor-pointer hover:text-blue-600 dark:hover:text-blue-400 hover:underline"
+                    className="px-4 py-3 text-gray-800 dark:text-gray-100 cursor-pointer hover:text-blue-600 dark:hover:text-blue-400 hover:underline font-semibold"
                     onClick={() => onEdit(product)}
                  >
                     {product.description}

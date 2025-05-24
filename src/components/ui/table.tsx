@@ -54,17 +54,20 @@ TableFooter.displayName = "TableFooter"
 const TableRow = React.forwardRef<
   HTMLTableRowElement,
   React.HTMLAttributes<HTMLTableRowElement>
->(({ className, ...props }, ref) => (
+>(({ className, children, ...rest }, ref) => ( // Explicitly destructure children
   <tr
     ref={ref}
     className={cn(
       "border-b transition-colors hover:bg-muted/50 data-[state=selected]:bg-muted",
       className
     )}
-    {...props} 
-  /> 
-))
-TableRow.displayName = "TableRow"
+    {...rest} // Spread remaining props
+  >
+    {children} {/* Render children explicitly */}
+  </tr>
+));
+TableRow.displayName = "TableRow";
+
 
 const TableHead = React.forwardRef<
   HTMLTableCellElement,

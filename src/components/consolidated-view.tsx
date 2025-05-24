@@ -4,7 +4,7 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import type { Warehouse, ProductDetail, DisplayProduct, ConsolidatedProductViewItem } from '@/types/product';
 import { useToast } from "@/hooks/use-toast";
-import { getLocalStorageItem } from '@/lib/utils';
+import { getLocalStorageItem, cn } from '@/lib/utils';
 import { LOCAL_STORAGE_COUNTING_LIST_KEY_PREFIX } from '@/lib/constants';
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -219,21 +219,21 @@ export const ConsolidatedView: React.FC<ConsolidatedViewProps> = ({
             <TableCaption>Vista consolidada del inventario contado en todos los almacenes.</TableCaption>
             <TableHeader className="sticky top-0 bg-muted/50 z-10 shadow-sm">
               <TableRow>
-                <TableHead className="px-3 py-2 text-xs font-medium uppercase tracking-wider">Código</TableHead>
+                <TableHead className="px-3 py-2 text-xs font-medium uppercase tracking-wider hidden md:table-cell">Código</TableHead>
                 <TableHead className="px-3 py-2 text-xs font-medium uppercase tracking-wider">Descripción</TableHead>
                 <TableHead className="px-3 py-2 text-center text-xs font-medium uppercase tracking-wider">Stock Catálogo</TableHead>
                 <TableHead className="px-3 py-2 text-center text-xs font-medium uppercase tracking-wider">Cant. Contada</TableHead>
-                <TableHead className="px-3 py-2 text-xs font-medium uppercase tracking-wider">Almacenes</TableHead>
+                <TableHead className="px-3 py-2 text-xs font-medium uppercase tracking-wider hidden md:table-cell">Almacenes</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               {filteredReportData.map((item) => (
                 <TableRow key={item.barcode} className="text-sm hover:bg-muted/10 transition-colors">
-                  <TableCell className="px-3 py-2 font-mono">{item.barcode}</TableCell>
+                  <TableCell className="px-3 py-2 font-mono hidden md:table-cell">{item.barcode}</TableCell>
                   <TableCell className="px-3 py-2">{item.description}</TableCell>
                   <TableCell className="px-3 py-2 text-center tabular-nums">{item.masterStock}</TableCell>
                   <TableCell className="px-3 py-2 text-center tabular-nums font-semibold">{item.totalCountedQuantity}</TableCell>
-                  <TableCell className="px-3 py-2 text-xs">
+                  <TableCell className="px-3 py-2 text-xs hidden md:table-cell">
                     {item.warehousesPresent.join(', ') || 'N/A'}
                   </TableCell>
                 </TableRow>

@@ -291,4 +291,3 @@ export const EditProductDialog: React.FC<EditProductDialogProps> = ({
     </Dialog>
   );
 };
-

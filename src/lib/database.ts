@@ -228,4 +228,3 @@ export type { StockCounterDBSchema };
 //   }
 // }
 // Call preloadDatabase() in a top-level client component or _app.tsx if using Pages Router
-

@@ -53,7 +53,7 @@ export const WarehouseManagement: React.FC<WarehouseManagementProps> = ({
   const { toast } = useToast();
 
   const deleteDialogDescriptionId = useId();
-  const editDialogDescriptionId = useId(); 
+  // const editDialogDescriptionId = useId();  // No longer needed if EditWarehouseDialog manages its own
 
   const handleAddNewWarehouse = async () => {
     if (!newWarehouseName.trim()) {
@@ -64,7 +64,7 @@ export const WarehouseManagement: React.FC<WarehouseManagementProps> = ({
     try {
       await onAddWarehouse(newWarehouseName.trim());
       setNewWarehouseName("");
-      toast({ title: "Almacén Agregado" });
+      // Toast for success is handled by parent (page.tsx) after Firestore operation
     } catch (error) {
       // Error toast is handled by parent
     } finally {
@@ -86,7 +86,7 @@ export const WarehouseManagement: React.FC<WarehouseManagementProps> = ({
       setIsProcessing(true);
       try {
         await onDeleteWarehouse(warehouseToDelete.id);
-        // Toast for success/failure is handled by parent (page.tsx)
+        // Toast for success/failure is handled by parent (page.tsx) after Firestore operation
       } catch (error) {
         // Error toast is handled by parent
       } finally {
@@ -106,7 +106,7 @@ export const WarehouseManagement: React.FC<WarehouseManagementProps> = ({
     setIsProcessing(true);
     try {
       await onUpdateWarehouse(updatedWarehouse);
-      // Toast for success/failure is handled by parent (page.tsx)
+      // Toast for success/failure is handled by parent (page.tsx) after Firestore operation
     } catch (error) {
       // Error toast is handled by parent
     } finally {
@@ -123,11 +123,11 @@ export const WarehouseManagement: React.FC<WarehouseManagementProps> = ({
       <div>
         <h2 className="text-2xl font-bold tracking-tight">Administración de Almacenes</h2>
         <p className="text-muted-foreground">
-          Crea, edita, elimina y selecciona tus almacenes. El ID se genera automáticamente.
+          Crea, edita, elimina y selecciona tus almacenes. El ID se genera automáticamente al crear.
         </p>
       </div>
 
-      <Card className="shadow-lg rounded-lg">
+      <Card className="shadow-lg rounded-lg bg-card">
         <CardHeader>
           <CardTitle className="text-xl">Agregar Nuevo Almacén</CardTitle>
         </CardHeader>
@@ -148,7 +148,7 @@ export const WarehouseManagement: React.FC<WarehouseManagementProps> = ({
         </CardContent>
         <CardFooter>
           <Button onClick={handleAddNewWarehouse} disabled={isLoading || !newWarehouseName.trim()}>
-            {isProcessing && !warehouseToEdit && !warehouseToDelete ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Plus className="mr-2 h-4 w-4" />}
+            {isLoading && !warehouseToEdit && !warehouseToDelete ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Plus className="mr-2 h-4 w-4" />}
             Agregar Almacén
           </Button>
         </CardFooter>
@@ -156,15 +156,15 @@ export const WarehouseManagement: React.FC<WarehouseManagementProps> = ({
 
       <div>
         <h3 className="text-xl font-semibold mb-4">Almacenes Existentes</h3>
-        {parentIsLoading && !warehouses.length && <p className="text-muted-foreground">Cargando almacenes...</p>}
+        {parentIsLoading && !warehouses.length && <div className="flex items-center text-muted-foreground"><Loader2 className="mr-2 h-4 w-4 animate-spin"/>Cargando almacenes...</div>}
         {!parentIsLoading && warehouses.length === 0 && (
           <p className="text-muted-foreground">No hay almacenes definidos. Agrega uno para comenzar.</p>
         )}
         {warehouses.length > 0 && (
-          <ScrollArea className="h-[calc(100vh-500px)] md:h-[calc(100vh-450px)] pr-3">
+          <ScrollArea className="h-[calc(100vh-500px)] md:h-[calc(100vh-450px)] pr-3 -mr-3">
             <div className="space-y-3">
               {warehouses.map((warehouse) => (
-                <Card key={warehouse.id} className={cn("shadow-md hover:shadow-lg transition-shadow rounded-md", warehouse.id === currentWarehouseId && "border-primary ring-2 ring-primary")}>
+                <Card key={warehouse.id} className={cn("shadow-md hover:shadow-lg transition-shadow rounded-md bg-card", warehouse.id === currentWarehouseId && "border-primary ring-2 ring-primary")}>
                   <CardHeader className="pb-2 pt-3 px-4">
                     <div className="flex justify-between items-start">
                       <CardTitle className="text-base flex items-center">
@@ -249,7 +249,7 @@ export const WarehouseManagement: React.FC<WarehouseManagementProps> = ({
           setIsOpen={setIsEditDialogOpen}
           warehouse={warehouseToEdit}
           onSave={handleSaveEdit}
-          isProcessing={isProcessing}
+          isProcessing={isLoading} // Use combined isLoading for dialog processing state
         />
       )}
     </div>

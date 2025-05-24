@@ -41,12 +41,12 @@ const CountingListTableComponent: React.FC<CountingListTableProps> = ({
         <TableCaption className="py-3 text-sm text-muted-foreground dark:text-gray-400">Inventario para {warehouseName}.</TableCaption>
         <TableHeader className="bg-muted/50 dark:bg-gray-700 sticky top-0 z-10 shadow-sm">
           <TableRow>
-            <TableHead className="px-4 py-3 text-left text-xs font-medium text-muted-foreground dark:text-gray-300 uppercase tracking-wider w-[30%] sm:w-[30%]">Descripción</TableHead>
-            <TableHead className="px-4 py-3 text-center text-xs font-medium text-muted-foreground dark:text-gray-300 uppercase tracking-wider w-[15%] sm:w-[10%]">Stock</TableHead>
-            <TableHead className="px-4 py-3 text-center text-xs font-medium text-muted-foreground dark:text-gray-300 uppercase tracking-wider w-[15%] sm:w-[10%]">Cantidad</TableHead>
-            <TableHead className="hidden md:table-cell px-4 py-3 text-left text-xs font-medium text-muted-foreground dark:text-gray-300 uppercase tracking-wider w-[15%]">Vencimiento</TableHead>
-            <TableHead className="hidden md:table-cell px-4 py-3 text-left text-xs font-medium text-muted-foreground dark:text-gray-300 uppercase tracking-wider w-[15%]">Últ. Act.</TableHead>
-            <TableHead className="hidden md:table-cell px-4 py-3 text-center text-xs font-medium text-muted-foreground dark:text-gray-300 uppercase tracking-wider w-[5%]">Validación</TableHead>
+            <TableHead className="px-4 py-3 text-left text-xs font-semibold text-muted-foreground dark:text-gray-300 uppercase tracking-wider w-[30%] sm:w-[30%]">Descripción</TableHead>
+            <TableHead className="px-4 py-3 text-center text-xs font-semibold text-muted-foreground dark:text-gray-300 uppercase tracking-wider w-[15%] sm:w-[10%]">Stock</TableHead>
+            <TableHead className="px-4 py-3 text-center text-xs font-semibold text-muted-foreground dark:text-gray-300 uppercase tracking-wider w-[15%] sm:w-[10%]">Cantidad</TableHead>
+            <TableHead className="hidden md:table-cell px-4 py-3 text-left text-xs font-semibold text-muted-foreground dark:text-gray-300 uppercase tracking-wider w-[15%]">Vencimiento</TableHead>
+            <TableHead className="hidden md:table-cell px-4 py-3 text-left text-xs font-semibold text-muted-foreground dark:text-gray-300 uppercase tracking-wider w-[15%]">Últ. Act.</TableHead>
+            <TableHead className="hidden md:table-cell px-4 py-3 text-center text-xs font-semibold text-muted-foreground dark:text-gray-300 uppercase tracking-wider w-[5%]">Validación</TableHead>
           </TableRow>
         </TableHeader>
         <TableBody>
@@ -156,4 +156,3 @@ const CountingListTableComponent: React.FC<CountingListTableProps> = ({
 };
 
 export const CountingListTable = React.memo(CountingListTableComponent);
-

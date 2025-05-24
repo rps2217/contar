@@ -15,7 +15,7 @@ import {
   Timestamp,
   getDoc,
 } from 'firebase/firestore';
-import type { DisplayProduct, ProductDetail, CountingHistoryEntry, Warehouse } from '@/types/product';
+import type { DisplayProduct, ProductDetail, Warehouse } from '@/types/product'; // CountingHistoryEntry removed
 import { toast } from "@/hooks/use-toast";
 
 // --- Helper to check Firestore instance ---

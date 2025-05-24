@@ -6,17 +6,7 @@ import type { ProductDetail } from '@/types/product';
 import { useToast } from "@/hooks/use-toast";
 import { cn, debounce } from "@/lib/utils";
 import {
-  // Functions for IndexedDB (local catalog) - these might be phased out if all moves to Firestore
-  // getProductFromDB as getProductFromIndexedDB,
-  // getAllProductsFromDB as getAllProductsFromIndexedDB,
-  // addOrUpdateProductToDB as addOrUpdateProductToIndexedDB,
-  // deleteProductFromDB as deleteProductFromIndexedDB,
-  // clearProductDatabase as clearProductDatabaseFromDB,
-  // addProductsToDB as addProductsToIndexedDB,
-} from '@/lib/database'; // Assuming these are still used for local fallback or specific features
-import {
-  // Functions for Firestore (cloud catalog)
-  getAllProductsFromCatalog, 
+  getAllProductsFromDB as getAllProductsFromCatalog, 
   addOrUpdateProductInCatalog,
   deleteProductFromCatalog,
   addProductsToCatalog,
@@ -155,7 +145,7 @@ async function fetchGoogleSheetData(sheetUrlOrId: string): Promise<ProductDetail
                 const STOCK_COLUMN_INDEX = 5;
                 const PROVIDER_COLUMN_INDEX = 9;
                 // ! IMPORTANT: Adjust this index to match your actual CSV column for expiration dates !
-                const EXPIRATION_DATE_COLUMN_INDEX = 2; // Example, adjust this!
+                const EXPIRATION_DATE_COLUMN_INDEX = 2; 
 
 
                 // Skip header row (index 0)

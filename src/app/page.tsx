@@ -454,11 +454,18 @@ export default function Home() {
     } else {
         let newProductForList: DisplayProduct | null = null;
         try {
-            const catalogProd = await getProductFromIndexedDB(trimmedBarcode);
+            const barcodeToLookup = trimmedBarcode;
+            console.log(`[handleAddProduct] Buscando código: "'${barcodeToLookup}'" (longitud: ${barcodeToLookup.length})`);
+            const catalogProd = await getProductFromIndexedDB(barcodeToLookup);
+            console.log(`[handleAddProduct] Resultado para '${barcodeToLookup}':`, JSON.parse(JSON.stringify(catalogProd || {})));
 
-            if (catalogProd) {
+            if (catalogProd && catalogProd.barcode) {
                 newProductForList = {
-                    ...catalogProd,
+                    barcode: catalogProd.barcode,
+                    description: catalogProd.description || `Producto ${trimmedBarcode}`,
+                    provider: catalogProd.provider || "Desconocido",
+                    stock: catalogProd.stock ?? 0,
+                    expirationDate: catalogProd.expirationDate || null,
                     warehouseId: currentWarehouseId,
                     count: 1,
                     lastUpdated: new Date().toISOString(),
@@ -514,7 +521,7 @@ export default function Home() {
             focusBarcodeIfCounting();
         }
     });
-  }, [barcode, currentWarehouseId, currentUserId, lastScannedBarcode, toast, countingList, showDiscrepancyToastIfNeeded, focusBarcodeIfCounting, startTransition, activeSection]);
+  }, [barcode, currentWarehouseId, currentUserId, lastScannedBarcode, toast, countingList, showDiscrepancyToastIfNeeded, focusBarcodeIfCounting, startTransition, activeSection, catalogProducts]);
 
 
 const modifyProductValue = useCallback(async (barcodeToUpdate: string, type: 'count' | 'stock', change: number) => {
@@ -2121,6 +2128,7 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
     
 
     
+
 
 
 

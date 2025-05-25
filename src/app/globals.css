@@ -9,26 +9,26 @@ body {
 
 @layer base {
   :root {
-    /* AppSheet Inspired - Light Theme */
-    --background: 0 0% 97%; /* Very light gray, almost white */
-    --foreground: 220 10% 12%; /* Very dark gray/off-black text */
-    --card: 0 0% 100%; /* White */
+    /* AppSheet Inspired - Light Theme (Fallback, pero nos centraremos en el oscuro) */
+    --background: 0 0% 97%; /* Muy light gray, casi blanco */
+    --foreground: 220 10% 12%; /* Texto muy oscuro/casi negro */
+    --card: 0 0% 100%; /* Blanco */
     --card-foreground: 220 10% 12%;
     --popover: 0 0% 100%;
     --popover-foreground: 220 10% 12%;
-    --primary: 217 91% 50%; /* Strong blue, darker for light bg */
-    --primary-foreground: 210 40% 98%; /* White/very light text for blue button */
-    --secondary: 220 15% 92%; /* Light gray */
-    --secondary-foreground: 220 10% 25%; /* Darker gray text on secondary */
-    --muted: 220 15% 95%; /* Very light gray for muted elements */
-    --muted-foreground: 220 10% 40%; /* Medium gray for muted text */
-    --accent: 217 91% 55%; /* Accent blue for light mode */
+    --primary: 217 91% 50%; /* Azul fuerte, más oscuro para fondo claro */
+    --primary-foreground: 210 40% 98%; /* Texto blanco/muy claro para botón azul */
+    --secondary: 220 15% 92%; /* Gris claro */
+    --secondary-foreground: 220 10% 25%; /* Texto gris más oscuro en secundario */
+    --muted: 220 15% 95%; /* Gris muy claro para elementos apagados */
+    --muted-foreground: 220 10% 40%; /* Gris medio para texto apagado */
+    --accent: 217 91% 55%; /* Azul de acento para modo claro */
     --accent-foreground: 210 40% 98%;
-    --destructive: 0 72% 51%; /* Standard red */
+    --destructive: 0 72% 51%; /* Rojo estándar */
     --destructive-foreground: 0 0% 98%;
-    --border: 220 10% 85%; /* Light gray border */
-    --input: 220 15% 90%; /* Input field background, slightly off-white */
-    --ring: 217 91% 58%; /* Focus ring blue */
+    --border: 220 10% 85%; /* Borde gris claro */
+    --input: 220 15% 90%; /* Fondo de campo de entrada, ligeramente blanquecino */
+    --ring: 217 91% 58%; /* Anillo de enfoque azul */
     --chart-1: 210 60% 45%;
     --chart-2: 200 70% 50%;
     --chart-3: 220 30% 60%;
@@ -37,37 +37,37 @@ body {
     --radius: 0.5rem;
 
     /* Sidebar Light Theme */
-    --sidebar-background: 220 10% 90%; /* Light gray, distinct from main background */
+    --sidebar-background: 220 10% 88%; /* Gris claro, distinto del fondo principal */
     --sidebar-foreground: hsl(var(--foreground));
     --sidebar-primary: hsl(var(--primary));
     --sidebar-primary-foreground: hsl(var(--primary-foreground));
-    --sidebar-accent: hsl(var(--secondary)); /* Using secondary as accent for sidebar */
+    --sidebar-accent: hsl(var(--secondary));
     --sidebar-accent-foreground: hsl(var(--secondary-foreground));
     --sidebar-border: hsl(var(--border));
     --sidebar-ring: hsl(var(--ring));
   }
 
   .dark {
-    /* AppSheet Inspired - Dark Theme */
-    --background: 220 6% 10%; /* Very dark gray, almost black */
-    --foreground: 210 25% 95%; /* Off-white for high contrast */
-    --card: 220 6% 13%; /* Slightly lighter than background */
+    /* AppSheet Inspired - Dark Theme (Este es el que queremos que predomine) */
+    --background: 220 6% 10%; /* Gris muy oscuro, casi negro */
+    --foreground: 210 25% 95%; /* Blanquecino para alto contraste */
+    --card: 220 6% 13%; /* Ligeramente más claro que el fondo */
     --card-foreground: 210 25% 95%;
     --popover: 220 6% 13%;
     --popover-foreground: 210 25% 95%;
-    --primary: 217 91% 60%; /* Strong, clear blue */
-    --primary-foreground: 210 40% 98%;
-    --secondary: 220 6% 20%; /* Dark gray for secondary elements */
-    --secondary-foreground: 210 20% 80%; /* Lighter gray text on secondary */
-    --muted: 220 6% 17%; /* For less prominent elements */
-    --muted-foreground: 210 15% 65%; /* Muted text color */
-    --accent: 217 91% 65%; /* Brighter/alternative blue for accents */
+    --primary: 217 91% 60%; /* Azul fuerte y claro */
+    --primary-foreground: 210 40% 98%; /* Texto blanco para primario */
+    --secondary: 220 6% 20%; /* Gris oscuro para elementos secundarios */
+    --secondary-foreground: 210 20% 80%; /* Texto gris más claro en secundario */
+    --muted: 220 6% 17%; /* Para elementos menos prominentes */
+    --muted-foreground: 210 15% 65%; /* Color de texto apagado */
+    --accent: 217 91% 65%; /* Azul más brillante para acentos */
     --accent-foreground: 210 40% 98%;
     --destructive: 0 63% 51%;
     --destructive-foreground: 0 0% 98%;
-    --border: 220 6% 25%; /* Subtle border */
-    --input: 220 6% 16%; /* Input field background */
-    --ring: 217 91% 70%; /* Focus ring blue */
+    --border: 220 6% 25%; /* Borde sutil */
+    --input: 220 6% 16%; /* Fondo de campo de entrada */
+    --ring: 217 91% 70%; /* Anillo de enfoque azul */
     --chart-1: 210 70% 55%;
     --chart-2: 200 80% 60%;
     --chart-3: 220 20% 70%;
@@ -75,11 +75,11 @@ body {
     --chart-5: 150 50% 60%;
 
     /* Sidebar Dark Theme */
-    --sidebar-background: 220 6% 8%; /* Even darker for the sidebar */
+    --sidebar-background: 220 6% 8%; /* Aún más oscuro para la barra lateral */
     --sidebar-foreground: hsl(var(--foreground));
     --sidebar-primary: hsl(var(--primary));
     --sidebar-primary-foreground: hsl(var(--primary-foreground));
-    --sidebar-accent: hsl(var(--secondary)); /* Using secondary as accent for sidebar */
+    --sidebar-accent: hsl(var(--secondary));
     --sidebar-accent-foreground: hsl(var(--secondary-foreground));
     --sidebar-border: hsl(var(--border));
     --sidebar-ring: hsl(var(--ring));
@@ -108,7 +108,6 @@ body {
    .lg\:w-\[1000px\] {
       width: 1000px;
    }
-
 }
 
 /* Additional styling adjustments for better visual comfort */

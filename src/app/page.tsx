@@ -24,8 +24,8 @@ import { CountingListTable } from '@/components/counting-list-table';
 import { WarehouseManagement } from "@/components/warehouse-management";
 import { format, isValid, parseISO } from 'date-fns';
 import { es } from 'date-fns/locale';
-import Papa from 'papaparse'; // Asegurar que PapaParse esté importado
-import { Minus, Plus, Trash, RefreshCw, Search, Boxes, Loader2, CalendarClock, BookOpenText, Users2, ClipboardList, MoreVertical, Warehouse as WarehouseIconLucide, LockKeyhole, CheckCircle, PackageSearch, AlertTriangle, Menu as MenuIcon, User, ShieldAlert, Filter, PanelLeftClose, PanelRightOpen, Save, Library, X, Check, Camera, Download } from "lucide-react";
+import Papa from 'papaparse';
+import { Minus, Plus, Trash, RefreshCw, Search, Boxes, Loader2, CalendarClock, BookOpenText, Users2, ClipboardList, MoreVertical, Warehouse as WarehouseIconLucide, LockKeyhole, CheckCircle, PackageSearch, AlertTriangle, Menu as MenuIcon, User, ShieldAlert, Filter, PanelLeftClose, PanelRightOpen, Save, Library, X, Check, Camera, Download, Edit } from "lucide-react"; // Edit añadido
 import React, { useCallback, useEffect, useRef, useState, useMemo, useTransition } from "react";
 import { playBeep } from '@/lib/helpers';
 import { ModifyValueDialog } from '@/components/modify-value-dialog';
@@ -43,10 +43,6 @@ import {
   subscribeToWarehouses,
   addOrUpdateWarehouseInFirestore,
   deleteWarehouseFromFirestore,
-  // History related functions (save, get, clear) are for Firestore
-  // saveCountingHistoryToFirestore,
-  // getCountingHistoryFromFirestore,
-  // clearCountingHistoryInFirestore,
 } from '@/lib/firestore-service';
 import { SidebarLayout } from '@/components/sidebar-layout';
 import { Sheet, SheetContent, SheetTrigger, SheetHeader, SheetTitle } from "@/components/ui/sheet";
@@ -80,13 +76,22 @@ import { BarcodeEntry } from '@/components/barcode-entry';
 
 // --- Main Component ---
 
+const PREDEFINED_WAREHOUSES_LIST: Warehouse[] = [
+    { id: DEFAULT_WAREHOUSE_ID, name: DEFAULT_WAREHOUSE_NAME },
+    { id: 'bodega', name: 'BODEGA' },
+    { id: 'isla', name: 'ISLA' },
+    { id: 'meson', name: 'MESON' },
+    { id: 'vitrinas', name: 'VITRINAS' },
+    { id: 'oficina', name: 'OFICINA' },
+];
+
 export default function Home() {
   // --- Refs ---
   const { toast } = useToast();
   const barcodeInputRef = useRef<HTMLInputElement>(null);
   const isMountedRef = useRef(false);
   const lastScannedTimeoutRef = useRef<NodeJS.Timeout | null>(null);
-  const videoRef = useRef<HTMLVideoElement>(null); // Ref for the video element used by barcode scanner
+  const videoRef = useRef<HTMLVideoElement>(null);
 
   // --- React Transition Hook ---
   const [isTransitionPending, startTransition] = useTransition();
@@ -98,19 +103,8 @@ export default function Home() {
 
   // --- User and Warehouse State ---
   const [currentUserId, setCurrentUserId] = useState<string | null>(null);
-
-  const PREDEFINED_WAREHOUSES_LIST: Warehouse[] = [
-    { id: DEFAULT_WAREHOUSE_ID, name: DEFAULT_WAREHOUSE_NAME },
-    { id: 'bodega', name: 'BODEGA' },
-    { id: 'isla', name: 'ISLA' },
-    { id: 'meson', name: 'MESON' },
-    { id: 'vitrinas', name: 'VITRINAS' },
-    { id: 'oficina', name: 'OFICINA' },
-  ];
-
   const [warehouses, setWarehouses] = useState<Warehouse[]>(PREDEFINED_WAREHOUSES_LIST);
   const [currentWarehouseId, setCurrentWarehouseId] = useState<string>(DEFAULT_WAREHOUSE_ID);
-
   const [catalogProducts, setCatalogProducts] = useState<ProductDetail[]>([]);
 
 
@@ -201,7 +195,7 @@ export default function Home() {
   useEffect(() => {
     if (!currentUserId || !db) {
         if (isMountedRef.current) {
-            let localDefaultWarehouses = [...PREDEFINED_WAREHOUSES_LIST];
+            const localDefaultWarehouses = [...PREDEFINED_WAREHOUSES_LIST];
             setWarehouses(localDefaultWarehouses);
             const storedWarehouseId = currentUserId ? getLocalStorageItem<string>(`${LOCAL_STORAGE_CURRENT_WAREHOUSE_ID_KEY_PREFIX}${currentUserId}`, DEFAULT_WAREHOUSE_ID) : DEFAULT_WAREHOUSE_ID;
             const currentSelectionIsValid = localDefaultWarehouses.some(w => w.id === storedWarehouseId);
@@ -217,7 +211,7 @@ export default function Home() {
             let finalWarehousesToSet = [...fetchedWarehouses];
 
             if (!isInitialFetchDoneForUser.current[currentUserId] && db && currentUserId) {
-                isInitialFetchDoneForUser.current[currentUserId] = true;
+                isInitialFetchDoneForUser.current[currentUserId] = true; // Mark as done for this user session
 
                 const warehousesToAddBatch: Warehouse[] = [];
                 PREDEFINED_WAREHOUSES_LIST.forEach(predefined => {
@@ -234,19 +228,22 @@ export default function Home() {
                             batch.set(warehouseDocRef, wh);
                         });
                         await batch.commit();
+                        // Firestore listener will update `finalWarehousesToSet` naturally
                     } catch (err) {
                         console.error(`Failed to add predefined warehouses for user ${currentUserId}:`, err);
                         if(isMountedRef.current) requestAnimationFrame(() => toast({ variant: "destructive", title: "Error DB", description: `No se pudieron agregar almacenes predefinidos.`}));
+                        // Fallback: merge locally for UI consistency if Firestore write fails
                         finalWarehousesToSet = [...fetchedWarehouses, ...warehousesToAddBatch].filter((v,i,a)=>a.findIndex(t=>(t.id === v.id))===i);
                     }
                 }
-                 if (finalWarehousesToSet.length === 0 && warehousesToAddBatch.length === 0) {
-                     finalWarehousesToSet = [...PREDEFINED_WAREHOUSES_LIST];
+                 if (finalWarehousesToSet.length === 0 && warehousesToAddBatch.length === 0) { // No warehouses in FS, none to add
+                     finalWarehousesToSet = [...PREDEFINED_WAREHOUSES_LIST]; // Default to predefined if FS is empty
                 }
             }
 
             setWarehouses(finalWarehousesToSet.length > 0 ? finalWarehousesToSet : PREDEFINED_WAREHOUSES_LIST);
 
+            // Determine current warehouse ID
             const storedWarehouseId = getLocalStorageItem<string>(`${LOCAL_STORAGE_CURRENT_WAREHOUSE_ID_KEY_PREFIX}${currentUserId}`, DEFAULT_WAREHOUSE_ID);
             const effectiveWarehouseList = finalWarehousesToSet.length > 0 ? finalWarehousesToSet : PREDEFINED_WAREHOUSES_LIST;
             let currentSelectionIsValid = effectiveWarehouseList.some(w => w.id === storedWarehouseId);
@@ -357,6 +354,7 @@ export default function Home() {
     const stockToCheck = product.stock ?? 0;
 
     if (stockToCheck > 0 && countToCheck !== stockToCheck) {
+        // Solo mostrar el toast si NO estamos en la sección 'Contador' o 'Contador Cámara'
         if (isMountedRef.current && activeSection !== 'Contador' && activeSection !== 'Contador Cámara') {
             requestAnimationFrame(() => {
                 if(isMountedRef.current) {
@@ -447,7 +445,8 @@ export default function Home() {
             });
         }
         playBeep(880, 100);
-        showDiscrepancyToastIfNeeded(updatedProductData, newCount);
+        // No mostrar toast de discrepancia aquí para el flujo rápido del contador
+        // showDiscrepancyToastIfNeeded(updatedProductData, newCount);
     } else {
         let newProductForList: DisplayProduct | null = null;
         try {
@@ -468,7 +467,8 @@ export default function Home() {
                     lastUpdated: new Date().toISOString(),
                 };
                 playBeep(660, 150);
-                showDiscrepancyToastIfNeeded(newProductForList);
+                // No mostrar toast de discrepancia aquí
+                // showDiscrepancyToastIfNeeded(newProductForList);
             } else {
                 const descriptionForToast = `Producto desconocido ${trimmedBarcode}`;
                 newProductForList = {
@@ -518,7 +518,7 @@ export default function Home() {
             focusBarcodeIfCounting();
         }
     });
-  }, [barcode, currentWarehouseId, currentUserId, lastScannedBarcode, toast, countingList, showDiscrepancyToastIfNeeded, focusBarcodeIfCounting, startTransition, activeSection, catalogProducts]);
+  }, [barcode, currentWarehouseId, currentUserId, lastScannedBarcode, toast, countingList, focusBarcodeIfCounting, startTransition, activeSection, catalogProducts]); // showDiscrepancyToastIfNeeded eliminado de dependencias
 
 
 const modifyProductValue = useCallback(async (barcodeToUpdate: string, type: 'count' | 'stock', change: number) => {
@@ -586,13 +586,8 @@ const modifyProductValue = useCallback(async (barcodeToUpdate: string, type: 'co
                         setCatalogProducts(prev => [...prev, newDbProduct]);
                     }
                 }
-                if(isMountedRef.current && (activeSection === 'Contador' || activeSection === 'Contador Cámara')) {
-                    requestAnimationFrame(() => {
-                        if (isMountedRef.current) {
-                            toast({ title: `Stock Actualizado` });
-                        }
-                    });
-                }
+                // No mostrar toast de éxito aquí para flujo rápido
+                // if(isMountedRef.current && (activeSection === 'Contador' || activeSection === 'Contador Cámara')) { ... }
             } catch (error) {
                 if(isMountedRef.current) {
                     requestAnimationFrame(() => {
@@ -607,7 +602,8 @@ const modifyProductValue = useCallback(async (barcodeToUpdate: string, type: 'co
                 }
             }
         } else if (type === 'count' && productForToast ) {
-                showDiscrepancyToastIfNeeded(productForToast, finalValue);
+             // No mostrar toast de discrepancia aquí para flujo rápido
+             // showDiscrepancyToastIfNeeded(productForToast, finalValue);
         }
     }
      requestAnimationFrame(() => {
@@ -615,24 +611,16 @@ const modifyProductValue = useCallback(async (barcodeToUpdate: string, type: 'co
             focusBarcodeIfCounting();
         }
     });
-  }, [currentWarehouseId, toast, countingList, catalogProducts, showDiscrepancyToastIfNeeded, focusBarcodeIfCounting, startTransition, currentUserId, activeSection]);
+  }, [currentWarehouseId, toast, countingList, catalogProducts, focusBarcodeIfCounting, startTransition, currentUserId]); // showDiscrepancyToastIfNeeded eliminado
 
 
 const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 'count' | 'stock', newValue: number, sumValue?: boolean) => {
     if (!isMountedRef.current || !currentUserId) return;
     if (newValue < 0 || isNaN(newValue)) {
-        if(isMountedRef.current) {
-            requestAnimationFrame(() => {
-                if (isMountedRef.current) {
-                    toast({ variant: "destructive", title: "Valor Inválido" });
-                }
-            });
-        }
         requestAnimationFrame(() => {
-             if (isMountedRef.current) {
-                 focusBarcodeIfCounting();
-             }
-         });
+            if (isMountedRef.current) toast({ variant: "destructive", title: "Valor Inválido" });
+        });
+        requestAnimationFrame(() => { if (isMountedRef.current) focusBarcodeIfCounting(); });
         return;
     }
 
@@ -646,13 +634,9 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
     const productInList = countingList[productIndexInList];
     const originalValue = type === 'count' ? productInList.count ?? 0 : productInList.stock ?? 0;
 
-    if (type === 'count' && !sumValue && newValue === originalValue) {
+    if (type === 'count' && !sumValue && newValue === originalValue && !isConfirmQuantityDialogOpen) {
         if(isMountedRef.current) setOpenModifyDialog(null);
-        requestAnimationFrame(() => {
-            if (isMountedRef.current) {
-                focusBarcodeIfCounting();
-            }
-        });
+        requestAnimationFrame(() => { if (isMountedRef.current) focusBarcodeIfCounting(); });
         return;
     }
 
@@ -662,7 +646,13 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
 
     if (type === 'count') {
         const stockVal = productInList.stock ?? 0;
-        if (stockVal > 0 && finalValue > stockVal) {
+        const countVal = productInList.count ?? 0;
+        // Condición para mostrar el diálogo de confirmación:
+        // 1. El nuevo valor supera el stock del sistema (stockVal > 0).
+        // 2. Y (no se está sumando O el valor original NO era ya superior al stock)
+        // Esto evita mostrar confirmación si ya estábamos por encima y solo decrementamos.
+        // Y también si estamos sumando a un valor que ya estaba por encima.
+        if (stockVal > 0 && finalValue > stockVal && (!sumValue || countVal <= stockVal)) {
             needsConfirmation = true;
         }
     }
@@ -719,13 +709,8 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
                             setCatalogProducts(prev => [...prev, newDbProduct]);
                         }
                     }
-                    if(isMountedRef.current && (activeSection === 'Contador' || activeSection === 'Contador Cámara')) {
-                        requestAnimationFrame(() => {
-                            if (isMountedRef.current) {
-                                toast({ title: `Stock Actualizado` });
-                            }
-                        });
-                    }
+                    // No mostrar toast aquí para flujo rápido
+                    // if(isMountedRef.current && (activeSection === 'Contador' || activeSection === 'Contador Cámara')) { ... }
                  } catch (error) {
                      if(isMountedRef.current) {
                         requestAnimationFrame(() => {
@@ -740,14 +725,9 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
                      }
                  }
              } else if (type === 'count' && productForToast) {
-                 const didShowDiscrepancy = showDiscrepancyToastIfNeeded(productForToast, finalValue);
-                 if (!didShowDiscrepancy && isMountedRef.current && (activeSection === 'Contador' || activeSection === 'Contador Cámara')) {
-                     requestAnimationFrame(() => {
-                         if (isMountedRef.current) {
-                             toast({ title: "Cantidad Modificada" });
-                         }
-                     });
-                 }
+                  // No mostrar toast de discrepancia aquí para flujo rápido
+                  // const didShowDiscrepancy = showDiscrepancyToastIfNeeded(productForToast, finalValue);
+                  // if (!didShowDiscrepancy && isMountedRef.current && (activeSection === 'Contador' || activeSection === 'Contador Cámara')) { ... }
              }
          }
      }
@@ -756,7 +736,7 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
             focusBarcodeIfCounting();
         }
     });
-}, [toast, countingList, catalogProducts, showDiscrepancyToastIfNeeded, focusBarcodeIfCounting, startTransition, currentUserId, currentWarehouseId, activeSection]);
+}, [toast, countingList, catalogProducts, focusBarcodeIfCounting, startTransition, currentUserId, currentWarehouseId, isConfirmQuantityDialogOpen]); // showDiscrepancyToastIfNeeded eliminado, isConfirmQuantityDialogOpen añadido
 
 
   const handleIncrement = useCallback((barcode: string, type: 'count' | 'stock') => {
@@ -771,11 +751,7 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
  const handleConfirmQuantityChange = useCallback(() => {
      if (!isMountedRef.current || !confirmQuantityProductBarcode || confirmQuantityAction === null || confirmQuantityNewValue === null || !currentUserId) {
          if(isMountedRef.current) setIsConfirmQuantityDialogOpen(false);
-         requestAnimationFrame(() => {
-             if (isMountedRef.current) {
-                 focusBarcodeIfCounting();
-             }
-         });
+         requestAnimationFrame(() => { if (isMountedRef.current) focusBarcodeIfCounting(); });
          return;
      }
 
@@ -809,20 +785,9 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
             const productInList = countingList.find(p => p.barcode === barcodeToUpdate && p.warehouseId === warehouseId);
             if (productInList) {
                 const tempProductForToast = {...productInList, count: confirmedValue};
-                 const didShowDiscrepancy = showDiscrepancyToastIfNeeded(tempProductForToast, confirmedValue);
-                if (!didShowDiscrepancy && isMountedRef.current && (activeSection === 'Contador' || activeSection === 'Contador Cámara')) {
-                     requestAnimationFrame(() => {
-                        if (isMountedRef.current) {
-                            toast({ title: "Cantidad Modificada" });
-                        }
-                     });
-                }
-            } else {
-                 requestAnimationFrame(() => {
-                    if (isMountedRef.current) {
-                        toast({ title: "Cantidad Modificada" });
-                    }
-                 });
+                // No mostrar toast de discrepancia aquí para flujo rápido
+                // const didShowDiscrepancy = showDiscrepancyToastIfNeeded(tempProductForToast, confirmedValue);
+                // if (!didShowDiscrepancy && isMountedRef.current && (activeSection === 'Contador' || activeSection === 'Contador Cámara')) { ... }
             }
         }
     });
@@ -834,12 +799,8 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
      setConfirmQuantityNewValue(null);
      setOpenModifyDialog(null);
     }
-    requestAnimationFrame(() => {
-        if (isMountedRef.current) {
-            focusBarcodeIfCounting();
-        }
-    });
- }, [currentWarehouseId, confirmQuantityProductBarcode, confirmQuantityAction, confirmQuantityNewValue, toast, countingList, showDiscrepancyToastIfNeeded, focusBarcodeIfCounting, startTransition, currentUserId, activeSection]);
+    requestAnimationFrame(() => { if (isMountedRef.current) focusBarcodeIfCounting(); });
+ }, [currentWarehouseId, confirmQuantityProductBarcode, confirmQuantityAction, confirmQuantityNewValue, toast, countingList, focusBarcodeIfCounting, startTransition, currentUserId]); // showDiscrepancyToastIfNeeded eliminado
 
 
  const handleDeleteRequest = useCallback((product: DisplayProduct) => {
@@ -876,11 +837,7 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
      setIsDeleteDialogOpen(false);
      setProductToDelete(null);
     }
-    requestAnimationFrame(() => {
-        if (isMountedRef.current) {
-            focusBarcodeIfCounting();
-        }
-    });
+    requestAnimationFrame(() => { if (isMountedRef.current) focusBarcodeIfCounting(); });
  }, [productToDelete, toast, focusBarcodeIfCounting, startTransition, currentUserId]);
 
  const handleClearCurrentList = useCallback(() => {
@@ -905,11 +862,7 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
           }
      });
      if(isMountedRef.current) setIsDeleteListDialogOpen(false);
-     requestAnimationFrame(() => {
-        if (isMountedRef.current) {
-            focusBarcodeIfCounting();
-        }
-    });
+     requestAnimationFrame(() => { if (isMountedRef.current) focusBarcodeIfCounting(); });
  }, [currentWarehouseId, toast, focusBarcodeIfCounting, startTransition, currentUserId]);
 
  const handleExport = useCallback(() => {
@@ -941,6 +894,7 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
             Almacen: getWarehouseName(p.warehouseId),
             StockSistema: p.stock ?? 0,
             CantidadContada: p.count ?? 0,
+            Diferencia: (p.count ?? 0) - (p.stock ?? 0),
             UltimaActualizacion: p.lastUpdated ? format(new Date(p.lastUpdated), 'yyyy-MM-dd HH:mm:ss') : 'N/A',
             FechaVencimiento: p.expirationDate && isValid(parseISO(p.expirationDate)) ? format(parseISO(p.expirationDate), 'yyyy-MM-dd') : 'N/A',
         }));
@@ -986,11 +940,7 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
             });
         }
     }
-    requestAnimationFrame(() => {
-        if (isMountedRef.current) {
-            focusBarcodeIfCounting();
-        }
-    });
+    requestAnimationFrame(() => { if (isMountedRef.current) focusBarcodeIfCounting(); });
  }, [countingList, currentWarehouseId, toast, getWarehouseName, focusBarcodeIfCounting]);
 
 
@@ -1081,11 +1031,7 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
          if (isMountedRef.current) {
              setIsRefreshingStock(false);
          }
-        requestAnimationFrame(() => {
-            if (isMountedRef.current) {
-                focusBarcodeIfCounting();
-            }
-        });
+        requestAnimationFrame(() => { if (isMountedRef.current) focusBarcodeIfCounting(); });
      }
  }, [currentWarehouseId, toast, focusBarcodeIfCounting, startTransition, currentUserId]);
 
@@ -1096,14 +1042,10 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
 
  const handleCloseModifyDialog = () => {
      if(isMountedRef.current) setOpenModifyDialog(null);
-     requestAnimationFrame(() => {
-        if (isMountedRef.current) {
-            focusBarcodeIfCounting();
-        }
-    });
+     requestAnimationFrame(() => { if (isMountedRef.current) focusBarcodeIfCounting(); });
  };
 
- const handleOpenEditDetailDialog = useCallback(async (product: DisplayProduct) => {
+ const handleOpenEditDetailDialog = useCallback(async (product: DisplayProduct | ProductDetail) => {
      if (!product || !product.barcode || !isMountedRef.current || !currentUserId) return;
      if(isMountedRef.current) setIsDbLoading(true);
      try {
@@ -1119,6 +1061,8 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
                  requestAnimationFrame(() => toast({ title: `Editando desde ${source}` }));
              }
          } else {
+             // Si no está en el catálogo, creamos un placeholder con los datos de la lista de conteo (DisplayProduct)
+             // o con los datos base si es un ProductDetail
              if (!isMountedRef.current) return;
              const placeholderDetail: ProductDetail = {
                  barcode: product.barcode,
@@ -1128,7 +1072,7 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
                  expirationDate: product.expirationDate,
              };
              setProductToEditDetail(placeholderDetail);
-             setInitialStockForEdit(product.stock ?? 0);
+             setInitialStockForEdit(product.stock ?? 0); // O el stock que venga en 'product' si es DisplayProduct
              setIsEditDetailDialogOpen(true);
              requestAnimationFrame(() => {
                 if(isMountedRef.current) {
@@ -1164,7 +1108,7 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
      if(isMountedRef.current) setIsDbLoading(true);
      try {
          const updatedProductData: ProductDetail = {
-             barcode: productToEditDetail.barcode,
+             barcode: productToEditDetail.barcode, // El barcode no debería cambiar aquí
              description: data.description.trim(),
              provider: data.provider?.trim() || "Desconocido",
              stock: data.stock ?? 0,
@@ -1184,15 +1128,16 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
 
          if (!isMountedRef.current) return;
 
+         // Actualizar el item en countingList si existe
          startTransition(() => {
             setCountingList(prevList => prevList.map(item =>
                 item.barcode === updatedProductData.barcode && item.warehouseId === currentWarehouseId
                     ? {
                         ...item,
-                        description: updatedProductData.description,
-                        provider: updatedProductData.provider,
-                        stock: updatedProductData.stock,
-                        expirationDate: updatedProductData.expirationDate,
+                        description: updatedProductData.description, // Actualizar descripción
+                        provider: updatedProductData.provider,     // Actualizar proveedor
+                        stock: updatedProductData.stock,           // Actualizar stock
+                        expirationDate: updatedProductData.expirationDate, // Actualizar fecha de vencimiento
                         lastUpdated: new Date().toISOString()
                       }
                     : item
@@ -1225,11 +1170,7 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
          if (isMountedRef.current) {
              setIsDbLoading(false);
          }
-         requestAnimationFrame(() => {
-            if (isMountedRef.current) {
-                focusBarcodeIfCounting();
-            }
-        });
+         requestAnimationFrame(() => { if (isMountedRef.current) focusBarcodeIfCounting(); });
      }
  }, [toast, currentWarehouseId, productToEditDetail, focusBarcodeIfCounting, startTransition, currentUserId]);
 
@@ -1261,6 +1202,7 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
         setCountingList(prevList => {
             const otherWarehouseItems = prevList.filter(item => item.warehouseId !== currentWarehouseId);
             let itemsForCurrentWarehouse = [...productsWithWarehouseContext];
+            // Sobrescribir completamente la lista del almacén actual
             const newList = [...itemsForCurrentWarehouse, ...otherWarehouseItems];
               newList.sort((a, b) => {
                     if (a.warehouseId === currentWarehouseId && b.warehouseId !== currentWarehouseId) return -1;
@@ -1274,6 +1216,7 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
         });
      });
      setActiveSection("Contador");
+     setSearchTerm(""); // Limpiar búsqueda al iniciar conteo por proveedor
      }
      requestAnimationFrame(() => {
         if(isMountedRef.current) {
@@ -1284,11 +1227,7 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
             });
         }
      });
-    requestAnimationFrame(() => {
-        if (isMountedRef.current) {
-            focusBarcodeIfCounting();
-        }
-    });
+    requestAnimationFrame(() => { if (isMountedRef.current) focusBarcodeIfCounting(); });
 }, [toast, setActiveSection, currentWarehouseId, focusBarcodeIfCounting, startTransition, currentUserId]);
 
 
@@ -1307,11 +1246,7 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
   const handleSectionChange = useCallback((newSection: string) => {
     if(isMountedRef.current) setActiveSection(newSection);
     if (newSection === 'Contador' || newSection === 'Contador Cámara') {
-        requestAnimationFrame(() => {
-            if (isMountedRef.current) {
-                focusBarcodeIfCounting();
-            }
-        });
+        requestAnimationFrame(() => { if (isMountedRef.current) focusBarcodeIfCounting(); });
     }
   }, [setActiveSection, focusBarcodeIfCounting]);
 
@@ -1345,9 +1280,9 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
           requestAnimationFrame(() => {
               toast({title: "Almacén Agregado", description: `Cambiado a: ${newWarehouse.name}`});
           });
-          handleWarehouseChange(newWarehouse.id);
+          handleWarehouseChange(newWarehouse.id); // Cambiar al nuevo almacén después de agregarlo
       } catch (error) {
-          // Error toast handled by firestore-service
+          // Error toast es manejado por firestore-service o la lógica del componente padre
       }
     }, [warehouses, currentUserId, handleWarehouseChange, toast]);
 
@@ -1357,7 +1292,7 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
            await addOrUpdateWarehouseInFirestore(currentUserId, warehouseToUpdate);
            requestAnimationFrame(() => toast({ title: `Almacén "${warehouseToUpdate.name}" Actualizado` }));
        } catch (error) {
-           // Error toast handled by firestore-service
+           // Error toast es manejado por firestore-service
        }
    }, [toast, currentUserId]);
 
@@ -1370,8 +1305,11 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
        }
        try {
            await deleteWarehouseFromFirestore(currentUserId, warehouseIdToDelete);
+           // El listener onSnapshot en useEffect actualizará la lista de almacenes
+           // y seleccionará uno nuevo si el actual fue eliminado.
+           requestAnimationFrame(() => toast({ title: "Almacén Eliminado" }));
        } catch (error) {
-           // Error toast handled by firestore-service
+            // Error toast es manejado por firestore-service
        }
    }, [toast, currentUserId]);
 
@@ -1395,6 +1333,7 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
         startTransition(() => {
             setCountingList(prevList =>
                 prevList.map(p => {
+                    // Al borrar el catálogo, los productos en la lista de conteo pierden su descripción, proveedor y stock de referencia
                     return {...p, description: `Producto ${p.barcode}`, provider: "Desconocido", stock: 0, expirationDate: undefined};
                 })
             );
@@ -1424,11 +1363,7 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
         setIsDbLoading(false);
         setIsClearCatalogConfirmOpen(false);
       }
-      requestAnimationFrame(() => {
-        if (isMountedRef.current) {
-            focusBarcodeIfCounting();
-        }
-     });
+      requestAnimationFrame(() => { if (isMountedRef.current) focusBarcodeIfCounting(); });
     }
   }, [toast, currentUserId, focusBarcodeIfCounting, startTransition]);
 
@@ -1447,12 +1382,13 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
         setCurrentUserId(null);
         setCountingList([]);
         setCatalogProducts([]);
-        setWarehouses(PREDEFINED_WAREHOUSES_LIST);
+        setWarehouses(PREDEFINED_WAREHOUSES_LIST); // Reset a estado inicial
         setCurrentWarehouseId(DEFAULT_WAREHOUSE_ID);
         if (typeof window !== 'undefined') {
             localStorage.removeItem(LOCAL_STORAGE_USER_ID_KEY);
+            // Considerar si se quieren limpiar otras claves de localStorage específicas del usuario al cerrar sesión
         }
-        isInitialFetchDoneForUser.current = {};
+        isInitialFetchDoneForUser.current = {}; // Resetear la bandera de fetch inicial
         requestAnimationFrame(() => toast({title: "Sesión cerrada"}));
     }
   };
@@ -1484,7 +1420,7 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
             setLocalStorageItem(LOCAL_STORAGE_USER_ID_KEY, LOGIN_USER);
             const storedWarehouseId = getLocalStorageItem<string>(`${LOCAL_STORAGE_CURRENT_WAREHOUSE_ID_KEY_PREFIX}${LOGIN_USER}`, DEFAULT_WAREHOUSE_ID);
             setCurrentWarehouseId(storedWarehouseId);
-            isInitialFetchDoneForUser.current[LOGIN_USER] = false;
+            isInitialFetchDoneForUser.current[LOGIN_USER] = false; // Reset para que se verifiquen almacenes predefinidos en Firestore
 
             requestAnimationFrame(() => {
                 toast({ title: "Inicio de sesión exitoso" });
@@ -1508,7 +1444,9 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
   const toggleCameraScanMode = useCallback(() => {
     if (isMountedRef.current) {
       setIsCameraScanMode(prev => !prev);
-      if (isCameraScanMode) {
+      if (!isCameraScanMode) { // Si se va a activar la cámara
+        // Lógica adicional si es necesaria al activar, como pedir permisos
+      } else { // Si se va a desactivar la cámara
         requestAnimationFrame(() => {
           focusBarcodeIfCounting();
         });
@@ -1519,7 +1457,7 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
 
   const handleBarcodeScannedFromCamera = useCallback((scannedBarcode: string) => {
     if (isMountedRef.current) {
-      handleAddProduct(scannedBarcode);
+      handleAddProduct(scannedBarcode); // Reutilizar la lógica existente
     }
   }, [handleAddProduct]);
 
@@ -1720,7 +1658,7 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
               <BarcodeScannerCamera
                 onBarcodeScanned={handleBarcodeScannedFromCamera}
                 isScanningActive={activeSection === 'Contador Cámara'}
-                isDecodingActive={true} // For continuous scan in this dedicated mode
+                isDecodingActive={true} 
               />
             </div>
 
@@ -1843,7 +1781,7 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
                <ProductDatabase
                   userId={currentUserId}
                   onStartCountByProvider={handleStartCountByProvider}
-                  isTransitionPending={isTransitionPending || isDbLoading}
+                  isTransitionPending={isDbLoading || isTransitionPending}
                   catalogProducts={catalogProducts}
                   setCatalogProducts={setCatalogProducts}
                   onClearCatalogRequest={() => {if(isMountedRef.current) setIsClearCatalogConfirmOpen(true)}}
@@ -1897,11 +1835,7 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
                 setConfirmQuantityProductBarcode(null);
                 setConfirmQuantityAction(null);
                 setConfirmQuantityNewValue(null);
-                requestAnimationFrame(() => {
-                    if (isMountedRef.current) {
-                        focusBarcodeIfCounting();
-                    }
-                });
+                requestAnimationFrame(() => { if (isMountedRef.current) focusBarcodeIfCounting(); });
             }
           }}
           title="Confirmar Modificación"
@@ -1925,11 +1859,7 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
                 setConfirmQuantityAction(null);
                 setConfirmQuantityNewValue(null);
               }
-              requestAnimationFrame(() => {
-                if (isMountedRef.current) {
-                    focusBarcodeIfCounting();
-                }
-            });
+              requestAnimationFrame(() => { if (isMountedRef.current) focusBarcodeIfCounting(); });
           }}
           isProcessing={isTransitionPending}
       />
@@ -1940,11 +1870,7 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
             setIsDeleteDialogOpen(open);
             if (!open) {
                 setProductToDelete(null);
-                requestAnimationFrame(() => {
-                    if (isMountedRef.current) {
-                        focusBarcodeIfCounting();
-                    }
-                });
+                requestAnimationFrame(() => { if (isMountedRef.current) focusBarcodeIfCounting(); });
             }
          }}
          title="Confirmar Eliminación"
@@ -1952,11 +1878,7 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
          onConfirm={confirmDelete}
          onCancel={() => {
             if(isMountedRef.current) setIsDeleteDialogOpen(false);
-            requestAnimationFrame(() => {
-                if (isMountedRef.current) {
-                    focusBarcodeIfCounting();
-                }
-            });
+            requestAnimationFrame(() => { if (isMountedRef.current) focusBarcodeIfCounting(); });
          }}
          isDestructive={true}
          isProcessing={isTransitionPending}
@@ -1967,11 +1889,7 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
           onOpenChange={(open) => {
             setIsDeleteListDialogOpen(open);
             if (!open) {
-                requestAnimationFrame(() => {
-                    if (isMountedRef.current) {
-                        focusBarcodeIfCounting();
-                    }
-                });
+                requestAnimationFrame(() => { if (isMountedRef.current) focusBarcodeIfCounting(); });
             }
           }}
           title="Confirmar Borrado de Lista"
@@ -1979,11 +1897,7 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
           onConfirm={handleClearCurrentList}
           onCancel={() => {
             if(isMountedRef.current) setIsDeleteListDialogOpen(false);
-            requestAnimationFrame(() => {
-                if (isMountedRef.current) {
-                    focusBarcodeIfCounting();
-                }
-            });
+            requestAnimationFrame(() => { if (isMountedRef.current) focusBarcodeIfCounting(); });
           }}
           isDestructive={true}
           isProcessing={isTransitionPending}
@@ -1994,11 +1908,7 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
             onOpenChange={(open) => {
                 setIsClearCatalogConfirmOpen(open);
                 if (!open) {
-                    requestAnimationFrame(() => {
-                        if (isMountedRef.current) {
-                            focusBarcodeIfCounting();
-                        }
-                    });
+                    requestAnimationFrame(() => { if (isMountedRef.current) focusBarcodeIfCounting(); });
                 }
             }}
             title="Confirmar Borrado Catálogo"
@@ -2016,11 +1926,7 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
             onConfirm={handleClearCatalog}
             onCancel={() => {
                 if(isMountedRef.current) setIsClearCatalogConfirmOpen(false);
-                requestAnimationFrame(() => {
-                    if (isMountedRef.current) {
-                        focusBarcodeIfCounting();
-                    }
-                });
+                requestAnimationFrame(() => { if (isMountedRef.current) focusBarcodeIfCounting(); });
             }}
             isDestructive={true}
             isProcessing={isDbLoading || isTransitionPending}
@@ -2033,11 +1939,7 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
               setIsEditDetailDialogOpen(open);
               if (!open) {
                   setProductToEditDetail(null);
-                  requestAnimationFrame(() => {
-                      if (isMountedRef.current) {
-                          focusBarcodeIfCounting();
-                      }
-                  });
+                  requestAnimationFrame(() => { if (isMountedRef.current) focusBarcodeIfCounting(); });
               }
           }}
           selectedDetail={productToEditDetail}
@@ -2082,11 +1984,7 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
                       if (isMountedRef.current) {
                           setIsDbLoading(false);
                       }
-                      requestAnimationFrame(() => {
-                          if (isMountedRef.current) {
-                              focusBarcodeIfCounting();
-                          }
-                      });
+                      requestAnimationFrame(() => { if (isMountedRef.current) focusBarcodeIfCounting(); });
                 }
             }}
           isProcessing={isDbLoading || isTransitionPending}

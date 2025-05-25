@@ -5,7 +5,7 @@ import type { DisplayProduct } from '@/types/product';
 import { Table, TableBody, TableCaption, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Button } from "@/components/ui/button";
-import { Check, Edit, Minus, Plus, Trash, CalendarIcon } from "lucide-react";
+import { Edit, Trash } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { format, isValid, parseISO } from 'date-fns';
 import { es } from 'date-fns/locale';
@@ -41,13 +41,12 @@ const CountingListTableComponent: React.FC<CountingListTableProps> = ({
         <TableCaption className="py-3 text-sm text-muted-foreground dark:text-gray-400">Inventario para {warehouseName}.</TableCaption>
         <TableHeader className="bg-muted/50 dark:bg-gray-700 sticky top-0 z-10 shadow-sm">
           <TableRow>
-            <TableHead className="px-4 py-3 text-left text-xs font-semibold text-muted-foreground dark:text-gray-300 uppercase tracking-wider w-[25%] sm:w-[25%]">Descripción</TableHead>
+            <TableHead className="px-4 py-3 text-left text-xs font-semibold text-muted-foreground dark:text-gray-300 uppercase tracking-wider w-[30%] sm:w-[30%]">Descripción</TableHead>
             <TableHead className="px-4 py-3 text-center text-xs font-semibold text-muted-foreground dark:text-gray-300 uppercase tracking-wider w-[10%] sm:w-[10%]">Stock</TableHead>
             <TableHead className="px-4 py-3 text-center text-xs font-semibold text-muted-foreground dark:text-gray-300 uppercase tracking-wider w-[10%] sm:w-[10%]">Cantidad</TableHead>
             <TableHead className="px-4 py-3 text-center text-xs font-semibold text-muted-foreground dark:text-gray-300 uppercase tracking-wider w-[10%] sm:w-[10%]">Diferencia</TableHead>
-            <TableHead className="hidden md:table-cell px-4 py-3 text-left text-xs font-semibold text-muted-foreground dark:text-gray-300 uppercase tracking-wider w-[15%]">Vencimiento</TableHead>
-            <TableHead className="hidden md:table-cell px-4 py-3 text-left text-xs font-semibold text-muted-foreground dark:text-gray-300 uppercase tracking-wider w-[15%]">Últ. Act.</TableHead>
-            <TableHead className="hidden md:table-cell px-4 py-3 text-center text-xs font-semibold text-muted-foreground dark:text-gray-300 uppercase tracking-wider w-[5%]">Validación</TableHead>
+            <TableHead className="hidden md:table-cell px-4 py-3 text-left text-xs font-semibold text-muted-foreground dark:text-gray-300 uppercase tracking-wider w-[20%]">Vencimiento</TableHead>
+            <TableHead className="hidden md:table-cell px-4 py-3 text-left text-xs font-semibold text-muted-foreground dark:text-gray-300 uppercase tracking-wider w-[20%]">Últ. Act.</TableHead>
           </TableRow>
         </TableHeader>
         <TableBody>
@@ -57,15 +56,21 @@ const CountingListTableComponent: React.FC<CountingListTableProps> = ({
              const expirationDate = product.expirationDate ? parseISO(product.expirationDate) : null;
              const isValidExpiration = expirationDate && isValid(expirationDate);
              const uniqueKey = product.barcode;
-             const isUnknownProduct = product.description.startsWith('Producto desconocido');
+             const isUnknownProduct = product.description && product.description.startsWith('Producto desconocido');
+             const stockValue = product.stock ?? 0;
+             const countValue = product.count ?? 0;
+             const difference = countValue - stockValue;
+
             return (
                 <TableRow
                   key={uniqueKey}
                   className={cn(
                     "hover:bg-muted/10 dark:hover:bg-gray-700/50 transition-colors duration-150",
                     isUnknownProduct ? "bg-yellow-50 dark:bg-yellow-900/20" :
-                    (product.count ?? 0) > (product.stock ?? 0) ? "bg-rose-100 dark:bg-rose-900/30" :
-                    ((product.count ?? 0) === (product.stock ?? 0) && (product.stock ?? 0) !== 0 ? "bg-green-500/10 dark:bg-green-700/20" : "")
+                    (countValue > stockValue && stockValue > 0) ? "bg-rose-100 dark:bg-rose-900/30" : // Sobrante y stock > 0
+                    (countValue > stockValue && stockValue === 0) ? "bg-blue-100 dark:bg-blue-900/20" : // Contado pero sin stock de ref.
+                    (countValue === stockValue && stockValue !== 0) ? "bg-green-500/10 dark:bg-green-700/20" : // OK
+                    (countValue < stockValue && stockValue !== 0) ? "bg-red-100/60 dark:bg-red-900/20" : "" // Faltante
                   )}
                   aria-rowindex={index + 1}
                 >
@@ -114,7 +119,7 @@ const CountingListTableComponent: React.FC<CountingListTableProps> = ({
                     title={`Editar stock para ${product.description} en ${warehouseName}`}
                     aria-label={`Editar stock para ${product.description}`}
                 >
-                    {product.stock ?? 0}
+                    {stockValue}
                 </TableCell>
                 <TableCell
                     className="px-4 py-3 text-center text-foreground cursor-pointer hover:text-primary dark:hover:text-primary hover:font-semibold tabular-nums text-lg md:text-base"
@@ -122,25 +127,24 @@ const CountingListTableComponent: React.FC<CountingListTableProps> = ({
                     title={`Editar cantidad para ${product.description} en ${warehouseName}`}
                     aria-label={`Editar cantidad para ${product.description}`}
                 >
-                    {product.count ?? 0}
+                    {countValue}
                 </TableCell>
                 <TableCell
                     className={cn(
                         "px-4 py-3 text-center tabular-nums font-semibold",
-                        (product.count ?? 0) - (product.stock ?? 0) > 0 ? "text-yellow-600 dark:text-yellow-400" :
-                        (product.count ?? 0) - (product.stock ?? 0) < 0 ? "text-red-600 dark:text-red-400" :
+                        difference > 0 ? "text-rose-600 dark:text-rose-400" :
+                        difference < 0 ? "text-red-600 dark:text-red-400" :
                         "text-green-600 dark:text-green-400"
                     )}
                 >
                     {(() => {
-                        const diff = (product.count ?? 0) - (product.stock ?? 0);
-                        if (diff > 0) return `+${diff}`;
+                        if (difference > 0) return `+${difference}`;
                         // Muestra OK si la diferencia es 0 Y (el stock no es 0 O la cantidad no es 0)
                         // Esto evita mostrar OK si ambos son 0 por defecto.
-                        if (diff === 0 && ((product.stock ?? 0) !== 0 || (product.count ?? 0) !== 0) ) return 'OK';
+                        if (difference === 0 && (stockValue !== 0 || countValue !== 0) ) return 'OK';
                         // Muestra 0 si la diferencia es 0 y ambos (stock y count) son 0 o no están definidos.
-                        if (diff === 0 && (product.stock === 0 || product.stock === undefined) && (product.count === 0 || product.count === undefined )) return '0';
-                        return diff;
+                        if (difference === 0 && (stockValue === 0 || stockValue === undefined) && (countValue === 0 || countValue === undefined )) return '0';
+                        return difference;
                     })()}
                 </TableCell>
                 <TableCell className="hidden md:table-cell px-4 py-3 text-muted-foreground text-xs">
@@ -153,20 +157,11 @@ const CountingListTableComponent: React.FC<CountingListTableProps> = ({
                  <TableCell className="hidden md:table-cell px-4 py-3 text-muted-foreground text-xs">
                       {isValidLastUpdate ? format(lastUpdatedDate!, 'PPpp', { locale: es }) : product.lastUpdated || 'N/A'}
                   </TableCell>
-                <TableCell className="hidden md:table-cell px-4 py-3 text-center">
-                    {(product.count ?? 0) === (product.stock ?? 0) && (product.stock ?? 0) !== 0 ? (
-                    <Check className="h-5 w-5 text-green-600 dark:text-green-400 mx-auto" />
-                    ) : (product.count ?? 0) > (product.stock ?? 0) ? (
-                    <span className="text-yellow-600 dark:text-yellow-400 font-semibold">+{ (product.count ?? 0) - (product.stock ?? 0)}</span>
-                    ) : (product.stock ?? 0) > 0 && (product.count ?? 0) < (product.stock ?? 0) ? (
-                    <span className="text-red-600 dark:text-red-400 font-semibold">{(product.count ?? 0) - (product.stock ?? 0)}</span>
-                    ) : null}
-                </TableCell>
                 </TableRow>
             );})}
           {countingList.length === 0 && (
             <TableRow>
-              <TableCell colSpan={7} className="text-center px-4 py-10 text-muted-foreground">
+              <TableCell colSpan={6} className="text-center px-4 py-10 text-muted-foreground">
                 No hay productos en este inventario. Agrega uno para empezar.
               </TableCell>
             </TableRow>
@@ -178,3 +173,4 @@ const CountingListTableComponent: React.FC<CountingListTableProps> = ({
 };
 
 export const CountingListTable = React.memo(CountingListTableComponent);
+

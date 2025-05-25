@@ -1,3 +1,4 @@
+
 // src/app/page.tsx
 "use client";
 
@@ -23,7 +24,8 @@ import { CountingListTable } from '@/components/counting-list-table';
 import { WarehouseManagement } from "@/components/warehouse-management";
 import { format, isValid, parseISO } from 'date-fns';
 import { es } from 'date-fns/locale';
-import { Minus, Plus, Trash, RefreshCw, Search, Boxes, Loader2, CalendarClock, BookOpenText, Users2, ClipboardList, MoreVertical, Warehouse as WarehouseIconLucide, LockKeyhole, CheckCircle, PackageSearch, AlertTriangle, Menu as MenuIcon, User, ShieldAlert, Filter, PanelLeftClose, PanelRightOpen, Save, Library, X, Check, Camera, Download } from "lucide-react"; // Added Download icon
+import Papa from 'papaparse'; // Asegurar que PapaParse esté importado
+import { Minus, Plus, Trash, RefreshCw, Search, Boxes, Loader2, CalendarClock, BookOpenText, Users2, ClipboardList, MoreVertical, Warehouse as WarehouseIconLucide, LockKeyhole, CheckCircle, PackageSearch, AlertTriangle, Menu as MenuIcon, User, ShieldAlert, Filter, PanelLeftClose, PanelRightOpen, Save, Library, X, Check, Camera, Download } from "lucide-react";
 import React, { useCallback, useEffect, useRef, useState, useMemo, useTransition } from "react";
 import { playBeep } from '@/lib/helpers';
 import { ModifyValueDialog } from '@/components/modify-value-dialog';
@@ -38,7 +40,7 @@ import {
   addProductsToDB as addProductsToIndexedDB,
 } from '@/lib/database'; // Using IndexedDB for product catalog
 import {
-  subscribeToWarehouses, 
+  subscribeToWarehouses,
   addOrUpdateWarehouseInFirestore,
   deleteWarehouseFromFirestore,
   // History related functions (save, get, clear) are for Firestore
@@ -69,7 +71,7 @@ import {
     DEFAULT_WAREHOUSE_ID,
     DEFAULT_WAREHOUSE_NAME,
   } from '@/lib/constants';
-import { db } from '@/lib/firebase'; 
+import { db } from '@/lib/firebase';
 import { writeBatch, doc, collection } from 'firebase/firestore';
 import { ConsolidatedView } from '@/components/consolidated-view';
 import { BarcodeScannerCamera } from '@/components/barcode-scanner-camera';
@@ -93,10 +95,10 @@ export default function Home() {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [loginUsername, setLoginUsername] = useState("");
   const [loginPassword, setLoginPassword] = useState("");
-  
+
   // --- User and Warehouse State ---
   const [currentUserId, setCurrentUserId] = useState<string | null>(null);
-  
+
   const PREDEFINED_WAREHOUSES_LIST: Warehouse[] = [
     { id: DEFAULT_WAREHOUSE_ID, name: DEFAULT_WAREHOUSE_NAME },
     { id: 'bodega', name: 'BODEGA' },
@@ -108,7 +110,7 @@ export default function Home() {
 
   const [warehouses, setWarehouses] = useState<Warehouse[]>(PREDEFINED_WAREHOUSES_LIST);
   const [currentWarehouseId, setCurrentWarehouseId] = useState<string>(DEFAULT_WAREHOUSE_ID);
-  
+
   const [catalogProducts, setCatalogProducts] = useState<ProductDetail[]>([]);
 
 
@@ -134,7 +136,7 @@ export default function Home() {
   const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false);
   const [isDeleteListDialogOpen, setIsDeleteListDialogOpen] = useState(false);
   const [productToDelete, setProductToDelete] = useState<DisplayProduct | null>(null);
-  const [isDbLoading, setIsDbLoading] = useState(true); 
+  const [isDbLoading, setIsDbLoading] = useState(true);
   const [isRefreshingStock, setIsRefreshingStock] = useState(false);
   const [lastScannedBarcode, setLastScannedBarcode] = useState<string | null>(null);
   const [isEditDetailDialogOpen, setIsEditDetailDialogOpen] = useState(false);
@@ -162,7 +164,7 @@ export default function Home() {
                     barcodeInputRef.current.focus();
                 }
             }
-        }, 100); // Ajustado de 50ms a 100ms
+        }, 100);
     }
   }, [activeSection]);
 
@@ -171,23 +173,23 @@ export default function Home() {
  useEffect(() => {
     isMountedRef.current = true;
     const storedUserId = getLocalStorageItem<string | null>(LOCAL_STORAGE_USER_ID_KEY, null);
-    if (storedUserId === LOGIN_USER) { 
+    if (storedUserId === LOGIN_USER) {
         setCurrentUserId(LOGIN_USER);
         setIsAuthenticated(true);
         const storedWarehouseId = getLocalStorageItem<string>(`${LOCAL_STORAGE_CURRENT_WAREHOUSE_ID_KEY_PREFIX}${LOGIN_USER}`, DEFAULT_WAREHOUSE_ID);
-        setCurrentWarehouseId(storedWarehouseId); 
+        setCurrentWarehouseId(storedWarehouseId);
     } else {
         setCurrentUserId(null);
         setIsAuthenticated(false);
         if(typeof window !== 'undefined') localStorage.removeItem(LOCAL_STORAGE_USER_ID_KEY);
     }
-    
+
     requestAnimationFrame(() => {
       if (isMountedRef.current) {
           focusBarcodeIfCounting();
       }
     });
-    
+
     return () => {
       isMountedRef.current = false;
       if (lastScannedTimeoutRef.current) {
@@ -213,10 +215,10 @@ export default function Home() {
     const unsubscribe = subscribeToWarehouses(currentUserId, async (fetchedWarehouses) => {
         if (isMountedRef.current) {
             let finalWarehousesToSet = [...fetchedWarehouses];
-            
+
             if (!isInitialFetchDoneForUser.current[currentUserId] && db && currentUserId) {
                 isInitialFetchDoneForUser.current[currentUserId] = true;
-                
+
                 const warehousesToAddBatch: Warehouse[] = [];
                 PREDEFINED_WAREHOUSES_LIST.forEach(predefined => {
                     if (!fetchedWarehouses.some(fw => fw.id === predefined.id)) {
@@ -232,28 +234,23 @@ export default function Home() {
                             batch.set(warehouseDocRef, wh);
                         });
                         await batch.commit();
-                        // Firestore listener will pick up these changes, so we don't manually merge here.
-                        // The listener will update `finalWarehousesToSet` in a subsequent call.
                     } catch (err) {
                         console.error(`Failed to add predefined warehouses for user ${currentUserId}:`, err);
                         if(isMountedRef.current) requestAnimationFrame(() => toast({ variant: "destructive", title: "Error DB", description: `No se pudieron agregar almacenes predefinidos.`}));
-                        // If batch fails, we still want to show the predefined ones locally
-                        finalWarehousesToSet = [...fetchedWarehouses, ...warehousesToAddBatch].filter((v,i,a)=>a.findIndex(t=>(t.id === v.id))===i); // Deduplicate
+                        finalWarehousesToSet = [...fetchedWarehouses, ...warehousesToAddBatch].filter((v,i,a)=>a.findIndex(t=>(t.id === v.id))===i);
                     }
                 }
-                // If Firestore is empty for the user, AND no batch was needed (meaning predefined also somehow empty),
-                // ensure we have at least the defaults.
                  if (finalWarehousesToSet.length === 0 && warehousesToAddBatch.length === 0) {
                      finalWarehousesToSet = [...PREDEFINED_WAREHOUSES_LIST];
                 }
             }
-            
+
             setWarehouses(finalWarehousesToSet.length > 0 ? finalWarehousesToSet : PREDEFINED_WAREHOUSES_LIST);
 
             const storedWarehouseId = getLocalStorageItem<string>(`${LOCAL_STORAGE_CURRENT_WAREHOUSE_ID_KEY_PREFIX}${currentUserId}`, DEFAULT_WAREHOUSE_ID);
             const effectiveWarehouseList = finalWarehousesToSet.length > 0 ? finalWarehousesToSet : PREDEFINED_WAREHOUSES_LIST;
             let currentSelectionIsValid = effectiveWarehouseList.some(w => w.id === storedWarehouseId);
-            
+
             if (!currentSelectionIsValid) {
                 const mainExistsInEffectiveList = effectiveWarehouseList.find(w => w.id === DEFAULT_WAREHOUSE_ID);
                 const newCurrentId = mainExistsInEffectiveList ? DEFAULT_WAREHOUSE_ID : (effectiveWarehouseList[0]?.id || DEFAULT_WAREHOUSE_ID);
@@ -270,7 +267,7 @@ export default function Home() {
         unsubscribe();
         if (isMountedRef.current) setIsDbLoading(false);
     };
-  }, [currentUserId, toast]); // Removed currentWarehouseId from deps as it's handled by localStorage
+  }, [currentUserId, toast]);
 
 
   useEffect(() => {
@@ -293,7 +290,7 @@ export default function Home() {
           setIsDbLoading(false);
         }
       });
-  }, [toast]); 
+  }, [toast]);
 
 
  useEffect(() => {
@@ -360,7 +357,7 @@ export default function Home() {
     const stockToCheck = product.stock ?? 0;
 
     if (stockToCheck > 0 && countToCheck !== stockToCheck) {
-        if (isMountedRef.current && activeSection !== 'Contador' && activeSection !== 'Contador Cámara') { // No mostrar en secciones de conteo
+        if (isMountedRef.current && activeSection !== 'Contador' && activeSection !== 'Contador Cámara') {
             requestAnimationFrame(() => {
                 if(isMountedRef.current) {
                     toast({
@@ -421,11 +418,11 @@ export default function Home() {
      }
      if(isMountedRef.current) {
         if (lastScannedTimeoutRef.current) {
-            clearTimeout(lastScannedTimeoutRef.current); 
+            clearTimeout(lastScannedTimeoutRef.current);
         }
         setLastScannedBarcode(trimmedBarcode);
         lastScannedTimeoutRef.current = setTimeout(() => {
-            if (isMountedRef.current) setLastScannedBarcode(null); 
+            if (isMountedRef.current) setLastScannedBarcode(null);
         }, LAST_SCANNED_BARCODE_TIMEOUT_MS);
      }
 
@@ -435,7 +432,7 @@ export default function Home() {
     if (existingProductIndex !== -1) {
         const productToUpdate = countingList[existingProductIndex];
         const newCount = (productToUpdate.count ?? 0) + 1;
-       
+
         const updatedProductData: DisplayProduct = {
             ...productToUpdate,
             count: newCount,
@@ -462,7 +459,7 @@ export default function Home() {
             if (catalogProd && catalogProd.barcode) {
                 newProductForList = {
                     barcode: catalogProd.barcode,
-                    description: catalogProd.description || `Producto ${trimmedBarcode}`,
+                    description: catalogProd.description || `Producto ${catalogProd.barcode}`,
                     provider: catalogProd.provider || "Desconocido",
                     stock: catalogProd.stock ?? 0,
                     expirationDate: catalogProd.expirationDate || null,
@@ -485,7 +482,7 @@ export default function Home() {
                     expirationDate: undefined,
                 };
                 playBeep(440, 300);
-                if(isMountedRef.current && (activeSection === 'Contador' || activeSection === 'Contador Cámara')){ // Show toast only in counter sections
+                if(isMountedRef.current && (activeSection === 'Contador' || activeSection === 'Contador Cámara')){
                     requestAnimationFrame(() => {
                         if (isMountedRef.current) {
                             toast({
@@ -542,7 +539,7 @@ const modifyProductValue = useCallback(async (barcodeToUpdate: string, type: 'co
         }
          return;
     }
-    
+
     const productInList = countingList[productIndexInList];
     const originalValue = type === 'count' ? productInList.count ?? 0 : productInList.stock ?? 0;
     const calculatedNewValue = Math.max(0, originalValue + change);
@@ -566,7 +563,7 @@ const modifyProductValue = useCallback(async (barcodeToUpdate: string, type: 'co
             return [updatedProduct, ...listWithoutProduct];
         });
     });
-    
+
     if (finalValue !== undefined && productForToast) {
         if (type === 'stock') {
             try {
@@ -585,7 +582,7 @@ const modifyProductValue = useCallback(async (barcodeToUpdate: string, type: 'co
                             stock: finalValue,
                             expirationDate: listProduct.expirationDate,
                         };
-                        await addOrUpdateProductToIndexedDB(newDbProduct);      
+                        await addOrUpdateProductToIndexedDB(newDbProduct);
                         setCatalogProducts(prev => [...prev, newDbProduct]);
                     }
                 }
@@ -648,8 +645,7 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
 
     const productInList = countingList[productIndexInList];
     const originalValue = type === 'count' ? productInList.count ?? 0 : productInList.stock ?? 0;
-    
-    // Si el valor no cambia y no es una suma, no hacer nada
+
     if (type === 'count' && !sumValue && newValue === originalValue) {
         if(isMountedRef.current) setOpenModifyDialog(null);
         requestAnimationFrame(() => {
@@ -666,8 +662,11 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
 
     if (type === 'count') {
         const stockVal = productInList.stock ?? 0;
-        needsConfirmation = finalValue > stockVal && stockVal > 0; // Show confirm only if new value is greater than positive stock
+        if (stockVal > 0 && finalValue > stockVal) {
+            needsConfirmation = true;
+        }
     }
+
 
     if (needsConfirmation) {
         if(isMountedRef.current) setConfirmQuantityProductBarcode(productInList.barcode);
@@ -679,8 +678,8 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
         startTransition(() => {
             setCountingList(prevList => {
                 const currentProductIndex = prevList.findIndex(p => p.barcode === barcodeToUpdate && p.warehouseId === currentWarehouseId);
-                if (currentProductIndex === -1) return prevList; 
-                
+                if (currentProductIndex === -1) return prevList;
+
                 const productToUpdate = prevList[currentProductIndex];
                 const originalValForState = type === 'count' ? productToUpdate.count ?? 0 : productToUpdate.stock ?? 0;
                 let calculatedValForState = sumValue ? (originalValForState + newValue) : newValue;
@@ -716,7 +715,7 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
                                 stock: finalValue,
                                 expirationDate: listProduct.expirationDate,
                             };
-                            await addOrUpdateProductToIndexedDB(newDbProduct);      
+                            await addOrUpdateProductToIndexedDB(newDbProduct);
                             setCatalogProducts(prev => [...prev, newDbProduct]);
                         }
                     }
@@ -741,9 +740,6 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
                      }
                  }
              } else if (type === 'count' && productForToast) {
-                 showDiscrepancyToastIfNeeded(productForToast, finalValue);
-                 // Mostrar toast de "Cantidad Modificada" solo si no se mostró un toast de discrepancia
-                 // y estamos en las secciones de conteo.
                  const didShowDiscrepancy = showDiscrepancyToastIfNeeded(productForToast, finalValue);
                  if (!didShowDiscrepancy && isMountedRef.current && (activeSection === 'Contador' || activeSection === 'Contador Cámara')) {
                      requestAnimationFrame(() => {
@@ -787,7 +783,7 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
      const barcodeToUpdate = confirmQuantityProductBarcode;
      const newValue = confirmQuantityNewValue;
      let confirmedValue: number | null = null;
-     
+
      startTransition(() => {
         setCountingList(prevList => {
             const index = prevList.findIndex(p => p.barcode === barcodeToUpdate && p.warehouseId === warehouseId);
@@ -813,9 +809,6 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
             const productInList = countingList.find(p => p.barcode === barcodeToUpdate && p.warehouseId === warehouseId);
             if (productInList) {
                 const tempProductForToast = {...productInList, count: confirmedValue};
-                showDiscrepancyToastIfNeeded(tempProductForToast, confirmedValue);
-                // Mostrar toast de "Cantidad Modificada" solo si no se mostró toast de discrepancia
-                // y estamos en las secciones de conteo.
                  const didShowDiscrepancy = showDiscrepancyToastIfNeeded(tempProductForToast, confirmedValue);
                 if (!didShowDiscrepancy && isMountedRef.current && (activeSection === 'Contador' || activeSection === 'Contador Cámara')) {
                      requestAnimationFrame(() => {
@@ -824,7 +817,7 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
                         }
                      });
                 }
-            } else { // Si el producto no estaba en la lista (improbable aquí), mostrar el toast
+            } else {
                  requestAnimationFrame(() => {
                     if (isMountedRef.current) {
                         toast({ title: "Cantidad Modificada" });
@@ -892,11 +885,11 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
 
  const handleClearCurrentList = useCallback(() => {
      if (!isMountedRef.current || !currentWarehouseId || !currentUserId) return;
-     
+
      startTransition(() => {
          setCountingList(prevList => prevList.filter(p => p.warehouseId !== currentWarehouseId));
      });
-     
+
      const savedListKey = `${LOCAL_STORAGE_COUNTING_LIST_KEY_PREFIX}${currentWarehouseId}_${currentUserId}`;
      if (typeof window !== 'undefined') {
         localStorage.removeItem(savedListKey);
@@ -932,6 +925,15 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
         return;
     }
     try {
+        if (typeof Papa === 'undefined') {
+            requestAnimationFrame(() => {
+                if (isMountedRef.current) {
+                    toast({ variant: "destructive", title: "Error de Exportación", description: "La librería PapaParse no está cargada." });
+                }
+            });
+            return;
+        }
+
         const dataToExport = currentWarehouseList.map(p => ({
             CodigoBarras: p.barcode,
             Descripcion: p.description,
@@ -943,14 +945,6 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
             FechaVencimiento: p.expirationDate && isValid(parseISO(p.expirationDate)) ? format(parseISO(p.expirationDate), 'yyyy-MM-dd') : 'N/A',
         }));
 
-        if (typeof Papa === 'undefined') {
-            requestAnimationFrame(() => {
-                if (isMountedRef.current) {
-                    toast({ variant: "destructive", title: "Error de Exportación", description: "La librería PapaParse no está cargada." });
-                }
-            });
-            return;
-        }
 
         const csv = Papa.unparse(dataToExport, { header: true });
         const blob = new Blob([`\uFEFF${csv}`], { type: "text/csv;charset=utf-8;" });
@@ -1007,7 +1001,7 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
      let addedProductCount = 0;
      try {
         const allLocalCatalogProducts = await getAllProductsFromIndexedDB();
-        
+
         if (isMountedRef.current) {
             setCatalogProducts(allLocalCatalogProducts);
         }
@@ -1115,7 +1109,7 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
      try {
          let productDataToEdit = await getProductFromIndexedDB(product.barcode);
          let source = "Local (IndexedDB)";
-         
+
          if (productDataToEdit) {
              if (!isMountedRef.current) return;
              setProductToEditDetail(productDataToEdit);
@@ -1176,8 +1170,8 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
              stock: data.stock ?? 0,
              expirationDate: data.expirationDate || null,
          };
-         await addOrUpdateProductToIndexedDB(updatedProductData);       
-         
+         await addOrUpdateProductToIndexedDB(updatedProductData);
+
          setCatalogProducts(prev => {
             const existingIndex = prev.findIndex(p => p.barcode === updatedProductData.barcode);
             if (existingIndex !== -1) {
@@ -1187,12 +1181,12 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
             }
             return [...prev, updatedProductData];
          });
-         
+
          if (!isMountedRef.current) return;
 
          startTransition(() => {
             setCountingList(prevList => prevList.map(item =>
-                item.barcode === updatedProductData.barcode && item.warehouseId === currentWarehouseId 
+                item.barcode === updatedProductData.barcode && item.warehouseId === currentWarehouseId
                     ? {
                         ...item,
                         description: updatedProductData.description,
@@ -1351,7 +1345,7 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
           requestAnimationFrame(() => {
               toast({title: "Almacén Agregado", description: `Cambiado a: ${newWarehouse.name}`});
           });
-          handleWarehouseChange(newWarehouse.id); // Switch to the new warehouse
+          handleWarehouseChange(newWarehouse.id);
       } catch (error) {
           // Error toast handled by firestore-service
       }
@@ -1376,7 +1370,6 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
        }
        try {
            await deleteWarehouseFromFirestore(currentUserId, warehouseIdToDelete);
-           // The onSnapshot listener will update the UI and handle re-selection if needed
        } catch (error) {
            // Error toast handled by firestore-service
        }
@@ -1399,8 +1392,8 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
 
       if(isMountedRef.current) {
         setCatalogProducts([]);
-        startTransition(() => { 
-            setCountingList(prevList => 
+        startTransition(() => {
+            setCountingList(prevList =>
                 prevList.map(p => {
                     return {...p, description: `Producto ${p.barcode}`, provider: "Desconocido", stock: 0, expirationDate: undefined};
                 })
@@ -1445,7 +1438,7 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
     { name: 'Contador Cámara', icon: Camera, label: 'Contador con Cámara' },
     { name: 'Catálogo de Productos', icon: PackageSearch, label: 'Catálogo de Productos' },
     { name: 'Almacenes', icon: Boxes, label: 'Almacenes' },
-    { name: 'Consolidado', icon: Library, label: 'Consolidado de Inventario' }, 
+    { name: 'Consolidado', icon: Library, label: 'Consolidado de Inventario' },
   ], [getWarehouseName, currentWarehouseId]);
 
   const handleSignOut = () => {
@@ -1454,12 +1447,12 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
         setCurrentUserId(null);
         setCountingList([]);
         setCatalogProducts([]);
-        setWarehouses(PREDEFINED_WAREHOUSES_LIST); // Reset to default local list
+        setWarehouses(PREDEFINED_WAREHOUSES_LIST);
         setCurrentWarehouseId(DEFAULT_WAREHOUSE_ID);
         if (typeof window !== 'undefined') {
             localStorage.removeItem(LOCAL_STORAGE_USER_ID_KEY);
         }
-        isInitialFetchDoneForUser.current = {}; // Reset initial fetch flag
+        isInitialFetchDoneForUser.current = {};
         requestAnimationFrame(() => toast({title: "Sesión cerrada"}));
     }
   };
@@ -1478,28 +1471,10 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
       handleSectionChange(section);
       if (isMobile) setMobileSheetOpen(false);
     },
-    onToggleCollapse: () => setIsSidebarCollapsed(!isSidebarCollapsed), 
-    onSignOut: handleSignOut, 
+    onToggleCollapse: () => setIsSidebarCollapsed(!isSidebarCollapsed),
+    onSignOut: handleSignOut,
   };
 
-  const counterSectionProps = {
-    filteredCountingList,
-    warehouseName: getWarehouseName(currentWarehouseId),
-    onDeleteRequest: handleDeleteRequest,
-    onOpenStockDialog: (product: DisplayProduct) => handleOpenModifyDialog(product, 'stock'),
-    onOpenQuantityDialog: (product: DisplayProduct) => handleOpenModifyDialog(product, 'count'),
-    onDecrement: handleDecrement,
-    onIncrement: handleIncrement,
-    onEditDetailRequest: handleOpenEditDetailDialog,
-    countingList,
-    currentWarehouseId,
-    onExport: handleExport,
-    onSetIsDeleteListDialogOpen: setIsDeleteListDialogOpen,
-    isMobile,
-    toast,
-    isDbLoading: isDbLoading,
-    isTransitionPending: isTransitionPending,
-  };
 
   const handleLogin = () => {
     if (loginUsername === LOGIN_USER && loginPassword === LOGIN_PASSWORD) {
@@ -1509,7 +1484,7 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
             setLocalStorageItem(LOCAL_STORAGE_USER_ID_KEY, LOGIN_USER);
             const storedWarehouseId = getLocalStorageItem<string>(`${LOCAL_STORAGE_CURRENT_WAREHOUSE_ID_KEY_PREFIX}${LOGIN_USER}`, DEFAULT_WAREHOUSE_ID);
             setCurrentWarehouseId(storedWarehouseId);
-            isInitialFetchDoneForUser.current[LOGIN_USER] = false; // Ensure this resets for new login
+            isInitialFetchDoneForUser.current[LOGIN_USER] = false;
 
             requestAnimationFrame(() => {
                 toast({ title: "Inicio de sesión exitoso" });
@@ -1528,12 +1503,12 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
   };
 
   // --- Barcode Camera Scan Specific Logic ---
-  const [isCameraScanMode, setIsCameraScanMode] = useState(false); 
+  const [isCameraScanMode, setIsCameraScanMode] = useState(false);
 
   const toggleCameraScanMode = useCallback(() => {
     if (isMountedRef.current) {
       setIsCameraScanMode(prev => !prev);
-      if (isCameraScanMode) { 
+      if (isCameraScanMode) {
         requestAnimationFrame(() => {
           focusBarcodeIfCounting();
         });
@@ -1544,7 +1519,7 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
 
   const handleBarcodeScannedFromCamera = useCallback((scannedBarcode: string) => {
     if (isMountedRef.current) {
-      handleAddProduct(scannedBarcode); 
+      handleAddProduct(scannedBarcode);
     }
   }, [handleAddProduct]);
 
@@ -1745,6 +1720,7 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
               <BarcodeScannerCamera
                 onBarcodeScanned={handleBarcodeScannedFromCamera}
                 isScanningActive={activeSection === 'Contador Cámara'}
+                isDecodingActive={true} // For continuous scan in this dedicated mode
               />
             </div>
 
@@ -1894,7 +1870,6 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
                     catalogProducts={catalogProducts}
                     warehouses={warehouses}
                     currentUserId={currentUserId}
-                    // getWarehouseName={getWarehouseName} // Esta prop ya no es necesaria en ConsolidatedView
                 />
              </div>
             )}
@@ -1939,8 +1914,6 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
                if (stock > 0 && confirmQuantityNewValue > stock) {
                    return `La cantidad contada (${confirmQuantityNewValue}) ahora SUPERA el stock del sistema (${stock}) para "${description}". ¿Confirmar?`;
                }
-               // No mostrar diálogo si la cantidad es menor o igual al stock, o si el stock es 0
-               // Este return implícito es manejado por la lógica `needsConfirmation` en `handleSetProductValue`
                return `Está a punto de modificar la cantidad contada para "${description}" a ${confirmQuantityNewValue}. ¿Continuar?`;
              })()
           }
@@ -1994,7 +1967,7 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
           onOpenChange={(open) => {
             setIsDeleteListDialogOpen(open);
             if (!open) {
-                requestAnimationFrame(() => { 
+                requestAnimationFrame(() => {
                     if (isMountedRef.current) {
                         focusBarcodeIfCounting();
                     }
@@ -2021,7 +1994,7 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
             onOpenChange={(open) => {
                 setIsClearCatalogConfirmOpen(open);
                 if (!open) {
-                    requestAnimationFrame(() => { 
+                    requestAnimationFrame(() => {
                         if (isMountedRef.current) {
                             focusBarcodeIfCounting();
                         }
@@ -2029,7 +2002,7 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
                 }
             }}
             title="Confirmar Borrado Catálogo"
-            description={ 
+            description={
                  <div className="space-y-2">
                     <div className="flex items-center gap-2 text-destructive">
                          <AlertTriangle className="h-5 w-5"/>
@@ -2125,11 +2098,5 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
     </div>
   );
 }
-    
 
     
-
-
-
-
-

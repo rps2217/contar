@@ -9,77 +9,77 @@ body {
 
 @layer base {
   :root {
-    /* Sober, High-Contrast Gray Theme - Light */
-    --background: 220 13% 95%; /* Light, cool gray */
-    --foreground: 210 10% 23%; /* Dark desaturated blue (kept for good text contrast) */
-    --card: 0 0% 100%; /* White (for clear separation) */
-    --card-foreground: 210 10% 23%;
-    --popover: 0 0% 100%; /* White */
-    --popover-foreground: 210 10% 23%;
-    --primary: 210 80% 50%; /* Confident blue (kept for primary actions) */
-    --primary-foreground: 0 0% 100%;
-    --secondary: 210 20% 91%; /* Light gray-blue */
-    --secondary-foreground: 210 10% 30%;
-    --muted: 210 20% 94%; /* Very light gray-blue */
-    --muted-foreground: 210 10% 45%;
-    --accent: 200 85% 55%; /* Energetic blue/cyan (kept for accents) */
-    --accent-foreground: 0 0% 100%;
-    --destructive: 0 72% 51%; /* Vivid red */
+    /* AppSheet Inspired - Light Theme */
+    --background: 0 0% 97%; /* Very light gray, almost white */
+    --foreground: 220 10% 12%; /* Very dark gray/off-black text */
+    --card: 0 0% 100%; /* White */
+    --card-foreground: 220 10% 12%;
+    --popover: 0 0% 100%;
+    --popover-foreground: 220 10% 12%;
+    --primary: 217 91% 50%; /* Strong blue, darker for light bg */
+    --primary-foreground: 210 40% 98%; /* White/very light text for blue button */
+    --secondary: 220 15% 92%; /* Light gray */
+    --secondary-foreground: 220 10% 25%; /* Darker gray text on secondary */
+    --muted: 220 15% 95%; /* Very light gray for muted elements */
+    --muted-foreground: 220 10% 40%; /* Medium gray for muted text */
+    --accent: 217 91% 55%; /* Accent blue for light mode */
+    --accent-foreground: 210 40% 98%;
+    --destructive: 0 72% 51%; /* Standard red */
     --destructive-foreground: 0 0% 98%;
-    --border: 210 20% 88%; /* Light gray-blue border */
-    --input: 210 20% 85%;
-    --ring: 210 80% 60%;
-    --chart-1: 210 70% 40%;
-    --chart-2: 200 75% 50%;
-    --chart-3: 210 10% 50%;
-    --chart-4: 30 60% 55%;
-    --chart-5: 150 50% 50%;
+    --border: 220 10% 85%; /* Light gray border */
+    --input: 220 15% 90%; /* Input field background, slightly off-white */
+    --ring: 217 91% 58%; /* Focus ring blue */
+    --chart-1: 210 60% 45%;
+    --chart-2: 200 70% 50%;
+    --chart-3: 220 30% 60%;
+    --chart-4: 30 50% 55%;
+    --chart-5: 150 40% 50%;
     --radius: 0.5rem;
 
     /* Sidebar Light Theme */
-    --sidebar-background: 220 13% 92%; /* Slightly darker cool gray than main background */
+    --sidebar-background: 220 10% 90%; /* Light gray, distinct from main background */
     --sidebar-foreground: hsl(var(--foreground));
     --sidebar-primary: hsl(var(--primary));
     --sidebar-primary-foreground: hsl(var(--primary-foreground));
-    --sidebar-accent: hsl(var(--secondary));
+    --sidebar-accent: hsl(var(--secondary)); /* Using secondary as accent for sidebar */
     --sidebar-accent-foreground: hsl(var(--secondary-foreground));
     --sidebar-border: hsl(var(--border));
     --sidebar-ring: hsl(var(--ring));
   }
 
   .dark {
-    /* Sober, High-Contrast Gray Theme - Dark */
-    --background: 220 9% 13%; /* Dark, cool gray */
-    --foreground: 210 15% 95%; /* Light off-white (kept for good text contrast) */
-    --card: 220 9% 17%; /* Slightly lighter cool gray than dark background */
-    --card-foreground: 210 15% 95%;
-    --popover: 220 9% 17%; /* Slightly lighter cool gray */
-    --popover-foreground: 210 15% 95%;
-    --primary: 210 80% 60%; /* Lighter blue for dark mode (kept) */
-    --primary-foreground: 210 10% 15%;
-    --secondary: 210 15% 25%; /* Darker gray-blue */
-    --secondary-foreground: 210 15% 80%;
-    --muted: 210 15% 25%;
-    --muted-foreground: 210 15% 60%;
-    --accent: 200 85% 65%; /* Brighter accent for dark mode (kept) */
-    --accent-foreground: 210 10% 15%;
-    --destructive: 0 70% 60%;
+    /* AppSheet Inspired - Dark Theme */
+    --background: 220 6% 10%; /* Very dark gray, almost black */
+    --foreground: 210 25% 95%; /* Off-white for high contrast */
+    --card: 220 6% 13%; /* Slightly lighter than background */
+    --card-foreground: 210 25% 95%;
+    --popover: 220 6% 13%;
+    --popover-foreground: 210 25% 95%;
+    --primary: 217 91% 60%; /* Strong, clear blue */
+    --primary-foreground: 210 40% 98%;
+    --secondary: 220 6% 20%; /* Dark gray for secondary elements */
+    --secondary-foreground: 210 20% 80%; /* Lighter gray text on secondary */
+    --muted: 220 6% 17%; /* For less prominent elements */
+    --muted-foreground: 210 15% 65%; /* Muted text color */
+    --accent: 217 91% 65%; /* Brighter/alternative blue for accents */
+    --accent-foreground: 210 40% 98%;
+    --destructive: 0 63% 51%;
     --destructive-foreground: 0 0% 98%;
-    --border: 210 15% 28%; /* Darker cool border */
-    --input: 210 15% 30%;
-    --ring: 210 80% 70%;
-    --chart-1: 210 70% 50%;
-    --chart-2: 200 75% 60%;
-    --chart-3: 210 15% 65%;
+    --border: 220 6% 25%; /* Subtle border */
+    --input: 220 6% 16%; /* Input field background */
+    --ring: 217 91% 70%; /* Focus ring blue */
+    --chart-1: 210 70% 55%;
+    --chart-2: 200 80% 60%;
+    --chart-3: 220 20% 70%;
     --chart-4: 30 60% 65%;
     --chart-5: 150 50% 60%;
 
     /* Sidebar Dark Theme */
-    --sidebar-background: 220 9% 10%; /* Even darker cool gray for sidebar */
+    --sidebar-background: 220 6% 8%; /* Even darker for the sidebar */
     --sidebar-foreground: hsl(var(--foreground));
     --sidebar-primary: hsl(var(--primary));
     --sidebar-primary-foreground: hsl(var(--primary-foreground));
-    --sidebar-accent: hsl(var(--secondary));
+    --sidebar-accent: hsl(var(--secondary)); /* Using secondary as accent for sidebar */
     --sidebar-accent-foreground: hsl(var(--secondary-foreground));
     --sidebar-border: hsl(var(--border));
     --sidebar-ring: hsl(var(--ring));
@@ -150,4 +150,3 @@ input, button, select, textarea {
   width: 100%;
   max-width: 24rem; /* Equivalent to max-w-sm */
 }
-

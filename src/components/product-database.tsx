@@ -8,8 +8,8 @@ import { cn, debounce } from "@/lib/utils";
 import {
     Filter, Play, Loader2, Save, Trash, Upload, Edit, AlertTriangle
 } from "lucide-react";
-import Papa from 'papaparse';
-import * as React from "react";
+import Papa from 'papaparse'; // Using PapaParse for robust CSV parsing
+import * as React from "react"; // Import React
 import { useCallback, useEffect, useState, useMemo, useRef } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -26,38 +26,35 @@ import {
 import { format, parseISO, isValid as isValidDate } from 'date-fns';
 import { es } from 'date-fns/locale';
 import { GOOGLE_SHEET_URL_LOCALSTORAGE_KEY } from '@/lib/constants';
-import { useLocalStorage } from '@/hooks/use-local-storage';
-
+import { useLocalStorage } from '@/hooks/use-local-storage'; // Import useLocalStorage
 
 const SEARCH_DEBOUNCE_MS = 300;
 
  interface ProductDatabaseProps {
-  userId: string | null; 
-  isLoadingCatalog?: boolean; 
   catalogProducts: ProductDetail[]; 
+  isLoadingCatalog?: boolean; 
+  onAddOrUpdateProduct: (product: ProductDetail) => Promise<void>; 
+  onDeleteProduct: (barcode: string) => Promise<void>; 
+  onLoadFromGoogleSheet: (sheetUrlOrId: string) => Promise<void>; 
+  onClearCatalogRequest: () => void; 
   onStartCountByProvider: (products: ProductDetail[]) => void;
-  onAddOrUpdateProduct: (product: ProductDetail) => Promise<void>; // Callback for add/update
-  onDeleteProduct: (barcode: string) => Promise<void>; // Callback for delete
-  onLoadFromGoogleSheet: (sheetUrlOrId: string) => Promise<void>; // Callback for GS load
-  onClearCatalogRequest: () => void; // Callback to request catalog clear
+  processingStatus?: string; // For Google Sheet loading status
  }
 
 
 const ProductDatabaseComponent: React.FC<ProductDatabaseProps> = ({
-    userId,
-    isLoadingCatalog,
     catalogProducts,
+    isLoadingCatalog = false,
+    onAddOrUpdateProduct,
+    onDeleteProduct,
+    onLoadFromGoogleSheet,
+    onClearCatalogRequest,
     onStartCountByProvider,
-    onAddOrUpdateProduct, // Use this prop for submitting new/edited product
-    onDeleteProduct, // Use this prop for deleting
-    onLoadFromGoogleSheet, // Use this prop to trigger GS load in parent
-    onClearCatalogRequest, // Use this prop to trigger clear in parent
+    processingStatus,
  }) => {
   const { toast } = useToast();
-  const [isProcessing, setIsProcessing] = useState(false); 
-  const [uploadProgress, setUploadProgress] = useState(0); // Still useful for GS load feedback
-  const [processingStatus, setProcessingStatus] = useState<string>(""); // For GS load status
-  const [googleSheetUrlOrId, setGoogleSheetUrlOrId] = useLocalStorage<string>(
+  const [isProcessingLocal, setIsProcessingLocal] = useState(false); // Local processing for this component
+  const [googleSheetUrlOrId, setGoogleSheetUrlOrId] = useLocalStorage<string>( // Use the hook
       GOOGLE_SHEET_URL_LOCALSTORAGE_KEY, ""
   );
   const [searchTerm, setSearchTerm] = useState("");
@@ -74,27 +71,22 @@ const ProductDatabaseComponent: React.FC<ProductDatabaseProps> = ({
     setGoogleSheetUrlOrId(e.target.value);
   };
 
-  // This local handler now calls the prop passed from page.tsx
   const handleLoadFromGoogleSheetClick = async () => {
     if (!googleSheetUrlOrId) {
       requestAnimationFrame(() => toast({ variant: "destructive", title: "URL/ID Requerido" }));
       return;
     }
     if (!isMountedRef.current) return;
-    // We set local processing state for UI feedback within this component
-    setIsProcessing(true); 
-    setProcessingStatus("Cargando datos desde Google Sheet...");
+    setIsProcessingLocal(true); // Use local processing state for this component's UI
     try {
-      await onLoadFromGoogleSheet(googleSheetUrlOrId); // Call the parent's handler
-      // Success toast and state refresh will be handled by the parent
-      if (isMountedRef.current) setProcessingStatus("Carga completada y procesada.");
+      await onLoadFromGoogleSheet(googleSheetUrlOrId); 
     } catch (error: any) {
+      // Error is likely handled by the parent, but we can reset local state
       if (isMountedRef.current) {
-        setProcessingStatus("Error durante la carga.");
-        requestAnimationFrame(() => toast({ variant: "destructive", title: "Error de Carga GS", description: error.message || "Error desconocido."}));
+         requestAnimationFrame(() => toast({ variant: "destructive", title: "Error de Carga GS", description: error.message || "Error desconocido."}));
       }
     } finally {
-      if (isMountedRef.current) setIsProcessing(false);
+      if (isMountedRef.current) setIsProcessingLocal(false);
     }
   };
 
@@ -113,7 +105,6 @@ const ProductDatabaseComponent: React.FC<ProductDatabaseProps> = ({
       return;
     }
     if (!isMountedRef.current) return;
-    // Potentially set a local processing state if needed, but parent handles the main logic
     const providerProducts = catalogProducts.filter(product => (product.provider || "Desconocido") === selectedProviderFilter);
     if (providerProducts.length === 0) {
       if (isMountedRef.current) requestAnimationFrame(() => toast({ title: "Vacío", description: `No hay productos para ${selectedProviderFilter}.` }));
@@ -130,7 +121,7 @@ const ProductDatabaseComponent: React.FC<ProductDatabaseProps> = ({
 
   const filteredProducts = useMemo(() => {
     const lowerSearchTerm = searchTerm.toLowerCase();
-    return catalogProducts
+    return catalogProducts // catalogProducts is now directly from props
       .filter(product => {
         if (!product || !product.barcode) return false; 
         const matchesSearch = !lowerSearchTerm ||
@@ -144,15 +135,11 @@ const ProductDatabaseComponent: React.FC<ProductDatabaseProps> = ({
       .sort((a, b) => (a.description || '').localeCompare(b.description || ''));
   }, [catalogProducts, searchTerm, selectedProviderFilter]);
 
-  // Handler to open edit dialog (managed by parent page.tsx)
-  const handleEditClick = (product: ProductDetail) => {
-    // The onAddOrUpdateProduct prop in page.tsx will call setIsEditDetailDialogOpen(true)
-    // and setProductToEditDetail(product)
-    // This component just needs to signal the intent to edit, parent handles dialog.
-    // For adding, we'd signal to parent to open dialog with empty product.
-     if (product && product.barcode) { // Editing existing
-        onAddOrUpdateProduct(product); // This will be handled by parent to open dialog
-     }
+  // Handler to call the onAddOrUpdateProduct prop (which opens the dialog in parent)
+  const handleOpenEditDialogForProduct = (product: ProductDetail | null) => {
+    // If product is null, it signals adding a new product.
+    // Parent will handle opening the dialog with null or product.
+    onAddOrUpdateProduct(product || { barcode: '', description: '', provider: '', stock: 0, expirationDate: null });
   };
 
 
@@ -162,11 +149,10 @@ const ProductDatabaseComponent: React.FC<ProductDatabaseProps> = ({
          <div className="flex flex-wrap gap-2">
             <Select
               onValueChange={(value) => {
-                // For "Agregar Producto", call onAddOrUpdateProduct with a signal for new product
-                if (value === "add") onAddOrUpdateProduct({barcode: '', description: '', provider: '', stock: 0, expirationDate: null}); 
+                if (value === "add") handleOpenEditDialogForProduct(null); // Signal to add new
                 else if (value === "clear") onClearCatalogRequest();
               }}
-              disabled={isProcessing || isLoadingCatalog}
+              disabled={isProcessingLocal || isLoadingCatalog}
               value="" 
             >
               <SelectTrigger className="w-full sm:w-auto md:w-[200px] h-10 bg-card">
@@ -189,12 +175,12 @@ const ProductDatabaseComponent: React.FC<ProductDatabaseProps> = ({
                  placeholder="Buscar por código, descripción..."
                  onChange={(e) => debouncedSetSearchTerm(e.target.value)}
                  className="h-10 flex-grow min-w-[150px] bg-card"
-                 disabled={isProcessing || isLoadingCatalog}
+                 disabled={isProcessingLocal || isLoadingCatalog}
              />
              <Select
                  value={selectedProviderFilter}
                  onValueChange={setSelectedProviderFilter}
-                 disabled={providerOptions.length <= 1 || isProcessing || isLoadingCatalog}
+                 disabled={providerOptions.length <= 1 || isProcessingLocal || isLoadingCatalog}
              >
                  <SelectTrigger className="w-full sm:w-auto md:w-[200px] h-10 bg-card">
                      <Filter className="mr-2 h-4 w-4" />
@@ -210,7 +196,7 @@ const ProductDatabaseComponent: React.FC<ProductDatabaseProps> = ({
              </Select>
             <Button
                 onClick={handleStartCountByProviderClick}
-                disabled={selectedProviderFilter === 'all' || isProcessing || isLoadingCatalog}
+                disabled={selectedProviderFilter === 'all' || isProcessingLocal || isLoadingCatalog}
                 variant="outline"
                 className="h-10 text-primary border-primary/50 hover:bg-primary/10"
                 title={`Iniciar conteo para ${selectedProviderFilter === 'all' ? 'un proveedor' : selectedProviderFilter}`}
@@ -232,29 +218,29 @@ const ProductDatabaseComponent: React.FC<ProductDatabaseProps> = ({
              value={googleSheetUrlOrId}
              onChange={handleGoogleSheetUrlOrIdChange}
              className="flex-grow h-10 bg-background"
-             disabled={isProcessing || isLoadingCatalog}
+             disabled={isProcessingLocal || isLoadingCatalog}
              aria-describedby="google-sheet-info"
              />
-             <Button variant="secondary" disabled={isProcessing || isLoadingCatalog || !googleSheetUrlOrId} onClick={handleLoadFromGoogleSheetClick}>
-                {isProcessing && processingStatus.includes("Google") ?
+             <Button variant="secondary" disabled={isProcessingLocal || isLoadingCatalog || !googleSheetUrlOrId} onClick={handleLoadFromGoogleSheetClick}>
+                {(isProcessingLocal || (isLoadingCatalog && processingStatus?.includes("Google"))) ?
                   <Loader2 className="mr-2 h-4 w-4 animate-spin" /> :
                   <Upload className="mr-2 h-4 w-4" />
                  }
-                 {isProcessing && processingStatus.includes("Google") ? 'Cargando...' : 'Cargar Datos'}
+                 {(isProcessingLocal || (isLoadingCatalog && processingStatus?.includes("Google"))) ? 'Cargando...' : 'Cargar Datos'}
              </Button>
          </div>
          <p id="google-sheet-info" className="text-xs text-muted-foreground mt-1">
-             La hoja debe tener permisos de 'cualquiera con el enlace puede ver'. Columnas: 1=Código, 2=Descripción, 3=Vencimiento(Opcional), 6=Stock, 10=Proveedor.
+            Columnas: 1=Código, 2=Descripción, 3=Vencimiento(Opcional), 6=Stock, 10=Proveedor. Asegúrese que la hoja tenga permisos de 'cualquiera con el enlace puede ver'.
          </p>
-         {isProcessing && processingStatus && (
+         {(isProcessingLocal || (isLoadingCatalog && processingStatus)) && ( // Show status if either local or parent indicates it for GS
              <div className="mt-4 space-y-1">
-                 <Progress value={uploadProgress} className="h-2 w-full" />
+                 {/* <Progress value={uploadProgress} className="h-2 w-full" /> // Progress might be complex to sync */}
                  <p className="text-sm text-muted-foreground text-center">
-                     {processingStatus || `Cargando... (${uploadProgress}%)`}
+                     {processingStatus || (isProcessingLocal ? "Procesando..." : `Cargando...`)}
                  </p>
              </div>
          )}
-         {isLoadingCatalog && !isProcessing && ( 
+         {isLoadingCatalog && !isProcessingLocal && !processingStatus && ( 
               <div className="flex justify-center items-center py-6">
                  <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
                  <span className="ml-2 text-muted-foreground">Cargando catálogo de productos...</span>
@@ -264,12 +250,14 @@ const ProductDatabaseComponent: React.FC<ProductDatabaseProps> = ({
 
        <ProductTable
            products={filteredProducts}
-           isLoading={isLoadingCatalog || isProcessing} 
-           onEdit={(product) => onAddOrUpdateProduct(product)} // Pass the product to signal edit mode
-           onDeleteRequest={(product) => { 
-             if (product && product.barcode) {
-                onDeleteProduct(product.barcode);
-             }
+           isLoading={isLoadingCatalog && !isProcessingLocal && !processingStatus} // Pass the catalog loading state
+           onEdit={(product) => handleOpenEditDialogForProduct(product)} 
+           onDeleteRequest={async (product) => { // onDeleteProduct is async in parent
+              if (product && product.barcode) {
+                setIsProcessingLocal(true);
+                await onDeleteProduct(product.barcode);
+                setIsProcessingLocal(false);
+              }
            }}
        />
     </div>
@@ -283,7 +271,7 @@ interface ProductTableProps {
   products: ProductDetail[];
   isLoading: boolean;
   onEdit: (product: ProductDetail) => void;
-  onDeleteRequest: (product: ProductDetail) => void;
+  onDeleteRequest: (product: ProductDetail) => Promise<void>; // Make it async if parent is
 }
 
 const ProductTable: React.FC<ProductTableProps> = React.memo(({
@@ -349,10 +337,10 @@ const ProductTable: React.FC<ProductTableProps> = React.memo(({
                   {isValidExp ? format(expirationDateObj!, 'dd/MM/yy', {locale: es}) : 'N/A'}
                 </TableCell>
                 <TableCell className="px-2 sm:px-4 py-3 text-center">
-                    <Button variant="ghost" size="icon" onClick={() => onEdit(product)} className="text-primary hover:text-primary/80 h-7 w-7" title="Editar Producto">
+                    <Button variant="ghost" size="icon" onClick={() => onEdit(product)} className="text-blue-600 hover:text-blue-700 h-7 w-7" title="Editar Producto">
                         <Edit className="h-4 w-4"/>
                     </Button>
-                    <Button variant="ghost" size="icon" onClick={() => onDeleteRequest(product)} className="text-destructive hover:text-destructive/80 h-7 w-7" title="Eliminar Producto">
+                    <Button variant="ghost" size="icon" onClick={() => onDeleteRequest(product)} className="text-red-600 hover:text-red-700 h-7 w-7" title="Eliminar Producto">
                         <Trash className="h-4 w-4"/>
                     </Button>
                 </TableCell>

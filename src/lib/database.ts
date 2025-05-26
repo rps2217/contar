@@ -1,13 +1,13 @@
+
 // src/lib/database.ts
-import type { ProductDetail, CountingHistoryEntry } from '@/types/product';
+import type { ProductDetail, CountingHistoryEntry } from '@/types/product'; // CountingHistoryEntry can be removed if not used
 import type { DBSchema, IDBPDatabase, StoreNames, IDBPTransaction, OpenDBCallbacks } from 'idb';
 
 const DB_NAME = 'StockCounterProDB';
-const DB_VERSION = 3; // Incremented version if schema changes
-const PRODUCT_STORE = 'products';
-const HISTORY_STORE = 'countingHistory'; // Keep for history if still used, or remove if not
+const DB_VERSION = 3; // Version remains, upgrade logic will handle new stores/indexes
+const PRODUCT_STORE = 'products'; // Reintroducing Product Store
+// const HISTORY_STORE = 'countingHistory'; // Keep if history functionality is still desired, otherwise remove
 
-// --- Database Initialization ---
 let dbInstance: IDBPDatabase<StockCounterDBSchema> | null = null;
 let openPromise: Promise<IDBPDatabase<StockCounterDBSchema>> | null = null;
 
@@ -17,11 +17,11 @@ interface StockCounterDBSchema extends DBSchema {
     value: ProductDetail;
     indexes: { 'by-barcode': string, 'by-provider': string, 'by-expirationDate'?: string };
   };
-  [HISTORY_STORE]: {
-    key: string; // id of the history entry
-    value: CountingHistoryEntry;
-    indexes: { 'by-timestamp': string }; // Example index
-  };
+  // [HISTORY_STORE]: { // Keep if history functionality is still desired
+  //   key: string; 
+  //   value: CountingHistoryEntry;
+  //   indexes: { 'by-timestamp': string };
+  // };
 }
 
 const dbCallbacks: OpenDBCallbacks<StockCounterDBSchema> = {
@@ -32,23 +32,26 @@ const dbCallbacks: OpenDBCallbacks<StockCounterDBSchema> = {
             const productStore = db.createObjectStore(PRODUCT_STORE, { keyPath: 'barcode' });
             productStore.createIndex('by-barcode', 'barcode', { unique: true });
             productStore.createIndex('by-provider', 'provider');
-            if (!productStore.indexNames.contains('by-expirationDate')) {
-                productStore.createIndex('by-expirationDate', 'expirationDate');
-            }
-            console.log(`Object store "${PRODUCT_STORE}" created.`);
+            productStore.createIndex('by-expirationDate', 'expirationDate'); // Ensure this index exists
+            console.log(`Object store "${PRODUCT_STORE}" created with expirationDate index.`);
         } else {
+            // Ensure existing product store has all necessary indexes
             const productStore = transaction.objectStore(PRODUCT_STORE);
+            if (!productStore.indexNames.contains('by-provider')) {
+                productStore.createIndex('by-provider', 'provider');
+                console.log(`Index "by-provider" created on store "${PRODUCT_STORE}".`);
+            }
             if (!productStore.indexNames.contains('by-expirationDate')) {
                 productStore.createIndex('by-expirationDate', 'expirationDate');
-                console.log(`Index "by-expirationDate" created on store "${PRODUCT_STORE}".`);
+                 console.log(`Index "by-expirationDate" created on store "${PRODUCT_STORE}".`);
             }
         }
         
-        if (!db.objectStoreNames.contains(HISTORY_STORE)) {
-            const historyStore = db.createObjectStore(HISTORY_STORE, { keyPath: 'id' });
-            historyStore.createIndex('by-timestamp', 'timestamp');
-            console.log(`Object store "${HISTORY_STORE}" created.`);
-        }
+        // if (!db.objectStoreNames.contains(HISTORY_STORE)) { // Keep if history is used
+        //     const historyStore = db.createObjectStore(HISTORY_STORE, { keyPath: 'id' });
+        //     historyStore.createIndex('by-timestamp', 'timestamp');
+        //     console.log(`Object store "${HISTORY_STORE}" created.`);
+        // }
     },
     blocked(currentVersion, blockedVersion, event) {
         console.error(`IndexedDB upgrade from version ${currentVersion} to ${blockedVersion} blocked. Please close other tabs using this app.`);
@@ -103,7 +106,6 @@ async function getDB(): Promise<IDBPDatabase<StockCounterDBSchema>> {
              db.addEventListener('error', (event) => { 
                 console.error('IndexedDB error:', (event.target as any)?.error);
              });
-            // openPromise = null; // Clear the promise after successful opening - This was causing issues, keep promise until resolved
             return db;
         }).catch(error => {
             console.error("Failed to open IndexedDB:", error);
@@ -113,8 +115,7 @@ async function getDB(): Promise<IDBPDatabase<StockCounterDBSchema>> {
         });
     }
     return openPromise.finally(() => {
-        // If the global openPromise was this one, clear it after it resolves or rejects
-        if (openPromise && openPromise === (openPromise as any)) { // Ensure it's the same promise instance
+        if (openPromise && openPromise === (openPromise as any)) { 
             openPromise = null;
         }
     });
@@ -133,7 +134,7 @@ async function performWriteTransaction<S extends StoreNames<StockCounterDBSchema
         return result;
     } catch (error) {
         console.error(`Error performing write operation on store ${storeName}:`, error);
-        if (tx && !tx.done && (tx as any).abort) { // Check if abort exists
+        if (tx && !tx.done && (tx as any).abort) {
             try { await (tx as any).abort(); } catch (abortError) { console.error('Error aborting transaction:', abortError); }
         }
         throw error;
@@ -200,42 +201,14 @@ export async function clearProductDatabase(): Promise<void> {
    await performWriteTransaction(PRODUCT_STORE, store => store.clear());
 }
 
-
-// --- Counting History Operations (IndexedDB) ---
-export async function saveCountingHistory(historyEntry: CountingHistoryEntry): Promise<void> {
-    const entryToSave: CountingHistoryEntry = {
-        ...historyEntry,
-        products: historyEntry.products.map(p => ({
-            ...p,
-            stock: p.stock ?? 0,
-            count: p.count ?? 0,
-            expirationDate: (p.expirationDate && typeof p.expirationDate === 'string' && p.expirationDate.trim() !== "") ? p.expirationDate.trim() : null,
-        }))
-    };
-    await performWriteTransaction(HISTORY_STORE, store => store.put(entryToSave));
-}
-
-export async function getCountingHistory(): Promise<CountingHistoryEntry[]> {
-    try {
-        const db = await getDB();
-        return await db.getAllFromIndex(HISTORY_STORE, 'by-timestamp');
-    } catch (error) {
-        console.error("Error getting counting history from IndexedDB:", error);
-        throw error;
-    }
-}
-
-export async function clearCountingHistory(): Promise<void> {
-    await performWriteTransaction(HISTORY_STORE, store => store.clear());
-}
-
+// Counting History functions removed as per previous request to eliminate the history module
+// If history is to be reintroduced locally, these would be added back:
+// saveCountingHistory, getCountingHistory, clearCountingHistory
 
 export type { StockCounterDBSchema };
 
-// Optional: Preload the database on app start
-// export function preloadDatabase() {
+// export function preloadDatabase() { // Example, if needed
 //   if (typeof window !== 'undefined') {
 //     getDB().catch(err => console.error("Failed to preload IndexedDB on app start:", err));
 //   }
 // }
-// Call preloadDatabase() in a top-level client component or _app.tsx if using Pages Router

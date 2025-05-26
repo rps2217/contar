@@ -6,11 +6,6 @@ import type { ProductDetail } from '@/types/product';
 import { useToast } from "@/hooks/use-toast";
 import { cn, debounce } from "@/lib/utils";
 import {
-  addProductsToDB as addProductsToIndexedDBCache,
-  clearProductDatabase as clearProductDatabaseInIndexedDBCache,
-} from '@/lib/database'; 
-
-import {
     Filter, Play, Loader2, Save, Trash, Upload, Edit, AlertTriangle
 } from "lucide-react";
 import Papa from 'papaparse';
@@ -34,165 +29,34 @@ import { GOOGLE_SHEET_URL_LOCALSTORAGE_KEY } from '@/lib/constants';
 import { useLocalStorage } from '@/hooks/use-local-storage';
 
 
-const CHUNK_SIZE = 200; 
 const SEARCH_DEBOUNCE_MS = 300;
-
-
-const extractSpreadsheetIdAndGid = (input: string): { spreadsheetId: string | null; gid: string } => {
-    if (!input) return { spreadsheetId: null, gid: '0' };
-    let spreadsheetId: string | null = null;
-    const sheetUrlPattern = /\/spreadsheets\/d\/([a-zA-Z0-9-_]+)(?:\/.*)?/;
-    const idMatch = input.match(sheetUrlPattern);
-    if (idMatch && idMatch[1]) {
-        spreadsheetId = idMatch[1];
-    } else if (!input.includes('/') && input.length > 30 && input.length < 50 && /^[a-zA-Z0-9-_]+$/.test(input)) {
-        spreadsheetId = input;
-    }
-
-    const gidMatch = input.match(/[#&]gid=([0-9]+)/);
-    const gid = gidMatch ? gidMatch[1] : '0'; 
-
-    return { spreadsheetId, gid };
-};
-
-async function fetchGoogleSheetData(sheetUrlOrId: string): Promise<ProductDetail[]> {
-    const { spreadsheetId, gid } = extractSpreadsheetIdAndGid(sheetUrlOrId);
-
-    if (!spreadsheetId) {
-        console.warn("Could not extract spreadsheet ID from input:", sheetUrlOrId);
-        throw new Error("URL/ID de Hoja de Google inválido. Asegúrate de que la URL sea válida o que el ID sea correcto.");
-    }
-
-    const csvExportUrl = `https://docs.google.com/spreadsheets/d/${spreadsheetId}/export?format=csv&gid=${gid}`;
-    console.log(`Fetching Google Sheet data from: ${csvExportUrl}`);
-
-    let response: Response;
-    try {
-        const urlWithCacheBust = `${csvExportUrl}&_=${new Date().getTime()}`;
-        response = await fetch(urlWithCacheBust, { cache: "no-store" });
-    } catch (error: any) {
-        let userMessage = "Error de red al obtener la hoja. Verifique su conexión y la URL/ID.";
-        if (error.message?.includes('Failed to fetch')) {
-            userMessage += " Posible problema de CORS, conectividad, o la URL/ID es incorrecta. Asegúrese de que la hoja tenga permisos de 'cualquiera con el enlace puede ver'.";
-        } else {
-            userMessage += ` Detalle: ${error.message}`;
-        }
-        throw new Error(userMessage);
-    }
-
-    if (!response.ok) {
-        const status = response.status;
-        const statusText = response.statusText;
-        let errorBody = "No se pudo leer el cuerpo del error.";
-        try { errorBody = await response.text(); } catch { /* no-op */ }
-
-        let userMessage = `Error ${status} al obtener datos. `;
-        if (status === 400) userMessage += "Solicitud incorrecta. Verifique la URL y el GID de la hoja.";
-        else if (status === 403) userMessage += "Acceso denegado. Asegúrese de que la hoja de cálculo tenga permisos de 'cualquiera con el enlace puede ver'.";
-        else if (status === 404) userMessage += "Hoja no encontrada. Verifique la URL/ID y el ID de la hoja (gid).";
-        else userMessage += ` ${statusText}. Revise los permisos de la hoja o la URL/ID. Detalle del servidor: ${errorBody.substring(0, 200)}`;
-        
-        console.error("Google Sheet fetch error details:", { status, statusText, errorBody, csvExportUrl });
-        throw new Error(userMessage);
-    }
-
-    const csvText = await response.text();
-
-    return new Promise((resolve, reject) => {
-        if (typeof Papa === 'undefined') {
-            reject(new Error("La librería PapaParse (Papa) no está cargada."));
-            return;
-        }
-
-        Papa.parse<string[]>(csvText, {
-            skipEmptyLines: true,
-            complete: (results) => {
-                if (results.errors.length > 0) {
-                     results.errors.forEach(err => console.warn(`PapaParse error: ${err.message} on row ${err.row}. Code: ${err.code}. Type: ${err.type}`));
-                }
-                const csvData = results.data;
-                const products: ProductDetail[] = [];
-
-                if (csvData.length <= 1) { 
-                    resolve(products);
-                    return;
-                }
-                
-                const BARCODE_COLUMN_INDEX = 0;
-                const DESCRIPTION_COLUMN_INDEX = 1;
-                const EXPIRATION_DATE_COLUMN_INDEX = 2; 
-                const STOCK_COLUMN_INDEX = 5;
-                const PROVIDER_COLUMN_INDEX = 9;
-
-                for (let i = 1; i < csvData.length; i++) { 
-                    const values = csvData[i];
-                    if (!values || values.length === 0 || values.every(v => !v?.trim())) continue; 
-
-                    const barcode = values[BARCODE_COLUMN_INDEX]?.trim();
-                    if (!barcode) { 
-                        console.warn(`Fila ${i + 1} omitida: Código de barras vacío o faltante.`);
-                        continue;
-                    }
-
-                    const description = values[DESCRIPTION_COLUMN_INDEX]?.trim();
-                    const stockStr = values[STOCK_COLUMN_INDEX]?.trim();
-                    const provider = values[PROVIDER_COLUMN_INDEX]?.trim();
-                    const expirationDateStr = values[EXPIRATION_DATE_COLUMN_INDEX]?.trim();
-
-                    const finalDescription = description || `Producto ${barcode}`; 
-                    const finalProvider = provider || "Desconocido"; 
-
-                    let stock = 0;
-                    if (stockStr) {
-                        const parsedStock = parseInt(stockStr, 10);
-                        if (!isNaN(parsedStock) && parsedStock >= 0) {
-                            stock = parsedStock;
-                        } else {
-                             console.warn(`Valor de stock inválido "${stockStr}" para código ${barcode} en fila ${i + 1}. Usando 0.`);
-                        }
-                    }
-                    
-                    const expirationDate: string | null = expirationDateStr ? expirationDateStr : null;
-
-                    products.push({ barcode, description: finalDescription, provider: finalProvider, stock, expirationDate });
-                }
-                resolve(products);
-            },
-            error: (error: any) => {
-                reject(new Error(`Error al analizar el archivo CSV: ${error.message}`));
-            }
-        });
-    });
-}
-
 
  interface ProductDatabaseProps {
   userId: string | null; 
-  isLoadingCatalog?: boolean; // Renamed from isTransitionPending for clarity
+  isLoadingCatalog?: boolean; 
   catalogProducts: ProductDetail[]; 
   onStartCountByProvider: (products: ProductDetail[]) => void;
-  onAddOrUpdateProduct: (product: ProductDetail) => Promise<void>;
-  onDeleteProduct: (barcode: string) => Promise<void>;
-  onLoadFromGoogleSheet: (sheetUrlOrId: string) => Promise<void>; // Prop for parent to handle full GS load
-  onClearCatalogRequest: () => void;
+  onAddOrUpdateProduct: (product: ProductDetail) => Promise<void>; // Callback for add/update
+  onDeleteProduct: (barcode: string) => Promise<void>; // Callback for delete
+  onLoadFromGoogleSheet: (sheetUrlOrId: string) => Promise<void>; // Callback for GS load
+  onClearCatalogRequest: () => void; // Callback to request catalog clear
  }
 
 
 const ProductDatabaseComponent: React.FC<ProductDatabaseProps> = ({
     userId,
-    isLoadingCatalog, // Use the new prop name
+    isLoadingCatalog,
     catalogProducts,
     onStartCountByProvider,
-    onAddOrUpdateProduct,
-    onDeleteProduct,
-    onLoadFromGoogleSheet,
-    onClearCatalogRequest,
+    onAddOrUpdateProduct, // Use this prop for submitting new/edited product
+    onDeleteProduct, // Use this prop for deleting
+    onLoadFromGoogleSheet, // Use this prop to trigger GS load in parent
+    onClearCatalogRequest, // Use this prop to trigger clear in parent
  }) => {
   const { toast } = useToast();
-  // Local loading state for operations within this component (e.g., Google Sheet fetch before passing to parent)
   const [isProcessing, setIsProcessing] = useState(false); 
-  const [uploadProgress, setUploadProgress] = useState(0);
-  const [processingStatus, setProcessingStatus] = useState<string>("");
+  const [uploadProgress, setUploadProgress] = useState(0); // Still useful for GS load feedback
+  const [processingStatus, setProcessingStatus] = useState<string>(""); // For GS load status
   const [googleSheetUrlOrId, setGoogleSheetUrlOrId] = useLocalStorage<string>(
       GOOGLE_SHEET_URL_LOCALSTORAGE_KEY, ""
   );
@@ -210,33 +74,27 @@ const ProductDatabaseComponent: React.FC<ProductDatabaseProps> = ({
     setGoogleSheetUrlOrId(e.target.value);
   };
 
+  // This local handler now calls the prop passed from page.tsx
   const handleLoadFromGoogleSheetClick = async () => {
     if (!googleSheetUrlOrId) {
       requestAnimationFrame(() => toast({ variant: "destructive", title: "URL/ID Requerido" }));
       return;
     }
     if (!isMountedRef.current) return;
-    setIsProcessing(true);
-    setUploadProgress(0); // Reset progress
-    setProcessingStatus("Obteniendo datos de Google Sheet...");
+    // We set local processing state for UI feedback within this component
+    setIsProcessing(true); 
+    setProcessingStatus("Cargando datos desde Google Sheet...");
     try {
-      // The actual fetching and parsing logic remains here or could be moved to a utility
-      // But the saving to Firestore and IndexedDB cache is now handled by the parent via onLoadFromGoogleSheet
-      const productsFromSheet = await fetchGoogleSheetData(googleSheetUrlOrId);
-      if (isMountedRef.current) {
-          setProcessingStatus(`Procesando ${productsFromSheet.length} productos...`);
-          await onLoadFromGoogleSheet(googleSheetUrlOrId); // Pass URL/ID, parent handles fetch and save
-          // The parent (page.tsx) will call synchronizeAndLoadCatalog after saving to Firestore
-          setUploadProgress(100);
-          // Success toast should be handled by parent after successful Firestore operation and catalog refresh
-      }
+      await onLoadFromGoogleSheet(googleSheetUrlOrId); // Call the parent's handler
+      // Success toast and state refresh will be handled by the parent
+      if (isMountedRef.current) setProcessingStatus("Carga completada y procesada.");
     } catch (error: any) {
       if (isMountedRef.current) {
         setProcessingStatus("Error durante la carga.");
-        requestAnimationFrame(() => toast({ variant: "destructive", title: "Error de Carga", description: error.message || "Error desconocido."}));
+        requestAnimationFrame(() => toast({ variant: "destructive", title: "Error de Carga GS", description: error.message || "Error desconocido."}));
       }
     } finally {
-      if (isMountedRef.current) { setIsProcessing(false); setProcessingStatus(""); }
+      if (isMountedRef.current) setIsProcessing(false);
     }
   };
 
@@ -255,19 +113,12 @@ const ProductDatabaseComponent: React.FC<ProductDatabaseProps> = ({
       return;
     }
     if (!isMountedRef.current) return;
-    setIsProcessing(true);
-    setProcessingStatus(`Buscando productos de ${selectedProviderFilter}...`);
-    try {
-      const providerProducts = catalogProducts.filter(product => (product.provider || "Desconocido") === selectedProviderFilter);
-      if (providerProducts.length === 0) {
-        if (isMountedRef.current) requestAnimationFrame(() => toast({ title: "Vacío", description: `No hay productos para ${selectedProviderFilter}.` }));
-      } else {
-        onStartCountByProvider(providerProducts); 
-      }
-    } catch (error) {
-      if (isMountedRef.current) requestAnimationFrame(() => toast({ variant: "destructive", title: "Error" }));
-    } finally {
-      if (isMountedRef.current) { setIsProcessing(false); setProcessingStatus(""); }
+    // Potentially set a local processing state if needed, but parent handles the main logic
+    const providerProducts = catalogProducts.filter(product => (product.provider || "Desconocido") === selectedProviderFilter);
+    if (providerProducts.length === 0) {
+      if (isMountedRef.current) requestAnimationFrame(() => toast({ title: "Vacío", description: `No hay productos para ${selectedProviderFilter}.` }));
+    } else {
+      onStartCountByProvider(providerProducts); 
     }
   }, [selectedProviderFilter, catalogProducts, onStartCountByProvider, toast]);
 
@@ -281,7 +132,7 @@ const ProductDatabaseComponent: React.FC<ProductDatabaseProps> = ({
     const lowerSearchTerm = searchTerm.toLowerCase();
     return catalogProducts
       .filter(product => {
-        if (!product || !product.barcode) return false; // Filter out invalid products
+        if (!product || !product.barcode) return false; 
         const matchesSearch = !lowerSearchTerm ||
                               (product.description || '').toLowerCase().includes(lowerSearchTerm) ||
                               product.barcode.includes(lowerSearchTerm) ||
@@ -293,14 +144,26 @@ const ProductDatabaseComponent: React.FC<ProductDatabaseProps> = ({
       .sort((a, b) => (a.description || '').localeCompare(b.description || ''));
   }, [catalogProducts, searchTerm, selectedProviderFilter]);
 
+  // Handler to open edit dialog (managed by parent page.tsx)
+  const handleEditClick = (product: ProductDetail) => {
+    // The onAddOrUpdateProduct prop in page.tsx will call setIsEditDetailDialogOpen(true)
+    // and setProductToEditDetail(product)
+    // This component just needs to signal the intent to edit, parent handles dialog.
+    // For adding, we'd signal to parent to open dialog with empty product.
+     if (product && product.barcode) { // Editing existing
+        onAddOrUpdateProduct(product); // This will be handled by parent to open dialog
+     }
+  };
+
+
   return (
     <div className="p-4 md:p-6 space-y-6">
        <div className="flex flex-col md:flex-row md:justify-between md:items-start gap-4">
          <div className="flex flex-wrap gap-2">
             <Select
               onValueChange={(value) => {
-                if (value === "add") onAddOrUpdateProduct({barcode: '', description: '', provider: '', stock: 0, expirationDate: null}); // Pass empty product to parent
-                else if (value === "export") { /* Export logic to be added if needed */ }
+                // For "Agregar Producto", call onAddOrUpdateProduct with a signal for new product
+                if (value === "add") onAddOrUpdateProduct({barcode: '', description: '', provider: '', stock: 0, expirationDate: null}); 
                 else if (value === "clear") onClearCatalogRequest();
               }}
               disabled={isProcessing || isLoadingCatalog}
@@ -313,7 +176,6 @@ const ProductDatabaseComponent: React.FC<ProductDatabaseProps> = ({
                 <SelectGroup>
                   <SelectLabel>Acciones Catálogo</SelectLabel>
                   <SelectItem value="add">Agregar Producto</SelectItem>
-                  {/* <SelectItem value="export" disabled={catalogProducts.length === 0}>Exportar Catálogo (CSV)</SelectItem> */}
                   <SelectItem value="clear" disabled={catalogProducts.length === 0} className="text-destructive focus:text-destructive">Borrar Catálogo</SelectItem>
                 </SelectGroup>
               </SelectContent>
@@ -384,7 +246,7 @@ const ProductDatabaseComponent: React.FC<ProductDatabaseProps> = ({
          <p id="google-sheet-info" className="text-xs text-muted-foreground mt-1">
              La hoja debe tener permisos de 'cualquiera con el enlace puede ver'. Columnas: 1=Código, 2=Descripción, 3=Vencimiento(Opcional), 6=Stock, 10=Proveedor.
          </p>
-         {isProcessing && uploadProgress > 0 && (
+         {isProcessing && processingStatus && (
              <div className="mt-4 space-y-1">
                  <Progress value={uploadProgress} className="h-2 w-full" />
                  <p className="text-sm text-muted-foreground text-center">
@@ -392,7 +254,7 @@ const ProductDatabaseComponent: React.FC<ProductDatabaseProps> = ({
                  </p>
              </div>
          )}
-         {isLoadingCatalog && !isProcessing && ( // Use isLoadingCatalog for catalog specific loading
+         {isLoadingCatalog && !isProcessing && ( 
               <div className="flex justify-center items-center py-6">
                  <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
                  <span className="ml-2 text-muted-foreground">Cargando catálogo de productos...</span>
@@ -402,15 +264,14 @@ const ProductDatabaseComponent: React.FC<ProductDatabaseProps> = ({
 
        <ProductTable
            products={filteredProducts}
-           isLoading={isLoadingCatalog || isProcessing} // Pass combined loading state
-           onEdit={(product) => onAddOrUpdateProduct(product)} // Edit now goes through parent
-           onDeleteRequest={(product) => { // Delete now goes through parent
+           isLoading={isLoadingCatalog || isProcessing} 
+           onEdit={(product) => onAddOrUpdateProduct(product)} // Pass the product to signal edit mode
+           onDeleteRequest={(product) => { 
              if (product && product.barcode) {
                 onDeleteProduct(product.barcode);
              }
            }}
        />
-       {/* EditProductDialog is now managed by page.tsx */}
     </div>
   );
 };

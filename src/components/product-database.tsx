@@ -27,35 +27,42 @@ import { format, parseISO, isValid as isValidDate } from 'date-fns';
 import { es } from 'date-fns/locale';
 import { GOOGLE_SHEET_URL_LOCALSTORAGE_KEY } from '@/lib/constants';
 import { useLocalStorage } from '@/hooks/use-local-storage';
+import {
+    getAllProductsFromDB as getAllProductsFromIndexedDB, // Renamed for clarity
+    // addOrUpdateProductToDB as addOrUpdateProductToIndexedDB, // No longer directly called from here
+    // deleteProductFromDB as deleteProductFromIndexedDB, // No longer directly called from here
+    // addProductsToDB as addProductsToIndexedDB, // No longer directly called from here
+    // clearProductDatabase as clearProductDatabaseInIndexedDB // No longer directly called from here
+} from '@/lib/database';
+
 
 const SEARCH_DEBOUNCE_MS = 300;
 
  interface ProductDatabaseProps {
-  userId: string | null;
-  catalogProducts: ProductDetail[]; 
-  isLoadingCatalog?: boolean; 
-  onAddOrUpdateProduct: (product: ProductDetail) => Promise<void>; 
-  onDeleteProduct: (barcode: string) => Promise<void>; 
-  onLoadFromGoogleSheet: (sheetUrlOrId: string) => Promise<void>; 
-  onClearCatalogRequest: () => void; 
+  userId: string | null; // Keep for future use if needed for user-specific catalogs
+  isLoadingExternal?: boolean; // For loading state controlled by parent (e.g., Firestore sync)
+  onProductUpdate: () => Promise<void>; // Callback to inform parent that catalog changed
+  onLoadFromGoogleSheet: (sheetUrlOrId: string) => Promise<void>; // Callback to parent
   onStartCountByProvider: (products: ProductDetail[]) => void;
   processingStatus?: string;
+  setProcessingStatus: (status: string) => void; // Allow parent to manage this
+  onEditProductRequest: (product: ProductDetail | null) => void; // To open edit dialog in parent
  }
 
 
 const ProductDatabaseComponent: React.FC<ProductDatabaseProps> = ({
     userId,
-    catalogProducts,
-    isLoadingCatalog = false,
-    onAddOrUpdateProduct,
-    onDeleteProduct,
+    isLoadingExternal = false,
+    onProductUpdate,
     onLoadFromGoogleSheet,
-    onClearCatalogRequest,
     onStartCountByProvider,
     processingStatus,
+    setProcessingStatus,
+    onEditProductRequest
  }) => {
   const { toast } = useToast();
-  const [isProcessingLocal, setIsProcessingLocal] = useState(false);
+  const [isLoadingLocal, setIsLoadingLocal] = useState(false); // For local operations like initial load
+  const [localCatalogProducts, setLocalCatalogProducts] = useState<ProductDetail[]>([]);
   const [googleSheetUrlOrId, setGoogleSheetUrlOrId] = useLocalStorage<string>(
       GOOGLE_SHEET_URL_LOCALSTORAGE_KEY, ""
   );
@@ -68,6 +75,30 @@ const ProductDatabaseComponent: React.FC<ProductDatabaseProps> = ({
     return () => { isMountedRef.current = false; };
   }, []);
 
+  const loadLocalCatalog = useCallback(async () => {
+    if (!isMountedRef.current) return;
+    setIsLoadingLocal(true);
+    setProcessingStatus("Cargando catálogo desde base local...");
+    try {
+      const products = await getAllProductsFromIndexedDB();
+      if (isMountedRef.current) {
+        setLocalCatalogProducts(products);
+        setProcessingStatus("Catálogo local cargado.");
+      }
+    } catch (error: any) {
+      if (isMountedRef.current) {
+        toast({ variant: "destructive", title: "Error Catálogo Local", description: error.message });
+        setProcessingStatus(`Error: ${error.message}`);
+      }
+    } finally {
+      if (isMountedRef.current) setIsLoadingLocal(false);
+    }
+  }, [toast, setProcessingStatus]);
+
+  useEffect(() => {
+    loadLocalCatalog();
+  }, [loadLocalCatalog]);
+
 
   const handleGoogleSheetUrlOrIdChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     setGoogleSheetUrlOrId(e.target.value);
@@ -78,27 +109,18 @@ const ProductDatabaseComponent: React.FC<ProductDatabaseProps> = ({
       requestAnimationFrame(() => toast({ variant: "destructive", title: "URL/ID Requerido" }));
       return;
     }
-    if (!isMountedRef.current) return;
-    setIsProcessingLocal(true); 
-    try {
-      await onLoadFromGoogleSheet(googleSheetUrlOrId); 
-    } catch (error: any) {
-      if (isMountedRef.current) {
-         requestAnimationFrame(() => toast({ variant: "destructive", title: "Error de Carga GS", description: error.message || "Error desconocido."}));
-      }
-    } finally {
-      if (isMountedRef.current) setIsProcessingLocal(false);
-    }
+    await onLoadFromGoogleSheet(googleSheetUrlOrId);
+    // Parent will call onProductUpdate which should trigger a reload if necessary
   };
 
   const providerOptions = useMemo(() => {
-        const providers = new Set(catalogProducts.map(p => p.provider || "Desconocido").filter(Boolean));
+        const providers = new Set(localCatalogProducts.map(p => p.provider || "Desconocido").filter(Boolean));
         const sortedProviders = ["all", ...Array.from(providers)].sort((a, b) => {
             if (a === 'all') return -1; if (b === 'all') return 1;
             return (a as string).localeCompare(b as string);
         });
         return sortedProviders;
-    }, [catalogProducts]);
+    }, [localCatalogProducts]);
 
   const handleStartCountByProviderClick = useCallback(async () => {
     if (selectedProviderFilter === 'all') {
@@ -106,13 +128,13 @@ const ProductDatabaseComponent: React.FC<ProductDatabaseProps> = ({
       return;
     }
     if (!isMountedRef.current) return;
-    const providerProducts = catalogProducts.filter(product => (product.provider || "Desconocido") === selectedProviderFilter);
+    const providerProducts = localCatalogProducts.filter(product => (product.provider || "Desconocido") === selectedProviderFilter);
     if (providerProducts.length === 0) {
       if (isMountedRef.current) requestAnimationFrame(() => toast({ title: "Vacío", description: `No hay productos para ${selectedProviderFilter}.` }));
     } else {
       onStartCountByProvider(providerProducts); 
     }
-  }, [selectedProviderFilter, catalogProducts, onStartCountByProvider, toast]);
+  }, [selectedProviderFilter, localCatalogProducts, onStartCountByProvider, toast]);
 
   const debouncedSetSearchTerm = useMemo(
     () => debounce((term: string) => { if(isMountedRef.current) setSearchTerm(term) }, SEARCH_DEBOUNCE_MS),
@@ -122,7 +144,7 @@ const ProductDatabaseComponent: React.FC<ProductDatabaseProps> = ({
 
   const filteredProducts = useMemo(() => {
     const lowerSearchTerm = searchTerm.toLowerCase();
-    return catalogProducts
+    return localCatalogProducts
       .filter(product => {
         if (!product || !product.barcode) return false; 
         const matchesSearch = !lowerSearchTerm ||
@@ -134,36 +156,24 @@ const ProductDatabaseComponent: React.FC<ProductDatabaseProps> = ({
         return matchesSearch && matchesProvider;
       })
       .sort((a, b) => (a.description || '').localeCompare(b.description || ''));
-  }, [catalogProducts, searchTerm, selectedProviderFilter]);
+  }, [localCatalogProducts, searchTerm, selectedProviderFilter]);
 
-  const handleOpenEditDialogForProduct = (product: ProductDetail | null) => {
-    onAddOrUpdateProduct(product || { barcode: '', description: '', provider: '', stock: 0, expirationDate: null });
-  };
+  //isLoading combines external and local loading states
+  const isLoading = isLoadingExternal || isLoadingLocal;
 
 
   return (
     <div className="p-4 md:p-6 space-y-6">
        <div className="flex flex-col md:flex-row md:justify-between md:items-start gap-4">
          <div className="flex flex-wrap gap-2">
-            <Select
-              onValueChange={(value) => {
-                if (value === "add") handleOpenEditDialogForProduct(null);
-                else if (value === "clear") onClearCatalogRequest();
-              }}
-              disabled={isProcessingLocal || isLoadingCatalog}
-              value="" 
+            <Button
+                onClick={() => onEditProductRequest(null)} // Pass null for new product
+                disabled={isLoading}
+                variant="outline"
+                className="h-10 text-primary border-primary/50 hover:bg-primary/10"
             >
-              <SelectTrigger className="w-full sm:w-auto md:w-[200px] h-10 bg-card">
-                <SelectValue placeholder="Acciones Catálogo" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectGroup>
-                  <SelectLabel>Acciones Catálogo</SelectLabel>
-                  <SelectItem value="add">Agregar Producto</SelectItem>
-                  <SelectItem value="clear" disabled={catalogProducts.length === 0} className="text-destructive focus:text-destructive">Borrar Catálogo</SelectItem>
-                </SelectGroup>
-              </SelectContent>
-            </Select>
+                <Plus className="mr-2 h-4 w-4" /> Agregar Producto
+            </Button>
          </div>
           <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 w-full md:w-auto">
             <Label htmlFor="search-product-db" className="sr-only">Buscar Producto</Label>
@@ -173,12 +183,12 @@ const ProductDatabaseComponent: React.FC<ProductDatabaseProps> = ({
                  placeholder="Buscar por código, descripción..."
                  onChange={(e) => debouncedSetSearchTerm(e.target.value)}
                  className="h-10 flex-grow min-w-[150px] bg-card"
-                 disabled={isProcessingLocal || isLoadingCatalog}
+                 disabled={isLoading}
              />
              <Select
                  value={selectedProviderFilter}
                  onValueChange={setSelectedProviderFilter}
-                 disabled={providerOptions.length <= 1 || isProcessingLocal || isLoadingCatalog}
+                 disabled={providerOptions.length <= 1 || isLoading}
              >
                  <SelectTrigger className="w-full sm:w-auto md:w-[200px] h-10 bg-card">
                      <Filter className="mr-2 h-4 w-4" />
@@ -194,7 +204,7 @@ const ProductDatabaseComponent: React.FC<ProductDatabaseProps> = ({
              </Select>
             <Button
                 onClick={handleStartCountByProviderClick}
-                disabled={selectedProviderFilter === 'all' || isProcessingLocal || isLoadingCatalog}
+                disabled={selectedProviderFilter === 'all' || isLoading}
                 variant="outline"
                 className="h-10 text-primary border-primary/50 hover:bg-primary/10"
                 title={`Iniciar conteo para ${selectedProviderFilter === 'all' ? 'un proveedor' : selectedProviderFilter}`}
@@ -206,7 +216,7 @@ const ProductDatabaseComponent: React.FC<ProductDatabaseProps> = ({
 
        <div className="space-y-2 p-4 border rounded-lg bg-card shadow-sm">
            <Label htmlFor="google-sheet-url" className="block font-medium mb-1">
-              Cargar/Actualizar Catálogo desde Google Sheet:
+              Cargar/Actualizar Catálogo desde Google Sheet (a base local):
            </Label>
           <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
              <Input
@@ -216,28 +226,28 @@ const ProductDatabaseComponent: React.FC<ProductDatabaseProps> = ({
              value={googleSheetUrlOrId}
              onChange={handleGoogleSheetUrlOrIdChange}
              className="flex-grow h-10 bg-background"
-             disabled={isProcessingLocal || isLoadingCatalog}
+             disabled={isLoading}
              aria-describedby="google-sheet-info"
              />
-             <Button variant="secondary" disabled={isProcessingLocal || isLoadingCatalog || !googleSheetUrlOrId} onClick={handleLoadFromGoogleSheetClick}>
-                {(isProcessingLocal || (isLoadingCatalog && processingStatus?.includes("Google"))) ?
+             <Button variant="secondary" disabled={isLoading || !googleSheetUrlOrId} onClick={handleLoadFromGoogleSheetClick}>
+                {isLoading && processingStatus?.includes("Google") ?
                   <Loader2 className="mr-2 h-4 w-4 animate-spin" /> :
                   <Upload className="mr-2 h-4 w-4" />
                  }
-                 {(isProcessingLocal || (isLoadingCatalog && processingStatus?.includes("Google"))) ? 'Cargando...' : 'Cargar Datos'}
+                 {isLoading && processingStatus?.includes("Google") ? 'Cargando...' : 'Cargar Datos'}
              </Button>
          </div>
          <p id="google-sheet-info" className="text-xs text-muted-foreground mt-1">
             Columnas: 1=Código, 2=Descripción, 3=Vencimiento(Opcional), 6=Stock, 10=Proveedor. Asegúrese que la hoja tenga permisos de 'cualquiera con el enlace puede ver'.
          </p>
-         {(isProcessingLocal || (isLoadingCatalog && processingStatus)) && (
+         {processingStatus && (
              <div className="mt-4 space-y-1">
                  <p className="text-sm text-muted-foreground text-center">
-                     {processingStatus || (isProcessingLocal ? "Procesando..." : `Cargando...`)}
+                     {processingStatus}
                  </p>
              </div>
          )}
-         {isLoadingCatalog && !isProcessingLocal && !processingStatus && ( 
+         {isLoading && !processingStatus && ( 
               <div className="flex justify-center items-center py-6">
                  <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
                  <span className="ml-2 text-muted-foreground">Cargando catálogo de productos...</span>
@@ -247,15 +257,9 @@ const ProductDatabaseComponent: React.FC<ProductDatabaseProps> = ({
 
        <ProductTable
            products={filteredProducts}
-           isLoading={isLoadingCatalog && !isProcessingLocal && !processingStatus}
-           onEdit={(product) => handleOpenEditDialogForProduct(product)} 
-           onDeleteRequest={async (product) => {
-              if (product && product.barcode) {
-                setIsProcessingLocal(true);
-                await onDeleteProduct(product.barcode);
-                setIsProcessingLocal(false);
-              }
-           }}
+           isLoading={isLoading && !processingStatus} // Show loading if global load or local load without specific status
+           onEdit={(product) => onEditProductRequest(product)} 
+           // Delete action will be handled by parent via onProductUpdate after successful deletion
        />
     </div>
   );
@@ -268,19 +272,18 @@ interface ProductTableProps {
   products: ProductDetail[];
   isLoading: boolean;
   onEdit: (product: ProductDetail) => void;
-  onDeleteRequest: (product: ProductDetail) => Promise<void>;
+  // onDeleteRequest is removed, parent will handle deletion and then trigger onProductUpdate
 }
 
 const ProductTable: React.FC<ProductTableProps> = React.memo(({
   products,
   isLoading,
   onEdit,
-  onDeleteRequest,
 }) => {
   return (
     <ScrollArea className="h-[calc(100vh-500px)] md:h-[calc(100vh-450px)] border rounded-lg shadow-sm bg-card dark:bg-card">
       <Table>
-        <TableCaption>Productos en el catálogo. Click en la descripción para editar.</TableCaption>
+        <TableCaption>Productos en el catálogo local. Click en la descripción para editar.</TableCaption>
         <TableHeader className="sticky top-0 bg-muted/50 z-10 shadow-sm">
           <TableRow>
             <TableHead className="w-[20%] sm:w-[15%] px-2 sm:px-4 py-3 text-left text-xs font-medium uppercase tracking-wider">Código Barras</TableHead>
@@ -337,9 +340,8 @@ const ProductTable: React.FC<ProductTableProps> = React.memo(({
                     <Button variant="ghost" size="icon" onClick={() => onEdit(product)} className="text-blue-600 hover:text-blue-700 h-7 w-7" title="Editar Producto">
                         <Edit className="h-4 w-4"/>
                     </Button>
-                    <Button variant="ghost" size="icon" onClick={() => onDeleteRequest(product)} className="text-red-600 hover:text-red-700 h-7 w-7" title="Eliminar Producto">
-                        <Trash className="h-4 w-4"/>
-                    </Button>
+                    {/* El botón de eliminar aquí ya no es necesario si la edición abre un diálogo con opción de eliminar */}
+                    {/* O si la eliminación se maneja completamente a través del diálogo de edición. */}
                 </TableCell>
               </TableRow>
             )})
@@ -350,3 +352,4 @@ const ProductTable: React.FC<ProductTableProps> = React.memo(({
   );
 });
 ProductTable.displayName = 'ProductTable';
+    

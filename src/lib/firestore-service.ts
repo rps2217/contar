@@ -16,7 +16,7 @@ import {
   onSnapshot,
   type Unsubscribe,
 } from 'firebase/firestore';
-import type { DisplayProduct, ProductDetail, Warehouse, CountingHistoryEntry } from '@/types/product';
+import type { DisplayProduct, ProductDetail, Warehouse } from '@/types/product';
 import { toast } from "@/hooks/use-toast";
 import { dateToTimestamp, timestampToDate } from '@/lib/firebase-helpers';
 
@@ -57,17 +57,16 @@ export const setCountingListItem = async (userId: string, warehouseId: string, p
     throw new Error("Product data is missing (null or undefined) for setCountingListItem.");
   }
   if (!product.barcode || product.barcode.trim() === "") {
-    const productDetails = product 
-        ? `Barcode: '${product.barcode}', Description: ${product.description}, Count: ${product.count}` 
+    const productDetails = product
+        ? `Barcode: '${product.barcode}', Description: ${product.description}, Count: ${product.count}`
         : 'El objeto producto es null/undefined.';
-    console.error(`[setCountingListItem] Firestore: El código de barras del producto está ausente o vacío. Detalles: ${productDetails}`);
+    console.error(`[setCountingListItem] El código de barras del producto está ausente o vacío. Detalles: ${productDetails}`);
     throw new Error(`El código de barras del producto está ausente o vacío para setCountingListItem. Detalles: ${productDetails}`);
   }
 
   try {
     const itemDocRef = doc(getCountingListCollectionRef(userId, warehouseId), product.barcode.trim());
     
-    // Prepare data for Firestore, ensuring correct types and server timestamp
     const dataToSet: Omit<DisplayProduct, 'barcode' | 'warehouseId' | 'lastUpdated'> & { firestoreLastUpdated: any } = {
       description: product.description || `Producto ${product.barcode.trim()}`,
       provider: product.provider || "Desconocido",
@@ -76,7 +75,7 @@ export const setCountingListItem = async (userId: string, warehouseId: string, p
       expirationDate: (product.expirationDate && typeof product.expirationDate === 'string' && product.expirationDate.trim() !== "")
                        ? product.expirationDate.trim()
                        : null,
-      firestoreLastUpdated: serverTimestamp(), // Use server timestamp for reliable ordering
+      firestoreLastUpdated: serverTimestamp(),
     };
 
     await setDoc(itemDocRef, dataToSet, { merge: true });
@@ -177,7 +176,6 @@ export const subscribeToCountingList = (
           count: data.count ?? 0,
           lastUpdated: firestoreTimestamp ? firestoreTimestamp.toDate().toISOString() : (data.lastUpdated || new Date(0).toISOString()),
           expirationDate: (data.expirationDate && typeof data.expirationDate === 'string' && data.expirationDate.trim() !== "") ? data.expirationDate.trim() : null,
-          // firestoreLastUpdated is mainly for ordering in Firestore, not usually displayed directly
         });
       });
       callback(products);
@@ -192,7 +190,6 @@ export const subscribeToCountingList = (
         }));
       }
       if (onErrorCallback) onErrorCallback(error);
-      // Do not call callback([]) here if we want to preserve local data on error
     }
   );
 };
@@ -250,7 +247,7 @@ export const addOrUpdateWarehouseInFirestore = async (userId: string, warehouse:
   }
   try {
     const warehouseDocRef = doc(getWarehousesCollectionRef(userId), warehouse.id.trim());
-    await setDoc(warehouseDocRef, {name: warehouse.name.trim(), id: warehouse.id.trim()}, { merge: true });
+    await setDoc(warehouseDocRef, {name: warehouse.name.trim().toUpperCase(), id: warehouse.id.trim()}, { merge: true });
   } catch (error: any) {
     console.error(`Error adding/updating warehouse ${warehouse.id} for user ${userId} in Firestore:`, error);
     if (typeof window !== 'undefined') requestAnimationFrame(() => toast({ variant: "destructive", title: "Error DB (Almacenes)", description: `No se pudo guardar el almacén: ${error.message}` }));
@@ -280,219 +277,14 @@ export const deleteWarehouseFromFirestore = async (userId: string, warehouseId: 
 };
 
 // --- Product Catalog Operations (Firestore) ---
-const getProductCatalogCollectionRef = (userId: string) => {
-  ensureDbInitialized();
-  if (!db) throw new Error("Firestore (db) is not initialized for getProductCatalogCollectionRef.");
-  if (!userId || userId.trim() === "") {
-    throw new Error(`User ID is missing or empty for getProductCatalogCollectionRef. Received: '${userId}'`);
-  }
-  return collection(db, `users/${userId}/productCatalog`);
-};
-
-export const addOrUpdateProductInCatalog = async (userId: string, product: ProductDetail): Promise<void> => {
-  ensureDbInitialized();
-  if (!db) throw new Error("Firestore (db) is not initialized for addOrUpdateProductInCatalog.");
-  if (!userId || userId.trim() === "") throw new Error(`User ID is missing or empty. Received: '${userId}'`);
-  if (!product || !product.barcode || product.barcode.trim() === "") {
-    throw new Error("Product data (barcode) is missing or empty for addOrUpdateProductInCatalog.");
-  }
-  try {
-    const productDocRef = doc(getProductCatalogCollectionRef(userId), product.barcode.trim());
-    const dataToSave: ProductDetail = {
-      barcode: product.barcode.trim(),
-      description: product.description?.trim() || `Producto ${product.barcode.trim()}`,
-      provider: product.provider?.trim() || "Desconocido",
-      stock: (typeof product.stock === 'number' && !isNaN(product.stock)) ? product.stock : 0,
-      expirationDate: (product.expirationDate && typeof product.expirationDate === 'string' && product.expirationDate.trim() !== "")
-                       ? product.expirationDate.trim()
-                       : null,
-    };
-    await setDoc(productDocRef, dataToSave, { merge: true });
-  } catch (error: any) {
-    console.error(`Error adding/updating product ${product.barcode} in catalog for user ${userId} in Firestore:`, error);
-    if (typeof window !== 'undefined') requestAnimationFrame(() => toast({ variant: "destructive", title: "Error Catálogo (Nube)", description: `No se pudo guardar el producto en el catálogo: ${error.message}` }));
-    throw error;
-  }
-};
-
-export const getProductFromCatalog = async (userId: string, barcode: string): Promise<ProductDetail | undefined> => {
-  ensureDbInitialized();
-  if (!db) throw new Error("Firestore (db) is not initialized for getProductFromCatalog.");
-  if (!userId || userId.trim() === "") throw new Error(`User ID is missing or empty. Received: '${userId}'`);
-  if (!barcode || barcode.trim() === "") throw new Error(`Barcode is missing or empty. Received: '${barcode}'`);
-  try {
-    const productDocRef = doc(getProductCatalogCollectionRef(userId), barcode.trim());
-    const docSnap = await getDoc(productDocRef);
-    return docSnap.exists() ? (docSnap.data() as ProductDetail) : undefined;
-  } catch (error: any) {
-    console.error(`Error getting product ${barcode} from catalog for user ${userId} from Firestore:`, error);
-    throw error;
-  }
-};
-
-export const getAllProductsFromCatalog = async (userId: string): Promise<ProductDetail[]> => {
-  ensureDbInitialized();
-  if (!db) throw new Error("Firestore (db) is not initialized for getAllProductsFromCatalog.");
-  if (!userId || userId.trim() === "") throw new Error(`User ID is missing or empty. Received: '${userId}'`);
-  try {
-    const q = query(getProductCatalogCollectionRef(userId), orderBy('description'));
-    const querySnapshot = await getDocs(q);
-    const products: ProductDetail[] = [];
-    querySnapshot.forEach((docSnap) => products.push(docSnap.data() as ProductDetail));
-    return products;
-  } catch (error: any) {
-    console.error(`Error getting all products from catalog for user ${userId} from Firestore:`, error);
-    throw error;
-  }
-};
-
-export const deleteProductFromCatalog = async (userId: string, barcode: string): Promise<void> => {
-  ensureDbInitialized();
-  if (!db) throw new Error("Firestore (db) is not initialized for deleteProductFromCatalog.");
-  if (!userId || userId.trim() === "") throw new Error(`User ID is missing or empty. Received: '${userId}'`);
-  if (!barcode || barcode.trim() === "") throw new Error(`Barcode is missing or empty. Received: '${barcode}'`);
-  try {
-    const productDocRef = doc(getProductCatalogCollectionRef(userId), barcode.trim());
-    await deleteDoc(productDocRef);
-  } catch (error: any) {
-    console.error(`Error deleting product ${barcode} from catalog for user ${userId} in Firestore:`, error);
-    if (typeof window !== 'undefined') requestAnimationFrame(() => toast({ variant: "destructive", title: "Error Catálogo (Nube)", description: `No se pudo eliminar el producto del catálogo: ${error.message}` }));
-    throw error;
-  }
-};
-
-export const addProductsToCatalog = async (userId: string, products: ProductDetail[]): Promise<void> => {
-  ensureDbInitialized();
-  if (!db) throw new Error("Firestore (db) is not initialized for addProductsToCatalog.");
-  if (!userId || userId.trim() === "") throw new Error(`User ID is missing or empty. Received: '${userId}'`);
-  if (!products || products.length === 0) return;
-
-  try {
-    const batch = writeBatch(db);
-    const catalogRef = getProductCatalogCollectionRef(userId);
-    products.forEach((product) => {
-      if (product && product.barcode && product.barcode.trim() !== "") {
-        const productDocRef = doc(catalogRef, product.barcode.trim());
-        const dataToSave: ProductDetail = {
-          barcode: product.barcode.trim(),
-          description: product.description?.trim() || `Producto ${product.barcode.trim()}`,
-          provider: product.provider?.trim() || "Desconocido",
-          stock: (typeof product.stock === 'number' && !isNaN(product.stock)) ? product.stock : 0,
-          expirationDate: (product.expirationDate && typeof product.expirationDate === 'string' && product.expirationDate.trim() !== "")
-                           ? product.expirationDate.trim()
-                           : null,
-        };
-        batch.set(productDocRef, dataToSave, { merge: true });
-      }
-    });
-    await batch.commit();
-  } catch (error: any) {
-    console.error(`Error adding products to catalog for user ${userId} in Firestore:`, error);
-    if (typeof window !== 'undefined') requestAnimationFrame(() => toast({ variant: "destructive", title: "Error Catálogo (Nube)", description: `No se pudieron agregar los productos al catálogo: ${error.message}` }));
-    throw error;
-  }
-};
-
-export const clearProductCatalogInFirestore = async (userId: string): Promise<void> => {
-  ensureDbInitialized();
-  if (!db) throw new Error("Firestore (db) is not initialized for clearProductCatalogInFirestore.");
-  if (!userId || userId.trim() === "") throw new Error(`User ID is missing or empty. Received: '${userId}'`);
-
-  try {
-    const catalogRef = getProductCatalogCollectionRef(userId);
-    const querySnapshot = await getDocs(catalogRef);
-    if (querySnapshot.empty) return;
-    const batch = writeBatch(db);
-    querySnapshot.forEach((docSnapshot) => batch.delete(docSnapshot.ref));
-    await batch.commit();
-  } catch (error: any) {
-    console.error(`Error clearing product catalog for user ${userId} in Firestore:`, error);
-    if (typeof window !== 'undefined') requestAnimationFrame(() => toast({ variant: "destructive", title: "Error Catálogo (Nube)", description: `No se pudo borrar el catálogo de productos: ${error.message}` }));
-    throw error;
-  }
-};
-
+// Functions related to productCatalog in Firestore are removed as per request
+// to manage product catalog via IndexedDB primarily.
+// The functions like getProductFromCatalog, getAllProductsFromCatalog, etc.,
+// that were previously here for Firestore are now removed.
 
 // --- Counting History Operations (Firestore) ---
-const getCountingHistoryCollectionRef = (userId: string) => {
-  ensureDbInitialized();
-  if (!db) throw new Error("Firestore (db) is not initialized for getCountingHistoryCollectionRef.");
-  if (!userId || userId.trim() === "") {
-    throw new Error(`User ID is missing or empty for getCountingHistoryCollectionRef. Received: '${userId}'`);
-  }
-  return collection(db, `users/${userId}/countingHistory`);
-};
-
-export const saveCountingHistoryToFirestore = async (userId: string, historyEntry: Omit<CountingHistoryEntry, 'id' | 'userId'>): Promise<void> => {
-  ensureDbInitialized();
-  if (!db) throw new Error("Firestore (db) is not initialized for saveCountingHistoryToFirestore.");
-  if (!userId || userId.trim() === "") throw new Error(`User ID is missing or empty. Received: '${userId}'`);
-
-  try {
-    const historyCollectionRef = getCountingHistoryCollectionRef(userId);
-    const newHistoryDocRef = doc(historyCollectionRef); // Firestore generates ID
-
-    const entryToSave: CountingHistoryEntry = {
-      ...historyEntry,
-      id: newHistoryDocRef.id,
-      userId: userId,
-      timestamp: historyEntry.timestamp || new Date().toISOString(), // Ensure timestamp
-      firestoreTimestamp: serverTimestamp() as Timestamp, // For ordering
-    };
-    await setDoc(newHistoryDocRef, entryToSave);
-  } catch (error: any) {
-    console.error(`Error saving counting history for user ${userId} to Firestore:`, error);
-    if (typeof window !== 'undefined') requestAnimationFrame(() => toast({ variant: "destructive", title: "Error Historial (Nube)", description: `No se pudo guardar el historial: ${error.message}` }));
-    throw error;
-  }
-};
-
-export const getCountingHistoryFromFirestore = async (userId: string): Promise<CountingHistoryEntry[]> => {
-  ensureDbInitialized();
-  if (!db) throw new Error("Firestore (db) is not initialized for getCountingHistoryFromFirestore.");
-  if (!userId || userId.trim() === "") throw new Error(`User ID is missing or empty. Received: '${userId}'`);
-  try {
-    const q = query(getCountingHistoryCollectionRef(userId), orderBy('firestoreTimestamp', 'desc'));
-    const querySnapshot = await getDocs(q);
-    const history: CountingHistoryEntry[] = [];
-    querySnapshot.forEach((docSnap) => {
-        const data = docSnap.data() as any; // Cast to any to access firestoreTimestamp
-        // Convert Firestore Timestamps in products back to ISO strings if necessary
-        const products = (data.products as DisplayProduct[]).map(p => ({
-            ...p,
-            lastUpdated: p.lastUpdated ? (timestampToDate(p.lastUpdated)?.toISOString() ?? p.lastUpdated) : new Date(0).toISOString(),
-            // firestoreLastUpdated is part of product in DisplayProduct
-            firestoreLastUpdated: p.firestoreLastUpdated ? timestampToDate(p.firestoreLastUpdated) : undefined
-        }));
-
-        history.push({
-            ...data,
-            id: docSnap.id,
-            timestamp: data.firestoreTimestamp ? (data.firestoreTimestamp as Timestamp).toDate().toISOString() : data.timestamp,
-            products: products
-        } as CountingHistoryEntry);
-    });
-    return history;
-  } catch (error: any) {
-    console.error(`Error getting counting history for user ${userId} from Firestore:`, error);
-    throw error;
-  }
-};
-
-export const clearCountingHistoryInFirestore = async (userId: string): Promise<void> => {
-  ensureDbInitialized();
-  if (!db) throw new Error("Firestore (db) is not initialized for clearCountingHistoryInFirestore.");
-  if (!userId || userId.trim() === "") throw new Error(`User ID is missing or empty. Received: '${userId}'`);
-  try {
-    const historyCollectionRef = getCountingHistoryCollectionRef(userId);
-    const querySnapshot = await getDocs(historyCollectionRef);
-    if (querySnapshot.empty) return;
-    const batch = writeBatch(db);
-    querySnapshot.forEach((docSnapshot) => batch.delete(docSnapshot.ref));
-    await batch.commit();
-  } catch (error: any) {
-    console.error(`Error clearing counting history for user ${userId} in Firestore:`, error);
-    if (typeof window !== 'undefined') requestAnimationFrame(() => toast({ variant: "destructive", title: "Error Historial (Nube)", description: `No se pudo borrar el historial: ${error.message}` }));
-    throw error;
-  }
-};
+// Functions related to countingHistory in Firestore are removed as per request
+// to simplify and because the UI for history was removed.
+// The functions like saveCountingHistoryToFirestore, getCountingHistoryFromFirestore, etc.,
+// that were previously here for Firestore are now removed.
+    

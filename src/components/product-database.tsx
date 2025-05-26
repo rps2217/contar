@@ -8,8 +8,8 @@ import { cn, debounce } from "@/lib/utils";
 import {
     Filter, Play, Loader2, Save, Trash, Upload, Edit, AlertTriangle
 } from "lucide-react";
-import Papa from 'papaparse'; // Using PapaParse for robust CSV parsing
-import * as React from "react"; // Import React
+
+import * as React from "react";
 import { useCallback, useEffect, useState, useMemo, useRef } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -26,11 +26,12 @@ import {
 import { format, parseISO, isValid as isValidDate } from 'date-fns';
 import { es } from 'date-fns/locale';
 import { GOOGLE_SHEET_URL_LOCALSTORAGE_KEY } from '@/lib/constants';
-import { useLocalStorage } from '@/hooks/use-local-storage'; // Import useLocalStorage
+import { useLocalStorage } from '@/hooks/use-local-storage';
 
 const SEARCH_DEBOUNCE_MS = 300;
 
  interface ProductDatabaseProps {
+  userId: string | null;
   catalogProducts: ProductDetail[]; 
   isLoadingCatalog?: boolean; 
   onAddOrUpdateProduct: (product: ProductDetail) => Promise<void>; 
@@ -38,11 +39,12 @@ const SEARCH_DEBOUNCE_MS = 300;
   onLoadFromGoogleSheet: (sheetUrlOrId: string) => Promise<void>; 
   onClearCatalogRequest: () => void; 
   onStartCountByProvider: (products: ProductDetail[]) => void;
-  processingStatus?: string; // For Google Sheet loading status
+  processingStatus?: string;
  }
 
 
 const ProductDatabaseComponent: React.FC<ProductDatabaseProps> = ({
+    userId,
     catalogProducts,
     isLoadingCatalog = false,
     onAddOrUpdateProduct,
@@ -53,8 +55,8 @@ const ProductDatabaseComponent: React.FC<ProductDatabaseProps> = ({
     processingStatus,
  }) => {
   const { toast } = useToast();
-  const [isProcessingLocal, setIsProcessingLocal] = useState(false); // Local processing for this component
-  const [googleSheetUrlOrId, setGoogleSheetUrlOrId] = useLocalStorage<string>( // Use the hook
+  const [isProcessingLocal, setIsProcessingLocal] = useState(false);
+  const [googleSheetUrlOrId, setGoogleSheetUrlOrId] = useLocalStorage<string>(
       GOOGLE_SHEET_URL_LOCALSTORAGE_KEY, ""
   );
   const [searchTerm, setSearchTerm] = useState("");
@@ -77,11 +79,10 @@ const ProductDatabaseComponent: React.FC<ProductDatabaseProps> = ({
       return;
     }
     if (!isMountedRef.current) return;
-    setIsProcessingLocal(true); // Use local processing state for this component's UI
+    setIsProcessingLocal(true); 
     try {
       await onLoadFromGoogleSheet(googleSheetUrlOrId); 
     } catch (error: any) {
-      // Error is likely handled by the parent, but we can reset local state
       if (isMountedRef.current) {
          requestAnimationFrame(() => toast({ variant: "destructive", title: "Error de Carga GS", description: error.message || "Error desconocido."}));
       }
@@ -121,7 +122,7 @@ const ProductDatabaseComponent: React.FC<ProductDatabaseProps> = ({
 
   const filteredProducts = useMemo(() => {
     const lowerSearchTerm = searchTerm.toLowerCase();
-    return catalogProducts // catalogProducts is now directly from props
+    return catalogProducts
       .filter(product => {
         if (!product || !product.barcode) return false; 
         const matchesSearch = !lowerSearchTerm ||
@@ -135,10 +136,7 @@ const ProductDatabaseComponent: React.FC<ProductDatabaseProps> = ({
       .sort((a, b) => (a.description || '').localeCompare(b.description || ''));
   }, [catalogProducts, searchTerm, selectedProviderFilter]);
 
-  // Handler to call the onAddOrUpdateProduct prop (which opens the dialog in parent)
   const handleOpenEditDialogForProduct = (product: ProductDetail | null) => {
-    // If product is null, it signals adding a new product.
-    // Parent will handle opening the dialog with null or product.
     onAddOrUpdateProduct(product || { barcode: '', description: '', provider: '', stock: 0, expirationDate: null });
   };
 
@@ -149,7 +147,7 @@ const ProductDatabaseComponent: React.FC<ProductDatabaseProps> = ({
          <div className="flex flex-wrap gap-2">
             <Select
               onValueChange={(value) => {
-                if (value === "add") handleOpenEditDialogForProduct(null); // Signal to add new
+                if (value === "add") handleOpenEditDialogForProduct(null);
                 else if (value === "clear") onClearCatalogRequest();
               }}
               disabled={isProcessingLocal || isLoadingCatalog}
@@ -232,9 +230,8 @@ const ProductDatabaseComponent: React.FC<ProductDatabaseProps> = ({
          <p id="google-sheet-info" className="text-xs text-muted-foreground mt-1">
             Columnas: 1=Código, 2=Descripción, 3=Vencimiento(Opcional), 6=Stock, 10=Proveedor. Asegúrese que la hoja tenga permisos de 'cualquiera con el enlace puede ver'.
          </p>
-         {(isProcessingLocal || (isLoadingCatalog && processingStatus)) && ( // Show status if either local or parent indicates it for GS
+         {(isProcessingLocal || (isLoadingCatalog && processingStatus)) && (
              <div className="mt-4 space-y-1">
-                 {/* <Progress value={uploadProgress} className="h-2 w-full" /> // Progress might be complex to sync */}
                  <p className="text-sm text-muted-foreground text-center">
                      {processingStatus || (isProcessingLocal ? "Procesando..." : `Cargando...`)}
                  </p>
@@ -250,9 +247,9 @@ const ProductDatabaseComponent: React.FC<ProductDatabaseProps> = ({
 
        <ProductTable
            products={filteredProducts}
-           isLoading={isLoadingCatalog && !isProcessingLocal && !processingStatus} // Pass the catalog loading state
+           isLoading={isLoadingCatalog && !isProcessingLocal && !processingStatus}
            onEdit={(product) => handleOpenEditDialogForProduct(product)} 
-           onDeleteRequest={async (product) => { // onDeleteProduct is async in parent
+           onDeleteRequest={async (product) => {
               if (product && product.barcode) {
                 setIsProcessingLocal(true);
                 await onDeleteProduct(product.barcode);
@@ -271,7 +268,7 @@ interface ProductTableProps {
   products: ProductDetail[];
   isLoading: boolean;
   onEdit: (product: ProductDetail) => void;
-  onDeleteRequest: (product: ProductDetail) => Promise<void>; // Make it async if parent is
+  onDeleteRequest: (product: ProductDetail) => Promise<void>;
 }
 
 const ProductTable: React.FC<ProductTableProps> = React.memo(({
@@ -353,4 +350,3 @@ const ProductTable: React.FC<ProductTableProps> = React.memo(({
   );
 });
 ProductTable.displayName = 'ProductTable';
-

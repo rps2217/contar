@@ -2,7 +2,7 @@
 // src/app/page.tsx
 "use client";
 
-import type { DisplayProduct, ProductDetail, Warehouse } from '@/types/product';
+import type { DisplayProduct, ProductDetail, Warehouse, ConsolidatedProductViewItem } from '@/types/product';
 import { useToast } from "@/hooks/use-toast";
 import { cn, getLocalStorageItem, setLocalStorageItem, debounce } from "@/lib/utils";
 import {
@@ -27,7 +27,7 @@ import {
   BookOpenText, Users2, ClipboardList, MoreVertical, Warehouse as WarehouseIconLucide,
   LockKeyhole, CheckCircle, PackageSearch, AlertTriangle, Menu as MenuIcon, User, ShieldAlert,
   Filter, Download, Edit, Library, X, Camera
-} from "lucide-react"; // Added Filter icon
+} from "lucide-react";
 import React, { useCallback, useEffect, useRef, useState, useMemo, useTransition } from "react";
 import { playBeep } from '@/lib/helpers';
 
@@ -39,9 +39,9 @@ import {
   deleteProductFromDB as deleteProductFromIndexedDB,
   clearProductDatabase,
   addProductsToDB as addProductsToIndexedDB,
-} from '@/lib/database';
+} from '@/lib/database'; // Using IndexedDB for product catalog
 
-// Firestore functions (Warehouses, CountingList, CountingHistory, ProductCatalog as MASTER)
+// Firestore functions (Warehouses, CountingList)
 import {
   subscribeToWarehouses,
   addOrUpdateWarehouseInFirestore,
@@ -62,7 +62,15 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { useIsMobile } from '@/hooks/use-mobile';
 import { useLocalStorage } from '@/hooks/use-local-storage';
-import Papa from 'papaparse';
+import { ConfirmationDialog } from '@/components/confirmation-dialog';
+import { EditProductDialog } from '@/components/edit-product-dialog';
+import { ModifyValueDialog } from '@/components/modify-value-dialog';
+import { WarehouseManagement } from '@/components/warehouse-management';
+import { ProductDatabase as ProductDatabaseComponent } from '@/components/product-database';
+import { CounterSection } from '@/components/counter-section';
+import { ConsolidatedView } from '@/components/consolidated-view';
+import { BarcodeEntry } from '@/components/barcode-entry';
+import { BarcodeScannerCamera } from '@/components/barcode-scanner-camera';
 
 // Firebase db instance for Firestore operations
 import { db } from '@/lib/firebase';
@@ -79,18 +87,8 @@ import {
     DEFAULT_WAREHOUSE_ID,
     DEFAULT_WAREHOUSE_NAME,
     LOCAL_STORAGE_COUNTING_LIST_KEY_PREFIX,
+    GOOGLE_SHEET_URL_LOCALSTORAGE_KEY,
   } from '@/lib/constants';
-
-import { ConfirmationDialog } from '@/components/confirmation-dialog';
-import { EditProductDialog } from '@/components/edit-product-dialog';
-import { ModifyValueDialog } from '@/components/modify-value-dialog';
-import { WarehouseManagement } from '@/components/warehouse-management';
-import { ProductDatabase as ProductDatabaseComponent } from '@/components/product-database';
-// import { CounterSection } from '@/components/counter-section'; // No longer used
-import { CountingListTable } from '@/components/counting-list-table';
-import { BarcodeEntry } from '@/components/barcode-entry';
-import { BarcodeScannerCamera } from '@/components/barcode-scanner-camera';
-import { ConsolidatedView } from '@/components/consolidated-view';
 
 
 const PREDEFINED_WAREHOUSES_LIST: Warehouse[] = [
@@ -185,11 +183,13 @@ async function fetchGoogleSheetData(sheetUrlOrId: string): Promise<ProductDetail
                     return;
                 }
                 
-                const BARCODE_COLUMN_INDEX = 0;
-                const DESCRIPTION_COLUMN_INDEX = 1;
-                const PROVIDER_COLUMN_INDEX = 2; 
-                const STOCK_COLUMN_INDEX = 3;
-                const EXPIRATION_DATE_COLUMN_INDEX = 4;
+                // Column indices based on user's last request
+                const BARCODE_COLUMN_INDEX = 0;        // Columna 1
+                const DESCRIPTION_COLUMN_INDEX = 1;    // Columna 2
+                const PROVIDER_COLUMN_INDEX = 9;       // Columna 10
+                const STOCK_COLUMN_INDEX = 5;          // Columna 6
+                const EXPIRATION_DATE_COLUMN_INDEX = 2; // Columna 3 (Asumido, puede necesitar ajuste)
+
 
                 for (let i = 1; i < csvData.length; i++) { 
                     const values = csvData[i];
@@ -220,7 +220,7 @@ async function fetchGoogleSheetData(sheetUrlOrId: string): Promise<ProductDetail
                         }
                     }
                     
-                    const expirationDate: string | null = expirationDateStr ? expirationDateStr : null;
+                    const expirationDate: string | null = (expirationDateStr && expirationDateStr.trim() !== "") ? expirationDateStr.trim() : null;
 
                     products.push({ barcode, description: finalDescription, provider: finalProvider, stock, expirationDate });
                 }
@@ -233,6 +233,7 @@ async function fetchGoogleSheetData(sheetUrlOrId: string): Promise<ProductDetail
         });
     });
 }
+
 
 // --- Main Component ---
 export default function Home() {
@@ -264,13 +265,13 @@ export default function Home() {
   const [processingStatus, setProcessingStatus] = useState<string>(""); 
 
   // --- Warehouse State (Firestore as primary, localStorage for current selection) ---
-  const [warehouses, setWarehouses] = useState<Warehouse[]>(() => PREDEFINED_WAREHOUSES_LIST); // Init with predefined
+  const [warehouses, setWarehouses] = useState<Warehouse[]>(() => PREDEFINED_WAREHOUSES_LIST);
   const [currentWarehouseId, setCurrentWarehouseId] = useLocalStorage<string>(
-      `${LOCAL_STORAGE_CURRENT_WAREHOUSE_ID_KEY_PREFIX}${LOGIN_USER}`, // Use LOGIN_USER for key consistency
+      `${LOCAL_STORAGE_CURRENT_WAREHOUSE_ID_KEY_PREFIX}${LOGIN_USER}`,
       DEFAULT_WAREHOUSE_ID
   );
   
-  // --- Product Catalog State (IndexedDB as primary, UI state reflects this) ---
+  // --- Product Catalog State (Firestore as MASTER, IndexedDB as CACHE, UI state reflects this) ---
   const [catalogProducts, setCatalogProducts] = useState<ProductDetail[]>([]); 
 
   // --- Counting List State (Firestore as MASTER, localStorage as CACHE for current user/warehouse) ---
@@ -300,9 +301,27 @@ export default function Home() {
   // Refs for initial data fetch flags
   const isInitialFetchDoneForUserWarehouses = useRef<Record<string, boolean>>({});
 
+  // --- Camera Scan Mode ---
+  const [isCameraScanMode, setIsCameraScanMode] = useState(false);
+  
+  const toggleCameraScanMode = useCallback(() => {
+    setIsCameraScanMode(prev => !prev);
+    if (!isCameraScanMode) { // If turning camera on
+        // Potentially reset search term when entering camera mode
+        setSearchTerm("");
+    }
+  }, [isCameraScanMode]);
+
+  const handleBarcodeScannedFromCamera = useCallback((scannedBarcode: string) => {
+    if (isMountedRef.current && activeSection === 'Contador Cámara') {
+      // Pass the scanned barcode to the existing add product logic
+      handleAddProduct(scannedBarcode);
+    }
+  }, [activeSection]); // Add handleAddProduct dependency later
+
 
   const focusBarcodeIfCounting = useCallback(() => {
-    if (isMountedRef.current && activeSection === 'Contador' && barcodeInputRef.current) {
+    if (isMountedRef.current && activeSection === 'Contador' && barcodeInputRef.current && !isCameraScanMode) { // Only focus if not in camera mode
         requestAnimationFrame(() => {
             if (isMountedRef.current && activeSection === 'Contador' && barcodeInputRef.current) {
                  if (document.activeElement !== barcodeInputRef.current) {
@@ -318,7 +337,7 @@ export default function Home() {
             }
         }, 100); 
     }
-  }, [activeSection]); 
+  }, [activeSection, isCameraScanMode]); 
 
   useEffect(() => {
     isMountedRef.current = true;
@@ -341,48 +360,79 @@ export default function Home() {
   }, [focusBarcodeIfCounting, setCurrentUserId]);
 
 
-  // Catalog Management (IndexedDB as primary, then update UI state)
+  // Catalog Management (Firestore as MASTER, IndexedDB as CACHE)
   const synchronizeAndLoadCatalog = useCallback(async () => {
     if (!isMountedRef.current) {
         console.warn("[SyncCatalog] Skipping: Component not mounted.");
         if(isMountedRef.current) setIsDbLoading(false);
         return;
     }
-    if (!currentUserId) { // User ID is 'rps' when logged in
-        console.warn("[SyncCatalog] Skipping: No currentUserId (expected 'rps').");
+    if (!currentUserId) { 
+        console.warn("[SyncCatalog] Skipping: No currentUserId.");
         if(isMountedRef.current) { setCatalogProducts([]); setIsDbLoading(false); }
         return;
     }
 
-    console.log(`[SyncCatalog] Starting catalog load from IndexedDB for user: ${currentUserId}`);
+    console.log(`[SyncCatalog] Starting catalog sync for user: ${currentUserId}`);
     if(isMountedRef.current) setIsDbLoading(true);
 
     try {
-        console.log("[SyncCatalog] Attempting to fetch from IndexedDB...");
-        const localProducts = await getAllProductsFromIndexedDB();
-        console.log(`[SyncCatalog] Fetched ${localProducts.length} products from IndexedDB.`);
-        
-        if (isMountedRef.current) {
-            const sortedLocalProducts = localProducts
-                .filter(p => p && p.barcode) // Ensure product and barcode exist
-                .sort((a, b) => (a.description || '').localeCompare(b.description || ''));
-            setCatalogProducts(sortedLocalProducts);
-            requestAnimationFrame(() => toast({ title: "Catálogo Cargado", description: "Catálogo cargado desde base de datos local."}));
+        if (db) { // Online: Fetch from Firestore, then update IndexedDB and state
+            console.log("[SyncCatalog] Online: Attempting to fetch from Firestore...");
+            const productsFromFirestore = await getAllProductsFromCatalog(currentUserId);
+            console.log(`[SyncCatalog] Fetched ${productsFromFirestore.length} products from Firestore.`);
+            
+            if (isMountedRef.current) {
+                const sortedFirestoreProducts = productsFromFirestore
+                    .filter(p => p && p.barcode)
+                    .sort((a, b) => (a.description || '').localeCompare(b.description || ''));
+                
+                setCatalogProducts(sortedFirestoreProducts);
+                
+                // Update IndexedDB cache
+                await clearProductDatabase(); // Clear local cache first
+                await addProductsToIndexedDB(sortedFirestoreProducts); // Populate with Firestore data
+                console.log("[SyncCatalog] IndexedDB cache updated from Firestore.");
+                requestAnimationFrame(() => toast({ title: "Catálogo Sincronizado", description: "Catálogo actualizado desde la nube."}));
+            }
+        } else { // Offline: Fetch from IndexedDB
+            console.log("[SyncCatalog] Offline: Attempting to fetch from IndexedDB...");
+            const localProducts = await getAllProductsFromIndexedDB();
+            console.log(`[SyncCatalog] Fetched ${localProducts.length} products from IndexedDB.`);
+            if (isMountedRef.current) {
+                const sortedLocalProducts = localProducts
+                    .filter(p => p && p.barcode)
+                    .sort((a, b) => (a.description || '').localeCompare(b.description || ''));
+                setCatalogProducts(sortedLocalProducts);
+                requestAnimationFrame(() => toast({ title: "Catálogo Cargado (Local)", description: "Mostrando catálogo desde base de datos local."}));
+            }
         }
-    } catch (indexedDbError: any) {
-        console.error("[SyncCatalog] Error fetching catalog from IndexedDB:", indexedDbError.message, indexedDbError.stack);
+    } catch (error: any) {
+        console.error("[SyncCatalog] Error during catalog synchronization:", error.message, error.stack);
         if (isMountedRef.current) {
-            requestAnimationFrame(() => toast({ variant: "destructive", title: "Error Catálogo Local", description: "No se pudo cargar el catálogo localmente."}));
-            setCatalogProducts([]);
+            // Fallback to IndexedDB if Firestore fails for any reason other than db being null
+            console.warn("[SyncCatalog] Firestore sync failed, falling back to IndexedDB.");
+            try {
+                const localProducts = await getAllProductsFromIndexedDB();
+                const sortedLocalProducts = localProducts
+                    .filter(p => p && p.barcode)
+                    .sort((a, b) => (a.description || '').localeCompare(b.description || ''));
+                setCatalogProducts(sortedLocalProducts);
+                requestAnimationFrame(() => toast({ variant: "default", title: "Catálogo Local", description: "No se pudo sincronizar, usando datos locales."}));
+            } catch (indexedDbError: any) {
+                console.error("[SyncCatalog] Error fetching catalog from IndexedDB after Firestore failure:", indexedDbError.message);
+                requestAnimationFrame(() => toast({ variant: "destructive", title: "Error Catálogo", description: "No se pudo cargar el catálogo."}));
+                setCatalogProducts([]);
+            }
         }
     } finally {
         if (isMountedRef.current) setIsDbLoading(false);
-        console.log("[SyncCatalog] Catalog load from IndexedDB finished.");
+        console.log("[SyncCatalog] Catalog synchronization finished.");
     }
   }, [toast, currentUserId]); 
 
   useEffect(() => {
-    if (isAuthenticated && currentUserId === LOGIN_USER) { // Ensure we load catalog for the logged-in user
+    if (isAuthenticated && currentUserId) { 
       synchronizeAndLoadCatalog();
     } else {
       setCatalogProducts([]); 
@@ -396,7 +446,7 @@ export default function Home() {
     if (!currentUserId || !db || !isAuthenticated) {
         console.warn("[Warehouses] Skipping Firestore subscription: No currentUserId, Firestore DB not initialized, or not authenticated.");
         if (isMountedRef.current) {
-            const localDefaultWarehouses = [...PREDEFINED_WAREHOUSES_LIST].filter((v,i,a)=>a.findIndex(t=>(t.id === v.id))===i);
+            const localDefaultWarehouses = PREDEFINED_WAREHOUSES_LIST.filter((v,i,a)=>a.findIndex(t=>(t.id === v.id))===i);
             setWarehouses(localDefaultWarehouses);
             
             const storedWarehouseIdKey = currentUserId ? `${LOCAL_STORAGE_CURRENT_WAREHOUSE_ID_KEY_PREFIX}${currentUserId}` : `${LOCAL_STORAGE_CURRENT_WAREHOUSE_ID_KEY_PREFIX}default_user`;
@@ -435,7 +485,6 @@ export default function Home() {
                         batch.set(warehouseDocRef, wh);
                     });
                     await batch.commit();
-                    // Listener will update list
                 } catch (err) {
                     console.error(`[Warehouses] Failed to add predefined warehouses for user ${currentUserId}:`, err);
                     if(isMountedRef.current) requestAnimationFrame(() => toast({ variant: "destructive", title: "Error DB", description: `No se pudieron agregar almacenes predefinidos.`}));
@@ -446,24 +495,27 @@ export default function Home() {
             }
         }
         
+        // Ensure "Almacén Principal" is always first if it exists
         if (finalWarehousesToSet.some(w => w.id === DEFAULT_WAREHOUSE_ID)) {
             finalWarehousesToSet = [
                 finalWarehousesToSet.find(w => w.id === DEFAULT_WAREHOUSE_ID)!,
                 ...finalWarehousesToSet.filter(w => w.id !== DEFAULT_WAREHOUSE_ID)
             ];
         } else if (finalWarehousesToSet.length === 0 && !PREDEFINED_WAREHOUSES_LIST.some(pw => pw.id === DEFAULT_WAREHOUSE_ID)) {
+            // If list is empty and default is not even in predefined (should not happen), add it.
              finalWarehousesToSet.unshift({id: DEFAULT_WAREHOUSE_ID, name: DEFAULT_WAREHOUSE_NAME});
-        }
-         else if (finalWarehousesToSet.length === 0 && isMountedRef.current && !db) { 
+        } else if (finalWarehousesToSet.length === 0 && isMountedRef.current && !db) { 
+            // Offline and no warehouses from Firestore, use predefined
             finalWarehousesToSet = [...PREDEFINED_WAREHOUSES_LIST];
             console.warn("[Warehouses] No warehouses from Firestore (or offline), using local predefined list for UI.");
         }
-        finalWarehousesToSet = finalWarehousesToSet.filter((v,i,a)=>a.findIndex(t=>(t.id === v.id))===i);
+
+        finalWarehousesToSet = finalWarehousesToSet.filter((v,i,a)=>a.findIndex(t=>(t.id === v.id))===i); // Remove duplicates
 
         if(isMountedRef.current) setWarehouses(finalWarehousesToSet);
 
         const storedWarehouseIdKey = `${LOCAL_STORAGE_CURRENT_WAREHOUSE_ID_KEY_PREFIX}${currentUserId}`;
-        const storedWarehouseId = getLocalStorageItem<string>(storedWarehouseIdKey, DEFAULT_WAREHOUSE_ID);
+        let storedWarehouseId = getLocalStorageItem<string>(storedWarehouseIdKey, DEFAULT_WAREHOUSE_ID);
         
         let currentSelectionIsValid = finalWarehousesToSet.some(w => w.id === storedWarehouseId);
 
@@ -471,9 +523,9 @@ export default function Home() {
             const mainExistsInFinalList = finalWarehousesToSet.find(w => w.id === DEFAULT_WAREHOUSE_ID);
             const newCurrentId = mainExistsInFinalList ? DEFAULT_WAREHOUSE_ID : (finalWarehousesToSet[0]?.id || DEFAULT_WAREHOUSE_ID);
             if(isMountedRef.current && currentWarehouseId !== newCurrentId) setCurrentWarehouseId(newCurrentId);
-            setLocalStorageItem(storedWarehouseIdKey, newCurrentId);
+            setLocalStorageItem(storedWarehouseIdKey, newCurrentId); // Persist the new valid selection
         } else {
-             if(isMountedRef.current && currentWarehouseId !== storedWarehouseId) setCurrentWarehouseId(storedWarehouseId);
+             if(isMountedRef.current && currentWarehouseId !== storedWarehouseId) setCurrentWarehouseId(storedWarehouseId); // Ensure state matches valid stored ID
         }
     }, (error) => { 
         console.error("[Warehouses] Firestore subscription error:", error);
@@ -499,7 +551,6 @@ export default function Home() {
   useEffect(() => {
     if (!currentUserId || !currentWarehouseId || !db || !isAuthenticated) {
         console.warn(`[CountingList] Skipping Firestore subscription: No currentUserId ('${currentUserId}'), currentWarehouseId ('${currentWarehouseId}'), Firestore DB not init, or not authenticated.`);
-        // Try to load from localStorage if we have a key
         const localKey = currentUserId && currentWarehouseId ? `${LOCAL_STORAGE_COUNTING_LIST_KEY_PREFIX}${currentWarehouseId}_${currentUserId}` : null;
         if (localKey && isMountedRef.current) {
             const localList = getLocalStorageItem<DisplayProduct[]>(localKey, []);
@@ -511,7 +562,7 @@ export default function Home() {
     }
 
     console.log(`[CountingList] Subscribing to counting list for user '${currentUserId}', warehouse '${currentWarehouseId}'.`);
-    if (isMountedRef.current) setIsSyncing(true);
+    if (isMountedRef.current) setIsSyncing(true); // Indicate sync start
     
     // Load from localStorage first for quick UI update
     const localKey = `${LOCAL_STORAGE_COUNTING_LIST_KEY_PREFIX}${currentWarehouseId}_${currentUserId}`;
@@ -519,6 +570,8 @@ export default function Home() {
         const localList = getLocalStorageItem<DisplayProduct[]>(localKey, []);
         if (localList.length > 0) {
              startTransition(() => { setCountingList(localList); });
+        } else {
+            startTransition(() => { setCountingList([]); }); // Ensure list is empty if nothing in localStorage
         }
     }
 
@@ -538,7 +591,6 @@ export default function Home() {
             console.warn(`[CountingList] Firestore subscription error for warehouse '${currentWarehouseId}'. Error: ${error.message}. Using localStorage as fallback (if available).`);
             setIsSyncing(false); 
             requestAnimationFrame(() => toast({ variant: "default", title: "Modo Offline (Conteo)", description: "No se pudo conectar. Usando datos locales si existen."}));
-            // LocalStorage version (if loaded) will remain
         }
       }
     );
@@ -548,7 +600,7 @@ export default function Home() {
         unsubscribeFirestore();
         if (isMountedRef.current && isSyncing) setIsSyncing(false);
     };
-  }, [currentWarehouseId, currentUserId, toast, isAuthenticated]); 
+  }, [currentWarehouseId, currentUserId, toast, isAuthenticated, isSyncing]); 
 
 
   const getWarehouseName = useCallback((warehouseId: string | null | undefined) => {
@@ -586,7 +638,7 @@ export default function Home() {
 
     if (!trimmedBarcode) {
       if(isMountedRef.current) requestAnimationFrame(() => { if (isMountedRef.current) toast({ variant: "default", title: "Código vacío" }); });
-      requestAnimationFrame(() => { if (isMountedRef.current) { setBarcode(""); focusBarcodeIfCounting(); }});
+      requestAnimationFrame(() => { if (isMountedRef.current && !scannedBarcode) { setBarcode(""); focusBarcodeIfCounting(); }});
       return;
     }
     if (!currentWarehouseId || !currentUserId) {
@@ -605,13 +657,13 @@ export default function Home() {
      }
 
     if(isMountedRef.current) setIsSyncing(true);
-    let productForFirestore: DisplayProduct | null = null;
+    let dataForFirestore: DisplayProduct | null = null; 
     const existingProductInList = countingList.find((p) => p.barcode === trimmedBarcode && p.warehouseId === currentWarehouseId);
 
     try {
         if (existingProductInList) {
             const newCount = (existingProductInList.count ?? 0) + 1;
-            productForFirestore = {
+            dataForFirestore = {
                 ...existingProductInList,
                 count: newCount,
                 lastUpdated: new Date().toISOString(),
@@ -619,7 +671,12 @@ export default function Home() {
             playBeep(880, 100);
         } else {
             console.log(`[handleAddProduct] Buscando código: "'${trimmedBarcode}'" (longitud: ${trimmedBarcode.length})`);
-            const catalogProd = await getProductFromIndexedDB(trimmedBarcode);
+            // Prioritize catalogProducts state (which should reflect Firestore master)
+            let catalogProd = catalogProducts.find(cp => cp.barcode === trimmedBarcode);
+            if (!catalogProd) { // Fallback to IndexedDB if not in memory (e.g., offline start)
+                console.log(`[handleAddProduct] No encontrado en catalogProducts, intentando IndexedDB...`);
+                catalogProd = await getProductFromIndexedDB(trimmedBarcode);
+            }
             console.log(`[handleAddProduct] Resultado para '${trimmedBarcode}':`, JSON.parse(JSON.stringify(catalogProd || {})));
 
             let baseProductData: Omit<DisplayProduct, 'barcode' | 'warehouseId' | 'count' | 'lastUpdated' | 'firestoreLastUpdated'>;
@@ -643,7 +700,7 @@ export default function Home() {
                     requestAnimationFrame(() => { if (isMountedRef.current) toast({ variant: "destructive", title: "Producto Desconocido", description: `Agregado temporalmente. Edita en 'Catálogo'.`}); });
                 }
             }
-            productForFirestore = {
+            dataForFirestore = {
                 ...baseProductData,
                 barcode: trimmedBarcode,
                 warehouseId: currentWarehouseId, 
@@ -652,21 +709,23 @@ export default function Home() {
             };
         }
 
-        if (productForFirestore && currentUserId && currentWarehouseId && db) {
-            await setCountingListItem(currentUserId, currentWarehouseId, productForFirestore);
+        if (dataForFirestore && currentUserId && currentWarehouseId && db) {
+             console.log("[handleAddProduct] Objeto a enviar a setCountingListItem:", JSON.parse(JSON.stringify(dataForFirestore)));
+             if (!dataForFirestore.barcode || dataForFirestore.barcode.trim() === "") {
+                console.error("[handleAddProduct] Intento de guardar producto sin código de barras válido:", dataForFirestore);
+                playBeep(220, 500);
+                requestAnimationFrame(() => { if (isMountedRef.current) toast({ variant: "destructive", title: "Error Interno", description: "Código de barras inválido al agregar."}); });
+                setIsSyncing(false);
+                return;
+            }
+            await setCountingListItem(currentUserId, currentWarehouseId, dataForFirestore);
         } else if (!db) {
             console.warn("[handleAddProduct] Firestore (db) no inicializado. Cambios no se guardarán en la nube.");
-            // For offline with no db, we would rely on local state and localStorage, but setCountingListItem expects db
-            // This part needs careful consideration for true offline-first with Firestore sync.
-            // For now, if !db, the change only happens in local React state and localStorage via onSnapshot callback.
-            if(isMountedRef.current) {
-                // Manually update local state and localStorage if db is not available
+            if(isMountedRef.current && dataForFirestore) {
                 startTransition(() => {
-                    const updatedList = productForFirestore 
-                        ? (existingProductInList 
-                            ? countingList.map(p => p.barcode === productForFirestore!.barcode && p.warehouseId === currentWarehouseId ? productForFirestore! : p) 
-                            : [...countingList, productForFirestore!]) 
-                        : countingList;
+                    const updatedList = existingProductInList 
+                        ? countingList.map(p => p.barcode === dataForFirestore!.barcode && p.warehouseId === currentWarehouseId ? dataForFirestore! : p) 
+                        : [...countingList, dataForFirestore!];
                     setCountingList(updatedList);
                     if (currentUserId && currentWarehouseId) {
                         setLocalStorageItem(`${LOCAL_STORAGE_COUNTING_LIST_KEY_PREFIX}${currentWarehouseId}_${currentUserId}`, updatedList);
@@ -675,9 +734,8 @@ export default function Home() {
                  requestAnimationFrame(() => toast({ title: "Guardado Localmente (Offline)", description: "El cambio se guardó localmente. Se sincronizará cuando haya conexión." }));
             }
         }
-        // UI update will be handled by onSnapshot when db is available, or by manual update above if not.
     } catch (error: any) {
-        playBeep(440, 300);
+        playBeep(220, 500);
         console.error("Error fetching or adding product:", error);
         if (isMountedRef.current) {
           requestAnimationFrame(() => {
@@ -693,12 +751,20 @@ export default function Home() {
     if (!scannedBarcode && isMountedRef.current) { 
         requestAnimationFrame(() => { if (isMountedRef.current) { setBarcode(""); focusBarcodeIfCounting(); }});
     } else if (scannedBarcode && isMountedRef.current) {
-        focusBarcodeIfCounting();
+        requestAnimationFrame(() => { focusBarcodeIfCounting(); });
     }
   }, [
     barcode, currentWarehouseId, currentUserId, lastScannedBarcode, toast, countingList, 
-    focusBarcodeIfCounting, activeSection, 
+    focusBarcodeIfCounting, activeSection, catalogProducts, // Added catalogProducts
   ]);
+  // Add handleAddProduct to handleBarcodeScannedFromCamera dependencies
+  const memoizedHandleAddProduct = useCallback(handleAddProduct, [handleAddProduct]);
+  useEffect(() => {
+    if (activeSection === 'Contador Cámara' && memoizedHandleAddProduct) {
+      // This effect is just to manage the dependency for handleBarcodeScannedFromCamera
+    }
+  }, [activeSection, memoizedHandleAddProduct]);
+
 
 
  const modifyProductValue = useCallback(async (barcodeToUpdate: string, type: 'count' | 'stock', change: number) => {
@@ -712,7 +778,13 @@ export default function Home() {
 
     const originalValue = type === 'count' ? productInList.count ?? 0 : productInList.stock ?? 0;
     const calculatedNewValue = Math.max(0, originalValue + change);
-    const needsConfirmation = type === 'count' && productInList.stock !== undefined && calculatedNewValue > productInList.stock && originalValue <= productInList.stock;
+    // const needsConfirmation = type === 'count' && productInList.stock !== undefined && calculatedNewValue > productInList.stock && originalValue <= productInList.stock;
+    const needsConfirmation = type === 'count' && 
+                          productInList.stock !== undefined && 
+                          productInList.stock !== 0 && // Only confirm if stock is not 0
+                          calculatedNewValue > productInList.stock && 
+                          originalValue <= productInList.stock;
+
 
     if (needsConfirmation && activeSection === 'Contador') {
         if(isMountedRef.current){
@@ -728,48 +800,46 @@ export default function Home() {
     if(isMountedRef.current) setIsSyncing(true);
     try {
         if (type === 'count') {
+             const updatedProductData: Partial<DisplayProduct> = {
+                count: calculatedNewValue,
+                lastUpdated: new Date().toISOString(),
+            };
             if (db) {
-                const updatedProductData: Partial<DisplayProduct> = {
-                    count: calculatedNewValue,
-                    lastUpdated: new Date().toISOString(),
-                };
                 await setCountingListItem(currentUserId, currentWarehouseId, { ...productInList, ...updatedProductData });
             } else {
-                // Offline handling: Update local state and localStorage
                 startTransition(() => {
                     const updatedList = countingList.map(p => 
                         p.barcode === barcodeToUpdate && p.warehouseId === currentWarehouseId 
-                        ? { ...p, count: calculatedNewValue, lastUpdated: new Date().toISOString() } 
+                        ? { ...p, ...updatedProductData } 
                         : p
                     );
                     setCountingList(updatedList);
-                    if (currentUserId && currentWarehouseId) {
-                       setLocalStorageItem(`${LOCAL_STORAGE_COUNTING_LIST_KEY_PREFIX}${currentWarehouseId}_${currentUserId}`, updatedList);
-                    }
+                    setLocalStorageItem(`${LOCAL_STORAGE_COUNTING_LIST_KEY_PREFIX}${currentWarehouseId}_${currentUserId}`, updatedList);
                 });
                 requestAnimationFrame(() => toast({ title: "Guardado Localmente (Offline)"}));
             }
-            if (showDiscrepancyToastIfNeeded(productInList, calculatedNewValue)) {}
+            if (activeSection === 'Contador') { // Only show discrepancy toast if not in main counter section
+                showDiscrepancyToastIfNeeded(productInList, calculatedNewValue);
+            }
         } else if (type === 'stock') { 
             // Update IndexedDB cache for stock
             const productFromCatalog = await getProductFromIndexedDB(barcodeToUpdate);
             if (productFromCatalog) {
                 const updatedMasterProduct: ProductDetail = { ...productFromCatalog, stock: calculatedNewValue };
                 await addOrUpdateProductToIndexedDB(updatedMasterProduct); // Update IndexedDB
-                await synchronizeAndLoadCatalog(); // Refresh catalogProducts state (from IndexedDB)
+                await synchronizeAndLoadCatalog(); // Refresh catalogProducts state (from Firestore master, then updates IndexedDB)
             } else {
                 console.warn(`[modifyProductValue] Producto ${barcodeToUpdate} no encontrado en catálogo local (IndexedDB) para actualizar stock.`);
             }
             
-            // Update the stock in the current counting list item in Firestore if it exists (and if online)
             if (db && currentUserId && currentWarehouseId) {
                 const updatedCountingItemStock: Partial<DisplayProduct> = { 
                     stock: calculatedNewValue, 
                     lastUpdated: new Date().toISOString(),
                 };
                 await setCountingListItem(currentUserId, currentWarehouseId, { ...productInList, ...updatedCountingItemStock });
+                 requestAnimationFrame(() => toast({ title: "Stock Actualizado" }));
             } else {
-                // Also update local counting list state if offline
                 startTransition(() => {
                     const updatedList = countingList.map(p => 
                         p.barcode === barcodeToUpdate && p.warehouseId === currentWarehouseId 
@@ -777,14 +847,10 @@ export default function Home() {
                         : p
                     );
                     setCountingList(updatedList);
-                     if (currentUserId && currentWarehouseId) {
-                       setLocalStorageItem(`${LOCAL_STORAGE_COUNTING_LIST_KEY_PREFIX}${currentWarehouseId}_${currentUserId}`, updatedList);
-                    }
+                    setLocalStorageItem(`${LOCAL_STORAGE_COUNTING_LIST_KEY_PREFIX}${currentWarehouseId}_${currentUserId}`, updatedList);
                 });
                  requestAnimationFrame(() => toast({ title: "Stock Actualizado Localmente (Offline)" }));
             }
-            if (!db) requestAnimationFrame(() => toast({ title: "Stock en Catálogo Actualizado Localmente" }));
-            else requestAnimationFrame(() => toast({ title: "Stock Actualizado en Catálogo y Lista" }));
         }
     } catch (error: any) {
         console.error("Error modifying product value:", error);
@@ -820,7 +886,12 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
 
     let calculatedValue = sumValue ? (originalValue + newValue) : newValue;
     const finalNewValue = Math.max(0, calculatedValue); 
-    const needsConfirmation = type === 'count' && productInList.stock !== undefined && finalNewValue > productInList.stock && (!sumValue || originalValue <= productInList.stock);
+    // const needsConfirmation = type === 'count' && productInList.stock !== undefined && finalNewValue > productInList.stock && (!sumValue || originalValue <= productInList.stock);
+    const needsConfirmation = type === 'count' && 
+                            productInList.stock !== undefined && 
+                            productInList.stock !== 0 && // Only confirm if stock is not 0
+                            finalNewValue > productInList.stock && 
+                            (!sumValue || originalValue <= productInList.stock);
 
     if (needsConfirmation && activeSection === 'Contador') {
         if(isMountedRef.current){
@@ -836,30 +907,28 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
     if(isMountedRef.current) setIsSyncing(true);
     try {
         if (type === 'count') {
-            if (db) {
-                const updatedProductForFirestore: Partial<DisplayProduct> = {
-                    count: finalNewValue,
-                    lastUpdated: new Date().toISOString(),
-                };
+            const updatedProductForFirestore: Partial<DisplayProduct> = {
+                count: finalNewValue,
+                lastUpdated: new Date().toISOString(),
+            };
+             if (db) {
                 await setCountingListItem(currentUserId, currentWarehouseId, { ...productInList, ...updatedProductForFirestore });
             }  else {
-                // Offline handling
                 startTransition(() => {
                     const updatedList = countingList.map(p => 
                         p.barcode === barcodeToUpdate && p.warehouseId === currentWarehouseId 
-                        ? { ...p, count: finalNewValue, lastUpdated: new Date().toISOString() } 
+                        ? { ...p, ...updatedProductForFirestore } 
                         : p
                     );
                     setCountingList(updatedList);
-                    if (currentUserId && currentWarehouseId) {
-                       setLocalStorageItem(`${LOCAL_STORAGE_COUNTING_LIST_KEY_PREFIX}${currentWarehouseId}_${currentUserId}`, updatedList);
-                    }
+                    setLocalStorageItem(`${LOCAL_STORAGE_COUNTING_LIST_KEY_PREFIX}${currentWarehouseId}_${currentUserId}`, updatedList);
                 });
                 requestAnimationFrame(() => toast({ title: "Guardado Localmente (Offline)"}));
             }
-            if (showDiscrepancyToastIfNeeded(productInList, finalNewValue)) {}
+             if (activeSection === 'Contador') {
+                showDiscrepancyToastIfNeeded(productInList, finalNewValue);
+             }
         } else if (type === 'stock') { 
-            // Update IndexedDB cache for stock
             const productFromCatalog = await getProductFromIndexedDB(barcodeToUpdate);
             if (productFromCatalog) {
                 const updatedMasterProduct: ProductDetail = { ...productFromCatalog, stock: finalNewValue };
@@ -875,8 +944,8 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
                     lastUpdated: new Date().toISOString(),
                 };
                 await setCountingListItem(currentUserId, currentWarehouseId, { ...productInList, ...updatedCountingItemStock });
+                requestAnimationFrame(() => toast({ title: "Stock Actualizado" }));
             } else {
-                 // Also update local counting list state if offline
                 startTransition(() => {
                     const updatedList = countingList.map(p => 
                         p.barcode === barcodeToUpdate && p.warehouseId === currentWarehouseId 
@@ -884,14 +953,10 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
                         : p
                     );
                     setCountingList(updatedList);
-                     if (currentUserId && currentWarehouseId) {
-                       setLocalStorageItem(`${LOCAL_STORAGE_COUNTING_LIST_KEY_PREFIX}${currentWarehouseId}_${currentUserId}`, updatedList);
-                    }
+                    setLocalStorageItem(`${LOCAL_STORAGE_COUNTING_LIST_KEY_PREFIX}${currentWarehouseId}_${currentUserId}`, updatedList);
                 });
                  requestAnimationFrame(() => toast({ title: "Stock Actualizado Localmente (Offline)" }));
             }
-            if (!db) requestAnimationFrame(() => toast({ title: "Stock en Catálogo Actualizado Localmente" }));
-            else requestAnimationFrame(() => toast({ title: "Stock Actualizado en Catálogo y Lista" }));
         }
     } catch (error: any) {
         console.error("Error setting product value:", error);
@@ -932,24 +997,21 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
     
     if(isMountedRef.current) setIsSyncing(true);
     try {
+        const updatedProductForFirestore: Partial<DisplayProduct> = {
+            count: finalConfirmedCount,
+            lastUpdated: new Date().toISOString(),
+        };
         if (db) {
-            const updatedProductForFirestore: Partial<DisplayProduct> = {
-                count: finalConfirmedCount,
-                lastUpdated: new Date().toISOString(),
-            };
             await setCountingListItem(currentUserId, currentWarehouseId, { ...productInList, ...updatedProductForFirestore });
         } else {
-            // Offline handling
             startTransition(() => {
                 const updatedList = countingList.map(p => 
                     p.barcode === confirmQuantityProductBarcode && p.warehouseId === currentWarehouseId 
-                    ? { ...p, count: finalConfirmedCount, lastUpdated: new Date().toISOString() } 
+                    ? { ...p, ...updatedProductForFirestore } 
                     : p
                 );
                 setCountingList(updatedList);
-                if (currentUserId && currentWarehouseId) {
-                    setLocalStorageItem(`${LOCAL_STORAGE_COUNTING_LIST_KEY_PREFIX}${currentWarehouseId}_${currentUserId}`, updatedList);
-                }
+                setLocalStorageItem(`${LOCAL_STORAGE_COUNTING_LIST_KEY_PREFIX}${currentWarehouseId}_${currentUserId}`, updatedList);
             });
         }
         if(isMountedRef.current) requestAnimationFrame(() => toast({ title: "Cantidad Modificada" }));
@@ -983,13 +1045,10 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
         if (db) {
             await deleteCountingListItem(currentUserId, currentWarehouseId, barcodeForToast);
         } else {
-             // Offline handling
             startTransition(() => {
                 const updatedList = countingList.filter(p => !(p.barcode === barcodeForToast && p.warehouseId === currentWarehouseId));
                 setCountingList(updatedList);
-                if (currentUserId && currentWarehouseId) {
-                    setLocalStorageItem(`${LOCAL_STORAGE_COUNTING_LIST_KEY_PREFIX}${currentWarehouseId}_${currentUserId}`, updatedList);
-                }
+                setLocalStorageItem(`${LOCAL_STORAGE_COUNTING_LIST_KEY_PREFIX}${currentWarehouseId}_${currentUserId}`, updatedList);
             });
         }
         if(isMountedRef.current) requestAnimationFrame(() => toast({ title: "Producto eliminado", description: `"${descriptionForToast}" se eliminó de la lista actual.` }));
@@ -1012,13 +1071,9 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
         if (db) {
             await clearCountingListForWarehouseInFirestore(currentUserId, currentWarehouseId);
         } else {
-            // Offline handling
             startTransition(() => {
-                const updatedList = countingList.filter(p => p.warehouseId !== currentWarehouseId); // Or just setCountingList([]) if it's only for current
-                setCountingList(updatedList); 
-                if (currentUserId && currentWarehouseId) {
-                   setLocalStorageItem(`${LOCAL_STORAGE_COUNTING_LIST_KEY_PREFIX}${currentWarehouseId}_${currentUserId}`, []);
-                }
+                setCountingList([]); 
+                setLocalStorageItem(`${LOCAL_STORAGE_COUNTING_LIST_KEY_PREFIX}${currentWarehouseId}_${currentUserId}`, []);
             });
         }
         if(isMountedRef.current) requestAnimationFrame(() => toast({ title: "Lista Borrada" }));
@@ -1031,7 +1086,7 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
         }
         requestAnimationFrame(() => { if (isMountedRef.current) focusBarcodeIfCounting(); });
     }
- }, [currentWarehouseId, toast, focusBarcodeIfCounting, currentUserId, countingList]);
+ }, [currentWarehouseId, toast, focusBarcodeIfCounting, currentUserId]);
 
  const handleExport = useCallback(() => {
      const currentWarehouseList = countingList.filter(p => p.warehouseId === currentWarehouseId);
@@ -1118,7 +1173,7 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
                         provider: catalogProd.provider,
                         stock: catalogProd.stock ?? 0,
                         expirationDate: catalogProd.expirationDate || null,
-                        lastUpdated: new Date().toISOString(),
+                        lastUpdated: new Date().toISOString(), // Client-side timestamp
                     });
                 }
             }
@@ -1129,12 +1184,13 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
             productsToUpdateInFirestore.forEach(itemToUpdate => {
                 if (!itemToUpdate.barcode) return; 
                 const docRef = doc(collection(db, `users/${currentUserId}/countingLists/${currentWarehouseId}/products`), itemToUpdate.barcode);
+                // Ensure we only send serializable data to Firestore
                 const { barcode, warehouseId, ...dataToSet } = { ...itemToUpdate, firestoreLastUpdated: serverTimestamp() };
                 batch.set(docRef, dataToSet, { merge: true }); 
             });
             await batch.commit();
+             // UI will update via onSnapshot
         } else if (productsToUpdateInFirestore.length > 0 && !db) {
-            // Offline handling: Update local state and localStorage
             startTransition(() => {
                 let tempCountingList = [...countingList];
                 productsToUpdateInFirestore.forEach(updatedProd => {
@@ -1145,9 +1201,7 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
                     );
                 });
                 setCountingList(tempCountingList);
-                if (currentUserId && currentWarehouseId) {
-                   setLocalStorageItem(`${LOCAL_STORAGE_COUNTING_LIST_KEY_PREFIX}${currentWarehouseId}_${currentUserId}`, tempCountingList);
-                }
+                setLocalStorageItem(`${LOCAL_STORAGE_COUNTING_LIST_KEY_PREFIX}${currentWarehouseId}_${currentUserId}`, tempCountingList);
             });
              requestAnimationFrame(() => toast({ title: "Datos Actualizados Localmente (Offline)"}));
         }
@@ -1177,17 +1231,23 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
     requestAnimationFrame(() => { if (isMountedRef.current) focusBarcodeIfCounting(); });
  };
 
+  // --- Catalog Management Functions (interact with Firestore, update local cache) ---
   const handleAddOrUpdateCatalogProduct = useCallback(async (productData: ProductDetail) => {
     if (!isMountedRef.current || !currentUserId) return;
     if(isMountedRef.current) { setIsDbLoading(true); setIsSyncing(true); }
     try {
-        await addOrUpdateProductToIndexedDB(productData); // Save to IndexedDB
-        await synchronizeAndLoadCatalog(); // Refresh catalog state from IndexedDB
-        if(isMountedRef.current) requestAnimationFrame(() => toast({title: "Producto Actualizado/Agregado en Catálogo Local"}));
+        if (db) {
+            await addOrUpdateProductInCatalog(currentUserId, productData);
+            requestAnimationFrame(() => toast({title: "Producto Actualizado/Agregado en Catálogo"}));
+        } else {
+            await addOrUpdateProductToIndexedDB(productData); // Fallback to IndexedDB if offline
+            requestAnimationFrame(() => toast({title: "Producto Actualizado/Agregado en Catálogo Local (Offline)"}));
+        }
+        await synchronizeAndLoadCatalog(); // Refresh catalog state from Firestore (which then updates IndexedDB)
         if(isMountedRef.current) { setIsEditDetailDialogOpen(false); setProductToEditDetail(null); }
     } catch (error: any) {
          if (!isMountedRef.current) return;
-         requestAnimationFrame(() => toast({ variant: "destructive", title: "Error Catálogo Local", description: `No se pudo guardar: ${error.message}` }));
+         requestAnimationFrame(() => toast({ variant: "destructive", title: "Error Catálogo", description: `No se pudo guardar: ${error.message}` }));
     } finally {
          if (isMountedRef.current) { setIsDbLoading(false); setIsSyncing(false); }
          requestAnimationFrame(() => { if (isMountedRef.current) focusBarcodeIfCounting(); });
@@ -1198,13 +1258,18 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
     if (!isMountedRef.current || !currentUserId) return;
     if(isMountedRef.current) { setIsDbLoading(true); setIsSyncing(true); }
     try {
-        await deleteProductFromIndexedDB(barcodeToDelete); // Delete from IndexedDB
-        await synchronizeAndLoadCatalog(); // Refresh catalog state
-        if(isMountedRef.current) requestAnimationFrame(() => toast({title: "Producto eliminado del catálogo local"}));
+        if (db) {
+            await deleteProductFromCatalog(currentUserId, barcodeToDelete);
+            requestAnimationFrame(() => toast({title: "Producto eliminado del catálogo"}));
+        } else {
+            await deleteProductFromIndexedDB(barcodeToDelete); // Fallback
+            requestAnimationFrame(() => toast({title: "Producto eliminado del catálogo local (Offline)"}));
+        }
+        await synchronizeAndLoadCatalog(); 
         if(isMountedRef.current) { setIsEditDetailDialogOpen(false); setProductToEditDetail(null); }
     } catch (error: any) {
         if (!isMountedRef.current) return;
-        requestAnimationFrame(() => toast({ variant: "destructive", title: "Error al Eliminar (Local)", description: `No se pudo eliminar: ${error.message}` }));
+        requestAnimationFrame(() => toast({ variant: "destructive", title: "Error al Eliminar", description: `No se pudo eliminar: ${error.message}` }));
     } finally {
         if (isMountedRef.current) { setIsDbLoading(false); setIsSyncing(false); }
         requestAnimationFrame(() => { if (isMountedRef.current) focusBarcodeIfCounting(); });
@@ -1215,11 +1280,16 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
     if (!isMountedRef.current || !currentUserId) return;
     if(isMountedRef.current) { setIsDbLoading(true); setIsSyncing(true); } 
     try {
-      await clearProductDatabase(); // Clear IndexedDB
-      await synchronizeAndLoadCatalog(); // Refresh catalog state
-      if(isMountedRef.current) requestAnimationFrame(() => toast({ title: "Catálogo Local Borrado" }));
+      if (db) {
+        await clearProductCatalogInFirestore(currentUserId);
+        requestAnimationFrame(() => toast({ title: "Catálogo Borrado" }));
+      } else {
+        await clearProductDatabase(); // Fallback
+        requestAnimationFrame(() => toast({ title: "Catálogo Local Borrado (Offline)" }));
+      }
+      await synchronizeAndLoadCatalog(); 
     } catch (error: any) {
-      if(isMountedRef.current) requestAnimationFrame(() => toast({ variant: "destructive", title: "Error al Borrar Catálogo Local", description: `No se pudieron borrar datos: ${error.message}` }));
+      if(isMountedRef.current) requestAnimationFrame(() => toast({ variant: "destructive", title: "Error al Borrar Catálogo", description: `No se pudieron borrar datos: ${error.message}` }));
     } finally {
       if (isMountedRef.current) { setIsDbLoading(false); setIsSyncing(false); setIsClearCatalogConfirmOpen(false); }
       requestAnimationFrame(() => { if (isMountedRef.current) focusBarcodeIfCounting(); });
@@ -1228,10 +1298,16 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
 
 
  const handleOpenEditDetailDialog = useCallback(async (product: DisplayProduct | ProductDetail) => {
-    if (!product || !product.barcode || !isMountedRef.current) return;
+    if (!product || !product.barcode || !isMountedRef.current || !currentUserId) return;
     if(isMountedRef.current) setIsDbLoading(true);
     try {
-        let productDataToEdit = await getProductFromIndexedDB(product.barcode);
+        let productDataToEdit: ProductDetail | undefined;
+        if(db) {
+            productDataToEdit = await getProductFromCatalog(currentUserId, product.barcode);
+        } else {
+            productDataToEdit = await getProductFromIndexedDB(product.barcode);
+        }
+        
 
         if (productDataToEdit) {
             setProductToEditDetail(productDataToEdit);
@@ -1241,16 +1317,16 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
                  description: product.description || `Producto ${product.barcode}`,
                  provider: product.provider || "Desconocido",
                  stock: 'stock' in product ? (product.stock ?? 0) : 0,
-                 expirationDate: 'expirationDate' in product ? product.expirationDate : null,
+                 expirationDate: 'expirationDate' in product ? (product.expirationDate || null) : null,
             };
             setProductToEditDetail(placeholderDetail);
-            if (isMountedRef.current) requestAnimationFrame(() => toast({ variant: "default", title: "Agregando Nuevo Producto", description: "Este producto se agregará al catálogo local." }));
+            if (isMountedRef.current) requestAnimationFrame(() => toast({ variant: "default", title: "Agregando Nuevo Producto al Catálogo", description: "Este producto se agregará al catálogo." }));
         }
         if (isMountedRef.current) setIsEditDetailDialogOpen(true);
     } catch (error: any) {
          if (!isMountedRef.current) return;
          console.error("Error fetching product details for edit:", error);
-         requestAnimationFrame(() => toast({ variant: "destructive", title: "Error Catálogo Local", description: `No se pudo cargar detalle: ${error.message}` }));
+         requestAnimationFrame(() => toast({ variant: "destructive", title: "Error Catálogo", description: `No se pudo cargar detalle: ${error.message}` }));
     } finally {
          if (isMountedRef.current) setIsDbLoading(false);
     }
@@ -1272,15 +1348,14 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
 
     if(isMountedRef.current) setIsSyncing(true);
     try {
-        // Clear current list in Firestore (if online) and localStorage
         if (db) await clearCountingListForWarehouseInFirestore(currentUserId, currentWarehouseId);
         
         const localKey = `${LOCAL_STORAGE_COUNTING_LIST_KEY_PREFIX}${currentWarehouseId}_${currentUserId}`;
-        setLocalStorageItem(localKey, []); // Clear local immediately
+        setLocalStorageItem(localKey, []); 
 
         const batchData: DisplayProduct[] = [];
         
-        if (db) { // Prepare for Firestore batch
+        if (db) { 
             const batch = writeBatch(db);
             productsToCount.forEach(dbProduct => {
                 const docRef = doc(collection(db, `users/${currentUserId}/countingLists/${currentWarehouseId}/products`), dbProduct.barcode);
@@ -1293,15 +1368,18 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
                    firestoreLastUpdated: serverTimestamp(),
                 };
                 batch.set(docRef, dataToSet); 
+                // For local state, we need lastUpdated as string
+                const {firestoreLastUpdated, ...restOfData} = dataToSet;
                 batchData.push({
-                    ...dataToSet, 
+                    ...restOfData,
                     barcode: dbProduct.barcode, 
                     warehouseId: currentWarehouseId, 
                     lastUpdated: new Date().toISOString() // For local state
                 });
             });
             await batch.commit();
-        } else { // Prepare for local update if offline
+            // Firestore listener will update the UI and localStorage eventually
+        } else { 
              productsToCount.forEach(dbProduct => {
                 batchData.push({
                    barcode: dbProduct.barcode,
@@ -1314,15 +1392,12 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
                    lastUpdated: new Date().toISOString(),
                 });
             });
+            startTransition(() => { // Update local state and localStorage immediately if offline
+                setCountingList(batchData);
+                setLocalStorageItem(localKey, batchData);
+            });
         }
         
-        // Update local state and localStorage
-        startTransition(() => {
-            setCountingList(batchData);
-            setLocalStorageItem(localKey, batchData);
-        });
-
-
         if (isMountedRef.current) {
             setActiveSection("Contador");
             setSearchTerm(""); 
@@ -1335,7 +1410,7 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
         if (isMountedRef.current) setIsSyncing(false);
         requestAnimationFrame(() => { if (isMountedRef.current) focusBarcodeIfCounting(); });
     }
- }, [toast, setActiveSection, currentWarehouseId, focusBarcodeIfCounting, currentUserId, countingList]);
+ }, [toast, setActiveSection, currentWarehouseId, focusBarcodeIfCounting, currentUserId]);
 
 
   const filteredCountingList = useMemo(() => {
@@ -1362,6 +1437,11 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
       });
       if (newSection === 'Contador') {
         requestAnimationFrame(focusBarcodeIfCounting);
+      }
+       if (newSection === 'Contador Cámara') {
+          setIsCameraScanMode(true); // Activar cámara automáticamente
+      } else {
+          setIsCameraScanMode(false); // Desactivar si se sale de esa sección
       }
     }
   }, [setActiveSection, focusBarcodeIfCounting]); 
@@ -1396,8 +1476,6 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
       if(isMountedRef.current) setIsSyncing(true);
       try {
           await addOrUpdateWarehouseInFirestore(currentUserId, newWarehouse);
-          // The onSnapshot listener will update the UI, so no need to setWarehouses directly here.
-          // However, we might want to set it as current if it's the only one or first one.
           handleWarehouseChange(newWarehouse.id); 
           requestAnimationFrame(() => toast({title: "Almacén Agregado", description: `Cambiado a: ${newWarehouse.name}`}));
       } catch (error: any) {
@@ -1412,7 +1490,6 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
        if(isMountedRef.current) setIsSyncing(true);
        try {
            await addOrUpdateWarehouseInFirestore(currentUserId, warehouseToUpdate);
-           // onSnapshot will handle UI update
            if(isMountedRef.current) requestAnimationFrame(() => toast({ title: `Almacén "${warehouseToUpdate.name}" Actualizado` }));
        } catch (error: any) {
            if(isMountedRef.current) requestAnimationFrame(() => toast({ variant: 'destructive', title: 'Error DB', description: `No se pudo actualizar el almacén. ${error.message}` }));
@@ -1431,14 +1508,15 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
     if(isMountedRef.current) setIsSyncing(true);
     try {
       await deleteWarehouseFromFirestore(currentUserId, warehouseIdToDelete);
-      // onSnapshot handles UI and currentWarehouseId adjustment if needed
+      // El listener onSnapshot se encargará de actualizar la UI y localStorage
+      // y la lógica dentro del listener también se encargará de reajustar currentWarehouseId si es necesario.
       requestAnimationFrame(() => toast({ title: "Almacén Eliminado" }));
     } catch (error: any) {
       if(isMountedRef.current) requestAnimationFrame(() => toast({ variant: 'destructive', title: 'Error DB', description: `No se pudo eliminar el almacén. ${error.message}` }));
     } finally {
       if(isMountedRef.current) setIsSyncing(false);
     }
-  }, [toast, currentUserId, currentWarehouseId, warehouses]); // Added warehouses to deps for currentWarehouseId logic
+  }, [toast, currentUserId, currentWarehouseId]); 
 
 
    const getCurrentValueForDialog = useCallback((type: 'count' | 'stock') => {
@@ -1458,19 +1536,23 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
         }
 
         if (isMountedRef.current) {
-            setIsDbLoading(true);
-            setIsSyncing(true);
+            setIsDbLoading(true); // For catalog loading
+            setIsSyncing(true);   // For Firestore operation
             setProcessingStatus("Cargando datos desde Google Sheet...");
         }
 
         try {
           const productsFromSheet = await fetchGoogleSheetData(sheetUrlOrId);
           if (productsFromSheet.length > 0 && currentUserId) {
-            await addProductsToIndexedDB(productsFromSheet); // Save to IndexedDB
-            await synchronizeAndLoadCatalog(); // Refresh catalogProducts state from IndexedDB
+            if (db) { // Online: Save to Firestore
+                await addProductsToCatalog(currentUserId, productsFromSheet);
+            } else { // Offline: Save to IndexedDB
+                await addProductsToIndexedDB(productsFromSheet);
+            }
+            await synchronizeAndLoadCatalog(); // Refresh catalog (from Firestore or IndexedDB)
             if (isMountedRef.current) {
                 requestAnimationFrame(() => {
-                    toast({ title: "Catálogo Actualizado", description: `${productsFromSheet.length} productos cargados desde Google Sheet al catálogo local.` });
+                    toast({ title: "Catálogo Actualizado", description: `${productsFromSheet.length} productos cargados desde Google Sheet.` });
                 });
                 setProcessingStatus("Carga desde Google Sheet completada.");
             }
@@ -1539,7 +1621,6 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
     isCollapsed: isSidebarCollapsed,
     activeSection,
     sectionItems,
-    currentUserId: currentUserId || LOGIN_USER, // Pass LOGIN_USER if currentUserId is null for key consistency
     warehouses,
     currentWarehouseId,
     handleWarehouseChange,
@@ -1613,6 +1694,15 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
 
   return (
     <div className="flex h-screen bg-background text-foreground">
+       {/* Barra de Sincronización */}
+      <div
+        className={cn(
+          "fixed top-0 left-0 w-full h-1 z-[60] transition-all duration-300 ease-in-out", // Aumentado z-index
+          isSyncing ? "bg-primary animate-pulse" : "bg-muted/30" 
+        )}
+        title={isSyncing ? "Sincronizando con la nube..." : "Conectado"}
+      />
+
       {isMobile ? (
         <Sheet open={mobileSheetOpen} onOpenChange={setMobileSheetOpen}>
           <SheetTrigger asChild>
@@ -1630,7 +1720,7 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
         </Sheet>
       ) : (
         <aside className={cn(
-            "flex-shrink-0 border-r border-sidebar-border bg-sidebar text-sidebar-foreground flex flex-col transition-all duration-300 ease-in-out",
+            "flex-shrink-0 border-r border-sidebar-border bg-sidebar text-sidebar-foreground flex flex-col transition-all duration-300 ease-in-out pt-1", // Añadido pt-1 para la barra
             isSidebarCollapsed ? "w-16" : "w-64"
         )}>
           <SidebarLayout {...sidebarProps} />
@@ -1638,13 +1728,7 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
       )}
 
 
-      <main className="flex-1 p-4 md:p-6 overflow-y-auto relative"> 
-         {isSyncing && (
-          <div className="absolute top-4 right-4 p-2 z-50" title="Sincronizando con la nube...">
-            <RefreshCw className="h-5 w-5 text-primary animate-spin" />
-          </div>
-        )}
-
+      <main className="flex-1 p-4 md:p-6 overflow-y-auto relative pt-5"> {/* Añadido pt-5 para la barra */}
         {activeSection === 'Contador' && currentUserId && (
           <div id="contador-content" className="space-y-4 h-full flex flex-col">
              <div className="mb-4 space-y-4">
@@ -1767,9 +1851,9 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
           <div id="contador-camara-content" className="flex flex-col h-full space-y-4">
             <div className="h-1/2 md:h-2/5 border rounded-lg overflow-hidden">
               <BarcodeScannerCamera
-                onBarcodeScanned={handleAddProduct} // Reutiliza handleAddProduct
+                onBarcodeScanned={handleBarcodeScannedFromCamera}
                 isScanningActive={activeSection === 'Contador Cámara'}
-                isDecodingActive={true} // Siempre decodifica en este modo
+                isDecodingActive={true} 
               />
             </div>
 
@@ -1896,7 +1980,7 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
             <div id="database-content">
                <ProductDatabaseComponent
                   catalogProducts={catalogProducts} 
-                  isLoadingCatalog={isDbLoading}
+                  isLoadingCatalog={isDbLoading} // Pasar el estado de carga del catálogo
                   onAddOrUpdateProduct={handleAddOrUpdateCatalogProduct}
                   onDeleteProduct={handleDeleteCatalogProduct}
                   onLoadFromGoogleSheet={handleGoogleSheetLoadToCatalog}
@@ -1917,7 +2001,7 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
                     onUpdateWarehouse={handleUpdateWarehouse}
                     onDeleteWarehouse={handleDeleteWarehouse}
                     onSelectWarehouse={handleWarehouseChange}
-                    isLoading={isDbLoading || isTransitionPending || isSyncing}
+                    isLoading={isSyncing} // Usar isSyncing general o uno específico para almacenes si es necesario
                   />
              </div>
            )}
@@ -1959,10 +2043,10 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
                const product = countingList.find(p => p.barcode === confirmQuantityProductBarcode && p.warehouseId === currentWarehouseId);
                const stock = product?.stock ?? 0;
                const description = product?.description ?? confirmQuantityProductBarcode;
-               if (stock > 0 && confirmQuantityNewValue > stock && (product?.count ?? 0) <= stock) { // Only confirm if previous count was not already over stock
+                if (stock > 0 && confirmQuantityNewValue > stock && (product?.count ?? 0) <= stock) { 
                    return `La cantidad contada (${confirmQuantityNewValue}) ahora SUPERA el stock del sistema (${stock}) para "${description}". ¿Confirmar?`;
                }
-               return `Está a punto de modificar la cantidad contada para "${description}" a ${confirmQuantityNewValue}. ¿Continuar?`;
+                return `Está a punto de modificar la cantidad contada para "${description}" a ${confirmQuantityNewValue}. ¿Continuar?`;
              })()
           }
           onConfirm={handleConfirmQuantityChange}
@@ -2002,7 +2086,7 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
                          <AlertTriangle className="h-5 w-5"/>
                          <span className="font-semibold">¡Acción Irreversible!</span>
                     </div>
-                    <p>Estás a punto de eliminar <span className="font-bold">TODOS</span> los productos del catálogo (Local IndexedDB).</p>
+                    <p>Estás a punto de eliminar <span className="font-bold">TODOS</span> los productos del catálogo (Base de Datos Local y Nube si está conectado).</p>
                     <p>Esta acción no se puede deshacer.</p>
                  </div>
             }
@@ -2032,3 +2116,4 @@ const handleSetProductValue = useCallback(async (barcodeToUpdate: string, type: 
     </div>
   );
 }
+

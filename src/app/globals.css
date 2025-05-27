@@ -9,26 +9,26 @@ body {
 
 @layer base {
   :root {
-    /* AppSheet Inspired - Light Theme (Fallback, pero nos centraremos en el oscuro) */
-    --background: 0 0% 97%; /* Muy light gray, casi blanco */
-    --foreground: 220 10% 12%; /* Texto muy oscuro/casi negro */
-    --card: 0 0% 100%; /* Blanco */
+    /* AppSheet Inspired - Light Theme (Fallback, but we focus on dark) */
+    --background: 220 13% 95%; /* Fresher, lighter gray for light theme */
+    --foreground: 220 10% 12%; /* Dark text for high contrast */
+    --card: 0 0% 100%; /* White cards */
     --card-foreground: 220 10% 12%;
     --popover: 0 0% 100%;
     --popover-foreground: 220 10% 12%;
-    --primary: 217 91% 50%; /* Azul fuerte, más oscuro para fondo claro */
-    --primary-foreground: 210 40% 98%; /* Texto blanco/muy claro para botón azul */
-    --secondary: 220 15% 92%; /* Gris claro */
-    --secondary-foreground: 220 10% 25%; /* Texto gris más oscuro en secundario */
-    --muted: 220 15% 95%; /* Gris muy claro para elementos apagados */
-    --muted-foreground: 220 10% 40%; /* Gris medio para texto apagado */
-    --accent: 217 91% 55%; /* Azul de acento para modo claro */
+    --primary: 217 91% 50%; /* Confident Blue for primary actions */
+    --primary-foreground: 210 40% 98%; /* White text on primary */
+    --secondary: 220 15% 92%; /* Lighter gray for secondary elements */
+    --secondary-foreground: 220 10% 25%; /* Darker gray text on secondary */
+    --muted: 220 15% 95%; /* Very light gray for muted elements */
+    --muted-foreground: 220 10% 40%; /* Medium gray for muted text */
+    --accent: 200 85% 50%; /* A slightly brighter, more cyan-ish blue for accents */
     --accent-foreground: 210 40% 98%;
-    --destructive: 0 72% 51%; /* Rojo estándar */
+    --destructive: 0 72% 51%; /* Standard red */
     --destructive-foreground: 0 0% 98%;
-    --border: 220 10% 85%; /* Borde gris claro */
-    --input: 220 15% 90%; /* Fondo de campo de entrada, ligeramente blanquecino */
-    --ring: 217 91% 58%; /* Anillo de enfoque azul */
+    --border: 220 10% 85%; /* Light gray border */
+    --input: 220 15% 90%; /* Off-white input background */
+    --ring: 217 91% 58%; /* Focus ring blue - slightly different from primary for visibility */
     --chart-1: 210 60% 45%;
     --chart-2: 200 70% 50%;
     --chart-3: 220 30% 60%;
@@ -37,7 +37,7 @@ body {
     --radius: 0.5rem;
 
     /* Sidebar Light Theme */
-    --sidebar-background: 220 10% 88%; /* Gris claro, distinto del fondo principal */
+    --sidebar-background: 220 10% 88%; /* Slightly darker light gray for sidebar */
     --sidebar-foreground: hsl(var(--foreground));
     --sidebar-primary: hsl(var(--primary));
     --sidebar-primary-foreground: hsl(var(--primary-foreground));
@@ -48,26 +48,26 @@ body {
   }
 
   .dark {
-    /* AppSheet Inspired - Dark Theme (Este es el que queremos que predomine) */
-    --background: 220 6% 10%; /* Gris muy oscuro, casi negro */
-    --foreground: 210 25% 95%; /* Blanquecino para alto contraste */
-    --card: 220 6% 13%; /* Ligeramente más claro que el fondo */
+    /* AppSheet Inspired - Dark Theme (Focus) */
+    --background: 220 9% 13%; /* Dark, slightly cool gray for dark theme background */
+    --foreground: 210 25% 95%; /* Off-white/very light gray for text */
+    --card: 220 9% 17%; /* Slightly lighter than background for cards */
     --card-foreground: 210 25% 95%;
-    --popover: 220 6% 13%;
+    --popover: 220 9% 17%;
     --popover-foreground: 210 25% 95%;
-    --primary: 217 91% 60%; /* Azul fuerte y claro */
-    --primary-foreground: 210 40% 98%; /* Texto blanco para primario */
-    --secondary: 220 6% 20%; /* Gris oscuro para elementos secundarios */
-    --secondary-foreground: 210 20% 80%; /* Texto gris más claro en secundario */
-    --muted: 220 6% 17%; /* Para elementos menos prominentes */
-    --muted-foreground: 210 15% 65%; /* Color de texto apagado */
-    --accent: 217 91% 65%; /* Azul más brillante para acentos */
+    --primary: 217 91% 60%; /* Strong, clear blue for primary actions */
+    --primary-foreground: 210 40% 98%; /* White text for primary */
+    --secondary: 220 6% 20%; /* Dark gray for secondary elements */
+    --secondary-foreground: 210 20% 80%; /* Lighter gray text on secondary */
+    --muted: 220 6% 17%; /* For less prominent elements */
+    --muted-foreground: 210 15% 65%; /* Muted text color */
+    --accent: 200 80% 65%; /* Brighter, more cyan-ish blue for accents in dark mode */
     --accent-foreground: 210 40% 98%;
     --destructive: 0 63% 51%;
     --destructive-foreground: 0 0% 98%;
-    --border: 220 6% 25%; /* Borde sutil */
-    --input: 220 6% 16%; /* Fondo de campo de entrada */
-    --ring: 217 91% 70%; /* Anillo de enfoque azul */
+    --border: 220 6% 25%; /* Subtle border */
+    --input: 220 6% 16%; /* Input field background */
+    --ring: 217 91% 70%; /* Focus ring blue - brighter for dark mode */
     --chart-1: 210 70% 55%;
     --chart-2: 200 80% 60%;
     --chart-3: 220 20% 70%;
@@ -75,7 +75,7 @@ body {
     --chart-5: 150 50% 60%;
 
     /* Sidebar Dark Theme */
-    --sidebar-background: 220 6% 8%; /* Aún más oscuro para la barra lateral */
+    --sidebar-background: 220 6% 10%; /* Even darker for the sidebar, distinct from main background */
     --sidebar-foreground: hsl(var(--foreground));
     --sidebar-primary: hsl(var(--primary));
     --sidebar-primary-foreground: hsl(var(--primary-foreground));
@@ -148,4 +148,19 @@ input, button, select, textarea {
   box-shadow: 0 10px 15px -3px hsla(var(--foreground) / 0.05), 0 4px 6px -4px hsla(var(--foreground) / 0.04); /* Equivalent to shadow-xl */
   width: 100%;
   max-width: 24rem; /* Equivalent to max-w-sm */
+}
+
+/* Syncing Pulse Colors Animation */
+@layer utilities {
+  @keyframes syncing-pulse-colors {
+    0%, 100% {
+      background-color: hsl(var(--primary));
+    }
+    50% {
+      background-color: hsl(var(--ring)); /* Using the ring color for pulse effect */
+    }
+  }
+  .animate-syncing-pulse-colors {
+    animation: syncing-pulse-colors 1.5s infinite ease-in-out;
+  }
 }

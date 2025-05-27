@@ -6,7 +6,7 @@ import { useToast } from "@/hooks/use-toast";
 import { cn, debounce } from "@/lib/utils";
 import {
     Filter, Play, Loader2, Save, Trash, Upload, Edit, AlertTriangle, Plus
-} from "lucide-react"; // Plus importado
+} from "lucide-react"; 
 
 import * as React from "react";
 import { useCallback, useEffect, useState, useMemo, useRef } from "react";
@@ -27,60 +27,51 @@ import { es } from 'date-fns/locale';
 import { GOOGLE_SHEET_URL_LOCALSTORAGE_KEY } from '@/lib/constants';
 import { useLocalStorage } from '@/hooks/use-local-storage';
 
-// Las funciones de IndexedDB se manejan ahora en page.tsx
-// import { getAllProductsFromDB as getAllProductsFromIndexedDB, ... } from '@/lib/database';
 
 const SEARCH_DEBOUNCE_MS = 300;
 
  interface ProductDatabaseProps {
-  userId: string | null; // Todavía necesario para cualquier lógica futura específica del usuario
-  catalogProducts: ProductDetail[]; // Recibido de page.tsx, que ahora obtiene de IndexedDB
-  isLoadingCatalog: boolean; // Indicador de carga específico para el catálogo
-  processingStatus: string; // Para mensajes de estado
-  setProcessingStatus: (status: string) => void; // Para actualizar mensajes de estado
+  userId: string | null;
+  catalogProducts: ProductDetail[]; // Prop que viene de page.tsx
+  isLoadingCatalog: boolean; 
+  processingStatus: string; 
+  setProcessingStatus: (status: string) => void;
   
-  onLoadFromGoogleSheet: (sheetUrlOrId: string) => Promise<void>; // Llamado desde page.tsx
-  onAddOrUpdateProduct: (product: ProductDetail) => Promise<void>; // Llamado desde page.tsx
-  onDeleteProduct: (barcode: string) => Promise<void>; // Llamado desde page.tsx
-  onClearCatalogRequest: () => void; // Para abrir diálogo de confirmación en page.tsx
-  onStartCountByProvider: (products: ProductDetail[]) => void; // Llamado desde page.tsx
-  onEditProductRequest: (product: ProductDetail) => void; // Para abrir diálogo de edición en page.tsx
+  onLoadFromGoogleSheet: (sheetUrlOrId: string) => Promise<void>; 
+  onAddOrUpdateProduct: (product: ProductDetail) => Promise<void>; 
+  onDeleteProduct: (barcode: string) => Promise<void>; 
+  onClearCatalogRequest: () => void; 
+  onStartCountByProvider: (products: ProductDetail[]) => void; 
+  onEditProductRequest: (product: ProductDetail) => void; 
  }
 
 
 const ProductDatabaseComponent: React.FC<ProductDatabaseProps> = ({
     userId,
-    catalogProducts, // Lista de productos del catálogo (desde IndexedDB vía page.tsx)
-    isLoadingCatalog, // Indicador de si el catálogo se está cargando/sincronizando
-    processingStatus,
-    setProcessingStatus, // Aún se usa para el estado de carga de GS
+    catalogProducts = [], // <<--- DEFAULT VALUE ADDED HERE
+    isLoadingCatalog, 
+    processingStatus: parentProcessingStatus, // Renombrar para evitar conflicto con estado local
+    setProcessingStatus: setParentProcessingStatus, // Renombrar
     onLoadFromGoogleSheet,
-    onAddOrUpdateProduct, // Se conecta con handleAddOrUpdateCatalogProduct en page.tsx
-    onDeleteProduct,      // Se conecta con handleDeleteCatalogProduct en page.tsx
+    onAddOrUpdateProduct, 
+    onDeleteProduct,      
     onClearCatalogRequest,
     onStartCountByProvider,
     onEditProductRequest
  }) => {
   const { toast } = useToast();
-  // isLoadingLocal ya no es necesario, se usa isLoadingCatalog de props
   const [googleSheetUrlOrId, setGoogleSheetUrlOrId] = useLocalStorage<string>(
       GOOGLE_SHEET_URL_LOCALSTORAGE_KEY, ""
   );
   const [searchTerm, setSearchTerm] = useState("");
   const [selectedProviderFilter, setSelectedProviderFilter] = useState<string>("all");
   const isMountedRef = useRef(false);
+  const [localProcessingStatus, setLocalProcessingStatus] = useState(""); // Estado local para mensajes de este componente
 
   useEffect(() => {
     isMountedRef.current = true;
     return () => { isMountedRef.current = false; };
   }, []);
-
-  // Ya no hay carga directa de productos aquí, se reciben como prop 'catalogProducts'
-  // useEffect(() => {
-  //   if (userId) {
-  //     loadLocalCatalog(); // Esta función ahora está en page.tsx como synchronizeAndLoadCatalog
-  //   }
-  // }, [userId, loadLocalCatalog]);
 
   const handleGoogleSheetUrlOrIdChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     setGoogleSheetUrlOrId(e.target.value);
@@ -91,13 +82,11 @@ const ProductDatabaseComponent: React.FC<ProductDatabaseProps> = ({
       requestAnimationFrame(() => toast({ variant: "destructive", title: "URL/ID Requerido" }));
       return;
     }
-    // Llama a la función pasada por props, que ahora está en page.tsx
-    // y maneja la lógica de fetchGoogleSheetData y la actualización de IndexedDB
     await onLoadFromGoogleSheet(googleSheetUrlOrId);
   };
 
   const providerOptions = useMemo(() => {
-        const providers = new Set(catalogProducts.map(p => p.provider || "Desconocido").filter(Boolean));
+        const providers = new Set((catalogProducts || []).map(p => p.provider || "Desconocido").filter(Boolean)); // Añadir || []
         const sortedProviders = ["all", ...Array.from(providers)].sort((a, b) => {
             if (a === 'all') return -1; if (b === 'all') return 1;
             return (a as string).localeCompare(b as string);
@@ -111,7 +100,7 @@ const ProductDatabaseComponent: React.FC<ProductDatabaseProps> = ({
       return;
     }
     if (!isMountedRef.current) return;
-    const providerProducts = catalogProducts.filter(product => (product.provider || "Desconocido") === selectedProviderFilter);
+    const providerProducts = (catalogProducts || []).filter(product => (product.provider || "Desconocido") === selectedProviderFilter); // Añadir || []
     if (providerProducts.length === 0) {
       if (isMountedRef.current) requestAnimationFrame(() => toast({ title: "Vacío", description: `No hay productos para ${selectedProviderFilter}.` }));
     } else {
@@ -127,7 +116,7 @@ const ProductDatabaseComponent: React.FC<ProductDatabaseProps> = ({
 
   const filteredProducts = useMemo(() => {
     const lowerSearchTerm = searchTerm.toLowerCase();
-    return catalogProducts
+    return (catalogProducts || []) // Añadir || []
       .filter(product => {
         if (!product || !product.barcode) return false;
         const matchesSearch = !lowerSearchTerm ||
@@ -138,13 +127,11 @@ const ProductDatabaseComponent: React.FC<ProductDatabaseProps> = ({
         const matchesProvider = selectedProviderFilter === 'all' || (product.provider || "Desconocido") === selectedProviderFilter;
         return matchesSearch && matchesProvider;
       })
-      // El ordenamiento ahora se hace en page.tsx antes de pasar catalogProducts
   }, [catalogProducts, searchTerm, selectedProviderFilter]);
 
-  const isLoading = isLoadingCatalog || (processingStatus !== ""); // Considerar ambos
+  const isLoading = isLoadingCatalog || (parentProcessingStatus !== ""); 
 
   const handleAddNewProductClick = () => {
-    // Llama a la prop que abre EditProductDialog en page.tsx
     onEditProductRequest({ barcode: '', description: '', provider: '', stock: 0, expirationDate: null });
   };
 
@@ -217,24 +204,24 @@ const ProductDatabaseComponent: React.FC<ProductDatabaseProps> = ({
              aria-describedby="google-sheet-info"
              />
              <Button variant="secondary" disabled={isLoading || !googleSheetUrlOrId} onClick={handleLoadFromGoogleSheetClick}>
-                {isLoading && processingStatus?.includes("Google") ?
+                {isLoading && parentProcessingStatus?.includes("Google") ? // Usar prop renombrada
                   <Loader2 className="mr-2 h-4 w-4 animate-spin" /> :
                   <Upload className="mr-2 h-4 w-4" />
                  }
-                 {isLoading && processingStatus?.includes("Google") ? 'Cargando...' : 'Cargar Datos'}
+                 {isLoading && parentProcessingStatus?.includes("Google") ? 'Cargando...' : 'Cargar Datos'} 
              </Button>
          </div>
          <p id="google-sheet-info" className="text-xs text-muted-foreground mt-1">
             Columnas: 1=Código, 2=Descripción, 3=Vencimiento (YYYY-MM-DD opcional), 6=Stock, 10=Proveedor. Asegúrese que la hoja tenga permisos de 'cualquiera con el enlace puede ver'.
          </p>
-         {processingStatus && (
+         {parentProcessingStatus && ( // Usar prop renombrada
              <div className="mt-4 space-y-1">
                  <p className="text-sm text-muted-foreground text-center">
-                     {processingStatus}
+                     {parentProcessingStatus}
                  </p>
              </div>
          )}
-         {isLoadingCatalog && !processingStatus && ( // Usar isLoadingCatalog aquí
+         {isLoadingCatalog && !parentProcessingStatus && ( 
               <div className="flex justify-center items-center py-6">
                  <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
                  <span className="ml-2 text-muted-foreground">Cargando catálogo...</span>
@@ -243,7 +230,7 @@ const ProductDatabaseComponent: React.FC<ProductDatabaseProps> = ({
           <Button
                 variant="destructive"
                 onClick={onClearCatalogRequest} 
-                disabled={isLoading || catalogProducts.length === 0}
+                disabled={isLoading || (catalogProducts || []).length === 0} // Añadir || []
                 className="mt-4 w-full sm:w-auto"
                 title="Eliminar todos los productos del catálogo local (IndexedDB)"
             >
@@ -253,11 +240,11 @@ const ProductDatabaseComponent: React.FC<ProductDatabaseProps> = ({
 
        <ProductTable
            products={filteredProducts}
-           isLoading={isLoadingCatalog && !processingStatus} // isLoadingCatalog para la tabla
-           onEdit={(product) => onEditProductRequest(product)} // Llama a la prop de page.tsx
+           isLoading={isLoadingCatalog && !parentProcessingStatus} 
+           onEdit={(product) => onEditProductRequest(product)} 
            onDeleteRequest={(product) => {
              if (userId && product.barcode) {
-                onDeleteProduct(product.barcode); // Llama a la prop de page.tsx
+                onDeleteProduct(product.barcode); 
              }
            }}
        />
@@ -354,8 +341,3 @@ const ProductTable: React.FC<ProductTableProps> = React.memo(({
   );
 });
 ProductTable.displayName = 'ProductTable';
-
-// La lógica de fetchGoogleSheetData y extractSpreadsheetIdAndGid ahora reside en page.tsx
-// o en un archivo de utilidades, y se llama desde page.tsx.
-// ProductDatabaseComponent solo invoca la prop onLoadFromGoogleSheet.
-

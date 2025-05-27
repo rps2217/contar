@@ -17,8 +17,7 @@ import {
   type Unsubscribe,
 } from 'firebase/firestore';
 import type { DisplayProduct, ProductDetail, Warehouse } from '@/types/product';
-import { toast } from "@/hooks/use-toast";
-import { dateToTimestamp, timestampToDate } from '@/lib/firebase-helpers';
+import { toast } from "@/hooks/use-toast"; // Assuming useToast can be called from here, otherwise pass toast func or handle UI feedback differently
 
 // --- Helper to check Firestore instance ---
 function ensureDbInitialized() {
@@ -68,10 +67,10 @@ export const setCountingListItem = async (userId: string, warehouseId: string, p
     const itemDocRef = doc(getCountingListCollectionRef(userId, warehouseId), product.barcode.trim());
     
     const dataToSet: Omit<DisplayProduct, 'barcode' | 'warehouseId' | 'lastUpdated'> & { firestoreLastUpdated: any } = {
-      description: product.description || `Producto ${product.barcode.trim()}`,
-      provider: product.provider || "Desconocido",
-      stock: product.stock ?? 0,
-      count: product.count ?? 0,
+      description: product.description?.trim() || `Producto ${product.barcode.trim()}`,
+      provider: product.provider?.trim() || "Desconocido",
+      stock: (typeof product.stock === 'number' && !isNaN(product.stock)) ? product.stock : 0,
+      count: (typeof product.count === 'number' && !isNaN(product.count)) ? product.count : 0,
       expirationDate: (product.expirationDate && typeof product.expirationDate === 'string' && product.expirationDate.trim() !== "")
                        ? product.expirationDate.trim()
                        : null,
@@ -216,7 +215,7 @@ export const subscribeToWarehouses = (
     if (onErrorCallback) onErrorCallback(new Error("Firestore (db) is not initialized."));
     return () => {};
   }
-  if (!userId || userId.trim() === "") {
+   if (!userId || userId.trim() === "") {
     console.warn(`[subscribeToWarehouses] User ID ('${userId}') is missing. Aborting subscription.`);
     callback([]);
     return () => {};
@@ -262,6 +261,8 @@ export const deleteWarehouseFromFirestore = async (userId: string, warehouseId: 
   if (!warehouseId || warehouseId.trim() === "") throw new Error(`Warehouse ID is missing or empty. Received: '${warehouseId}'`);
   try {
     const warehouseDocRef = doc(getWarehousesCollectionRef(userId), warehouseId);
+    // Considerar la eliminación de la subcolección de conteo asociada si es necesario
+    // await clearCountingListForWarehouseInFirestore(userId, warehouseId); // Descomentar si se desea esta lógica
     await deleteDoc(warehouseDocRef);
   } catch (error: any) {
     console.error(`Error deleting warehouse ${warehouseId} for user ${userId} from Firestore:`, error);
@@ -276,15 +277,148 @@ export const deleteWarehouseFromFirestore = async (userId: string, warehouseId: 
   }
 };
 
-// --- Product Catalog Operations (Firestore) ---
-// Functions related to productCatalog in Firestore are removed as per request
-// to manage product catalog via IndexedDB primarily.
-// The functions like getProductFromCatalog, getAllProductsFromCatalog, etc.,
-// that were previously here for Firestore are now removed.
 
-// --- Counting History Operations (Firestore) ---
-// Functions related to countingHistory in Firestore are removed as per request
-// to simplify and because the UI for history was removed.
-// The functions like saveCountingHistoryToFirestore, getCountingHistoryFromFirestore, etc.,
-// that were previously here for Firestore are now removed.
-    
+// --- Product Catalog Operations (Firestore) ---
+const getProductCatalogCollectionRef = (userId: string) => {
+  ensureDbInitialized();
+  if (!db) throw new Error("Firestore (db) is not initialized for getProductCatalogCollectionRef.");
+  if (!userId || userId.trim() === "") {
+    throw new Error(`User ID is missing or empty for getProductCatalogCollectionRef. Received: '${userId}'`);
+  }
+  return collection(db, `users/${userId}/productCatalog`);
+};
+
+export const addOrUpdateProductInCatalog = async (userId: string, product: ProductDetail): Promise<void> => {
+  ensureDbInitialized();
+  if (!db) throw new Error("Firestore (db) is not initialized for addOrUpdateProductInCatalog.");
+  if (!userId || userId.trim() === "") throw new Error(`User ID is missing or empty. Received: '${userId}'`);
+  if (!product || !product.barcode || product.barcode.trim() === "") {
+    throw new Error("Product data or barcode is missing/empty for addOrUpdateProductInCatalog.");
+  }
+
+  try {
+    const productDocRef = doc(getProductCatalogCollectionRef(userId), product.barcode.trim());
+    const dataToSave: ProductDetail = {
+      barcode: product.barcode.trim(),
+      description: product.description?.trim() || `Producto ${product.barcode.trim()}`,
+      provider: product.provider?.trim() || "Desconocido",
+      stock: (typeof product.stock === 'number' && !isNaN(product.stock)) ? product.stock : 0,
+      expirationDate: (product.expirationDate && typeof product.expirationDate === 'string' && product.expirationDate.trim() !== "")
+                       ? product.expirationDate.trim()
+                       : null,
+    };
+    await setDoc(productDocRef, dataToSave, { merge: true });
+  } catch (error: any) {
+    console.error(`Error adding/updating product ${product.barcode} in catalog for user ${userId}:`, error);
+    if (typeof window !== 'undefined') requestAnimationFrame(() => toast({ variant: "destructive", title: "Error Catálogo (Nube)", description: `No se pudo guardar el producto en el catálogo: ${error.message}` }));
+    throw error;
+  }
+};
+
+export const getProductFromCatalog = async (userId: string, barcode: string): Promise<ProductDetail | undefined> => {
+  ensureDbInitialized();
+  if (!db) throw new Error("Firestore (db) is not initialized for getProductFromCatalog.");
+  if (!userId || userId.trim() === "") throw new Error(`User ID is missing or empty. Received: '${userId}'`);
+  if (!barcode || barcode.trim() === "") throw new Error("Barcode is missing or empty for getProductFromCatalog.");
+
+  try {
+    const productDocRef = doc(getProductCatalogCollectionRef(userId), barcode.trim());
+    const docSnap = await getDoc(productDocRef);
+    if (docSnap.exists()) {
+      return docSnap.data() as ProductDetail;
+    }
+    return undefined;
+  } catch (error: any) {
+    console.error(`Error fetching product ${barcode} from catalog for user ${userId}:`, error);
+    if (typeof window !== 'undefined') requestAnimationFrame(() => toast({ variant: "destructive", title: "Error Catálogo (Nube)", description: `No se pudo obtener el producto del catálogo: ${error.message}` }));
+    throw error;
+  }
+};
+
+export const getAllProductsFromCatalog = async (userId: string): Promise<ProductDetail[]> => {
+  ensureDbInitialized();
+  if (!db) throw new Error("Firestore (db) is not initialized for getAllProductsFromCatalog.");
+  if (!userId || userId.trim() === "") throw new Error(`User ID is missing or empty. Received: '${userId}'`);
+
+  try {
+    const q = query(getProductCatalogCollectionRef(userId), orderBy('description'));
+    const querySnapshot = await getDocs(q);
+    const products: ProductDetail[] = [];
+    querySnapshot.forEach((docSnap) => products.push(docSnap.data() as ProductDetail));
+    return products;
+  } catch (error: any) {
+    console.error(`Error fetching all products from catalog for user ${userId}:`, error);
+    if (typeof window !== 'undefined') requestAnimationFrame(() => toast({ variant: "destructive", title: "Error Catálogo (Nube)", description: `No se pudieron cargar los productos del catálogo: ${error.message}` }));
+    return []; // Return empty array on error
+  }
+};
+
+export const deleteProductFromCatalog = async (userId: string, barcode: string): Promise<void> => {
+  ensureDbInitialized();
+  if (!db) throw new Error("Firestore (db) is not initialized for deleteProductFromCatalog.");
+  if (!userId || userId.trim() === "") throw new Error(`User ID is missing or empty. Received: '${userId}'`);
+  if (!barcode || barcode.trim() === "") throw new Error("Barcode is missing or empty for deleteProductFromCatalog.");
+
+  try {
+    const productDocRef = doc(getProductCatalogCollectionRef(userId), barcode.trim());
+    await deleteDoc(productDocRef);
+  } catch (error: any) {
+    console.error(`Error deleting product ${barcode} from catalog for user ${userId}:`, error);
+    if (typeof window !== 'undefined') requestAnimationFrame(() => toast({ variant: "destructive", title: "Error Catálogo (Nube)", description: `No se pudo eliminar el producto del catálogo: ${error.message}` }));
+    throw error;
+  }
+};
+
+export const addProductsToCatalog = async (userId: string, products: ProductDetail[]): Promise<void> => {
+  ensureDbInitialized();
+  if (!db) throw new Error("Firestore (db) is not initialized for addProductsToCatalog.");
+  if (!userId || userId.trim() === "") throw new Error(`User ID is missing or empty. Received: '${userId}'`);
+  if (!products || products.length === 0) return;
+
+  try {
+    const batch = writeBatch(db);
+    const catalogRef = getProductCatalogCollectionRef(userId);
+    products.forEach((product) => {
+      if (product && product.barcode && product.barcode.trim() !== "") {
+        const productDocRef = doc(catalogRef, product.barcode.trim());
+        const dataToSave: ProductDetail = {
+          barcode: product.barcode.trim(),
+          description: product.description?.trim() || `Producto ${product.barcode.trim()}`,
+          provider: product.provider?.trim() || "Desconocido",
+          stock: (typeof product.stock === 'number' && !isNaN(product.stock)) ? product.stock : 0,
+          expirationDate: (product.expirationDate && typeof product.expirationDate === 'string' && product.expirationDate.trim() !== "")
+                           ? product.expirationDate.trim()
+                           : null,
+        };
+        batch.set(productDocRef, dataToSave, { merge: true });
+      }
+    });
+    await batch.commit();
+  } catch (error: any) {
+    console.error(`Error batch adding products to catalog for user ${userId}:`, error);
+    if (typeof window !== 'undefined') requestAnimationFrame(() => toast({ variant: "destructive", title: "Error Catálogo (Nube)", description: `No se pudieron agregar los productos al catálogo: ${error.message}` }));
+    throw error;
+  }
+};
+
+export const clearProductCatalogInFirestore = async (userId: string): Promise<void> => {
+  ensureDbInitialized();
+  if (!db) throw new Error("Firestore (db) is not initialized for clearProductCatalogInFirestore.");
+  if (!userId || userId.trim() === "") throw new Error(`User ID is missing or empty. Received: '${userId}'`);
+
+  try {
+    const catalogRef = getProductCatalogCollectionRef(userId);
+    const querySnapshot = await getDocs(catalogRef);
+    if (querySnapshot.empty) return;
+
+    const batch = writeBatch(db);
+    querySnapshot.forEach((docSnapshot) => {
+      batch.delete(docSnapshot.ref);
+    });
+    await batch.commit();
+  } catch (error: any) {
+    console.error(`Error clearing product catalog in Firestore for user ${userId}:`, error);
+    if (typeof window !== 'undefined') requestAnimationFrame(() => toast({ variant: "destructive", title: "Error Catálogo (Nube)", description: `No se pudo borrar el catálogo de la nube: ${error.message}` }));
+    throw error;
+  }
+};

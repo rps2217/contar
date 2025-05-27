@@ -1,3 +1,4 @@
+
 // src/lib/firestore-service.ts
 import { db } from '@/lib/firebase';
 import {
@@ -15,8 +16,8 @@ import {
   onSnapshot,
   type Unsubscribe,
 } from 'firebase/firestore';
-import type { DisplayProduct, ProductDetail, Warehouse, CountingHistoryEntry } from '@/types/product';
-import { toast } from "@/hooks/use-toast";
+import type { DisplayProduct, ProductDetail, Warehouse } from '@/types/product';
+import { toast } from "@/hooks/use-toast"; // Assuming useToast can be used here for user feedback
 
 // --- Helper to check Firestore instance ---
 function ensureDbInitialized() {
@@ -26,6 +27,167 @@ function ensureDbInitialized() {
     // For critical operations, we might throw an error or return a rejected promise.
   }
 }
+
+// --- Product Catalog Operations (Firestore) ---
+const getProductCatalogCollectionRef = (userId: string) => {
+  ensureDbInitialized();
+  if (!db) throw new Error("Firestore (db) is null or not initialized for getProductCatalogCollectionRef.");
+  if (!userId || userId.trim() === "") {
+    throw new Error(`User ID is missing or empty for getProductCatalogCollectionRef. Received: '${userId}'`);
+  }
+  return collection(db, `users/${userId}/productCatalog`);
+};
+
+export const addOrUpdateProductInCatalog = async (userId: string, product: ProductDetail): Promise<void> => {
+  ensureDbInitialized();
+  if (!db) throw new Error("Firestore (db) is null or not initialized for addOrUpdateProductInCatalog.");
+  if (!userId || userId.trim() === "") {
+    throw new Error(`User ID is missing or empty for addOrUpdateProductInCatalog. Received: '${userId}'`);
+  }
+  if (!product || !product.barcode || product.barcode.trim() === "") {
+    throw new Error("Product data or barcode is missing/incomplete for addOrUpdateProductInCatalog.");
+  }
+
+  try {
+    const productDocRef = doc(getProductCatalogCollectionRef(userId), product.barcode.trim());
+    const dataToSave: ProductDetail = {
+      barcode: product.barcode.trim(),
+      description: product.description?.trim() || `Producto ${product.barcode.trim()}`,
+      provider: product.provider?.trim() || "Desconocido",
+      stock: (typeof product.stock === 'number' && !isNaN(product.stock)) ? product.stock : 0,
+      expirationDate: (product.expirationDate && typeof product.expirationDate === 'string' && product.expirationDate.trim() !== "")
+                       ? product.expirationDate.trim()
+                       : null,
+    };
+    await setDoc(productDocRef, dataToSave, { merge: true });
+  } catch (error: any) {
+    console.error(`Error adding/updating product ${product.barcode} in catalog for user ${userId}:`, error);
+    if (typeof window !== 'undefined') requestAnimationFrame(() => toast({ variant: "destructive", title: "Error Catálogo (Nube)", description: `No se pudo guardar el producto en el catálogo: ${error.message}` }));
+    throw error;
+  }
+};
+
+export const getProductFromCatalog = async (userId: string, barcode: string): Promise<ProductDetail | undefined> => {
+  ensureDbInitialized();
+  if (!db) throw new Error("Firestore (db) is null or not initialized for getProductFromCatalog.");
+  if (!userId || userId.trim() === "") {
+    throw new Error(`User ID is missing or empty for getProductFromCatalog. Received: '${userId}'`);
+  }
+  if (!barcode || barcode.trim() === "") {
+    throw new Error(`Barcode is missing or empty for getProductFromCatalog. Received: '${barcode}'`);
+  }
+  try {
+    const productDocRef = doc(getProductCatalogCollectionRef(userId), barcode.trim());
+    const docSnap = await getDoc(productDocRef);
+    if (docSnap.exists()) {
+      return docSnap.data() as ProductDetail;
+    }
+    return undefined;
+  } catch (error: any) {
+    console.error(`Error fetching product ${barcode} from catalog for user ${userId}:`, error);
+    throw error;
+  }
+};
+
+export const getAllProductsFromCatalog = async (userId: string): Promise<ProductDetail[]> => {
+  ensureDbInitialized();
+  if (!db) {
+    console.warn("Firestore (db) is null or not initialized for getAllProductsFromCatalog. Returning empty array.");
+    return [];
+  }
+  if (!userId || userId.trim() === "") {
+     console.warn(`User ID is missing or empty for getAllProductsFromCatalog. Received: '${userId}'. Returning empty array.`);
+    return [];
+  }
+  try {
+    const q = query(getProductCatalogCollectionRef(userId), orderBy('description')); // Or orderBy barcode
+    const querySnapshot = await getDocs(q);
+    const products: ProductDetail[] = [];
+    querySnapshot.forEach((docSnap) => {
+      products.push(docSnap.data() as ProductDetail);
+    });
+    return products;
+  } catch (error: any) {
+    console.error(`Error fetching all products from catalog for user ${userId}:`, error);
+    if (typeof window !== 'undefined') requestAnimationFrame(() => toast({ variant: "destructive", title: "Error Catálogo (Nube)", description: `No se pudo cargar el catálogo: ${error.message}` }));
+    return []; // Return empty array on error to prevent crashes
+  }
+};
+
+export const deleteProductFromCatalog = async (userId: string, barcode: string): Promise<void> => {
+  ensureDbInitialized();
+  if (!db) throw new Error("Firestore (db) is null or not initialized for deleteProductFromCatalog.");
+  if (!userId || userId.trim() === "") {
+    throw new Error(`User ID is missing or empty for deleteProductFromCatalog. Received: '${userId}'`);
+  }
+  if (!barcode || barcode.trim() === "") {
+    throw new Error(`Barcode is missing or empty for deleteProductFromCatalog. Received: '${barcode}'`);
+  }
+  try {
+    const productDocRef = doc(getProductCatalogCollectionRef(userId), barcode.trim());
+    await deleteDoc(productDocRef);
+  } catch (error: any) {
+    console.error(`Error deleting product ${barcode} from catalog for user ${userId}:`, error);
+    if (typeof window !== 'undefined') requestAnimationFrame(() => toast({ variant: "destructive", title: "Error Catálogo (Nube)", description: `No se pudo eliminar el producto del catálogo: ${error.message}` }));
+    throw error;
+  }
+};
+
+export const addProductsToCatalog = async (userId: string, products: ProductDetail[]): Promise<void> => {
+  ensureDbInitialized();
+  if (!db) throw new Error("Firestore (db) is null or not initialized for addProductsToCatalog.");
+  if (!userId || userId.trim() === "") {
+    throw new Error(`User ID is missing or empty for addProductsToCatalog. Received: '${userId}'`);
+  }
+  if (!products || products.length === 0) return;
+
+  try {
+    const batch = writeBatch(db);
+    products.forEach((product) => {
+      if (product && product.barcode && product.barcode.trim() !== "") {
+        const productDocRef = doc(getProductCatalogCollectionRef(userId), product.barcode.trim());
+        const dataToSave: ProductDetail = {
+          barcode: product.barcode.trim(),
+          description: product.description?.trim() || `Producto ${product.barcode.trim()}`,
+          provider: product.provider?.trim() || "Desconocido",
+          stock: (typeof product.stock === 'number' && !isNaN(product.stock)) ? product.stock : 0,
+          expirationDate: (product.expirationDate && typeof product.expirationDate === 'string' && product.expirationDate.trim() !== "")
+                           ? product.expirationDate.trim()
+                           : null,
+        };
+        batch.set(productDocRef, dataToSave, { merge: true });
+      }
+    });
+    await batch.commit();
+  } catch (error: any) {
+    console.error(`Error adding products in batch to catalog for user ${userId}:`, error);
+    if (typeof window !== 'undefined') requestAnimationFrame(() => toast({ variant: "destructive", title: "Error Catálogo (Nube)", description: `No se pudo guardar los productos en el catálogo: ${error.message}` }));
+    throw error;
+  }
+};
+
+export const clearProductCatalogInFirestore = async (userId: string): Promise<void> => {
+  ensureDbInitialized();
+  if (!db) throw new Error("Firestore (db) is null or not initialized for clearProductCatalogInFirestore.");
+  if (!userId || userId.trim() === "") {
+    throw new Error(`User ID is missing or empty for clearProductCatalogInFirestore. Received: '${userId}'`);
+  }
+  try {
+    const catalogRef = getProductCatalogCollectionRef(userId);
+    const querySnapshot = await getDocs(catalogRef);
+    if (querySnapshot.empty) return;
+
+    const batch = writeBatch(db);
+    querySnapshot.forEach((docSnapshot) => {
+      batch.delete(docSnapshot.ref);
+    });
+    await batch.commit();
+  } catch (error: any) {
+    console.error(`Error clearing product catalog for user ${userId}:`, error);
+    if (typeof window !== 'undefined') requestAnimationFrame(() => toast({ variant: "destructive", title: "Error Catálogo (Nube)", description: `No se pudo borrar el catálogo: ${error.message}` }));
+    throw error;
+  }
+};
 
 
 // --- Counting List Operations (Firestore) ---
@@ -67,17 +229,19 @@ export const setCountingListItem = async (userId: string, warehouseId: string, p
   try {
     const itemDocRef = doc(getCountingListCollectionRef(userId, warehouseId), product.barcode.trim());
     
-    // Asegurar que expirationDate sea null si es undefined o cadena vacía
     const expirationDateToSave = (product.expirationDate && typeof product.expirationDate === 'string' && product.expirationDate.trim() !== "")
                                   ? product.expirationDate.trim()
                                   : null;
 
-    const dataToSet: Omit<DisplayProduct, 'barcode' | 'warehouseId' | 'lastUpdated'> & { firestoreLastUpdated: any } = {
+    // Explicitly construct the object for Firestore, ensuring no undefined fields from DisplayProduct
+    // that aren't meant for this specific Firestore document structure.
+    const dataToSet = {
       description: product.description?.trim() || `Producto ${product.barcode.trim()}`,
       provider: product.provider?.trim() || "Desconocido",
       stock: (typeof product.stock === 'number' && !isNaN(product.stock)) ? product.stock : 0,
       count: (typeof product.count === 'number' && !isNaN(product.count)) ? product.count : 0,
       expirationDate: expirationDateToSave,
+      lastUpdated: product.lastUpdated || new Date().toISOString(), // Use existing client lastUpdated or new one
       firestoreLastUpdated: serverTimestamp(),
     };
 
@@ -104,7 +268,7 @@ export const deleteCountingListItem = async (userId: string, warehouseId: string
   }
 
   try {
-    const itemDocRef = doc(getCountingListCollectionRef(userId, warehouseId), barcode);
+    const itemDocRef = doc(getCountingListCollectionRef(userId, warehouseId), barcode.trim());
     await deleteDoc(itemDocRef);
   } catch (error: any) {
     console.error(`Error eliminando item de lista de conteo ${barcode} para usuario ${userId}, almacén ${warehouseId} de Firestore:`, error);
@@ -177,7 +341,6 @@ export const subscribeToCountingList = (
           provider: data.provider || "Desconocido",
           stock: data.stock ?? 0,
           count: data.count ?? 0,
-          // Convertir Timestamp de Firestore a cadena ISO para lastUpdated
           lastUpdated: firestoreTimestamp ? firestoreTimestamp.toDate().toISOString() : (data.lastUpdated || new Date(0).toISOString()),
           expirationDate: (data.expirationDate && typeof data.expirationDate === 'string' && data.expirationDate.trim() !== "") ? data.expirationDate.trim() : null,
         });
@@ -222,8 +385,8 @@ export const subscribeToWarehouses = (
   }
    if (!userId || userId.trim() === "") {
     console.warn(`[subscribeToWarehouses] User ID ('${userId}') está ausente. Cancelando suscripción.`);
-    callback([]); // Devuelve una lista vacía si no hay usuario
-    return () => {}; // Devuelve una función de desuscripción vacía
+    callback([]); 
+    return () => {}; 
   }
   const q = query(getWarehousesCollectionRef(userId), orderBy('name'));
   
@@ -234,8 +397,8 @@ export const subscribeToWarehouses = (
       querySnapshot.forEach((docSnap) => {
         const data = docSnap.data();
         warehouses.push({
-            id: docSnap.id, // Usar docSnap.id como el ID del almacén
-            name: data.name || `Almacén ${docSnap.id}` // Asegurar que name tenga un valor
+            id: docSnap.id, 
+            name: data.name || `Almacén ${docSnap.id}` 
         });
       });
       callback(warehouses);
@@ -257,7 +420,6 @@ export const addOrUpdateWarehouseInFirestore = async (userId: string, warehouse:
   }
   try {
     const warehouseDocRef = doc(getWarehousesCollectionRef(userId), warehouse.id.trim());
-    // Solo guardar name y id, ya que son los campos de la interfaz Warehouse
     await setDoc(warehouseDocRef, {name: warehouse.name.trim().toUpperCase(), id: warehouse.id.trim()}, { merge: true });
   } catch (error: any) {
     console.error(`Error añadiendo/actualizando almacén ${warehouse.id} para usuario ${userId} en Firestore:`, error);
@@ -274,7 +436,6 @@ export const deleteWarehouseFromFirestore = async (userId: string, warehouseId: 
   try {
     const warehouseDocRef = doc(getWarehousesCollectionRef(userId), warehouseId);
     await deleteDoc(warehouseDocRef);
-    // Considerar la eliminación de la subcolección de conteo asociada si es necesario
     await clearCountingListForWarehouseInFirestore(userId, warehouseId);
   } catch (error: any) {
     console.error(`Error eliminando almacén ${warehouseId} para usuario ${userId} de Firestore:`, error);
@@ -289,6 +450,4 @@ export const deleteWarehouseFromFirestore = async (userId: string, warehouseId: 
   }
 };
 
-// --- NO Product Catalog Operations in Firestore ---
-// Las funciones como getAllProductsFromCatalog, addOrUpdateProductInCatalog, etc., han sido eliminadas.
-// El catálogo de productos se gestiona con IndexedDB a través de src/lib/database.ts
+    

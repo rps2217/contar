@@ -1,4 +1,3 @@
-
 // src/components/product-database.tsx
 "use client";
 
@@ -6,8 +5,8 @@ import type { ProductDetail } from '@/types/product';
 import { useToast } from "@/hooks/use-toast";
 import { cn, debounce } from "@/lib/utils";
 import {
-    Filter, Play, Loader2, Save, Trash, Upload, Edit, AlertTriangle, Plus // Added Plus here
-} from "lucide-react";
+    Filter, Play, Loader2, Save, Trash, Upload, Edit, AlertTriangle, Plus
+} from "lucide-react"; // Plus importado
 
 import * as React from "react";
 import { useCallback, useEffect, useState, useMemo, useRef } from "react";
@@ -28,59 +27,42 @@ import { es } from 'date-fns/locale';
 import { GOOGLE_SHEET_URL_LOCALSTORAGE_KEY } from '@/lib/constants';
 import { useLocalStorage } from '@/hooks/use-local-storage';
 
-
-// IndexedDB functions (as a cache/fallback for the catalog)
-import {
-    getAllProductsFromDB as getAllProductsFromIndexedDB,
-    addOrUpdateProductToDB as addOrUpdateProductToIndexedDB,
-    deleteProductFromDB as deleteProductFromIndexedDB,
-    addProductsToDB as addProductsToIndexedDB,
-    clearProductDatabase as clearProductDatabaseInIndexedDB,
-} from '@/lib/database';
-
-// Firestore functions (master source for the catalog)
-import {
-  getAllProductsFromCatalog,
-  addOrUpdateProductInCatalog,
-  deleteProductFromCatalog,
-  addProductsToCatalog,
-  clearProductCatalogInFirestore,
-} from '@/lib/firestore-service';
-
+// Las funciones de IndexedDB se manejan ahora en page.tsx
+// import { getAllProductsFromDB as getAllProductsFromIndexedDB, ... } from '@/lib/database';
 
 const SEARCH_DEBOUNCE_MS = 300;
 
  interface ProductDatabaseProps {
-  userId: string | null;
-  catalogProducts: ProductDetail[]; // Received from parent (Home.tsx), sourced from Firestore
-  isLoadingExternal: boolean;
-  processingStatus: string;
-  setProcessingStatus: (status: string) => void;
-  onEditProductRequest: (product: ProductDetail) => void;
-  // Callbacks to parent (Home.tsx) to handle Firestore operations and state updates
-  onLoadFromGoogleSheet: (sheetUrlOrId: string) => Promise<void>;
-  onAddOrUpdateLocalProduct: (product: ProductDetail) => Promise<void>; // This will call the handler in page.tsx
-  onDeleteLocalProduct: (barcode: string) => Promise<void>; // This will call the handler in page.tsx
-  onClearCatalogRequest: () => void; // To open confirmation dialog in parent
-  onStartCountByProvider: (products: ProductDetail[]) => void;
+  userId: string | null; // Todavía necesario para cualquier lógica futura específica del usuario
+  catalogProducts: ProductDetail[]; // Recibido de page.tsx, que ahora obtiene de IndexedDB
+  isLoadingCatalog: boolean; // Indicador de carga específico para el catálogo
+  processingStatus: string; // Para mensajes de estado
+  setProcessingStatus: (status: string) => void; // Para actualizar mensajes de estado
+  
+  onLoadFromGoogleSheet: (sheetUrlOrId: string) => Promise<void>; // Llamado desde page.tsx
+  onAddOrUpdateProduct: (product: ProductDetail) => Promise<void>; // Llamado desde page.tsx
+  onDeleteProduct: (barcode: string) => Promise<void>; // Llamado desde page.tsx
+  onClearCatalogRequest: () => void; // Para abrir diálogo de confirmación en page.tsx
+  onStartCountByProvider: (products: ProductDetail[]) => void; // Llamado desde page.tsx
+  onEditProductRequest: (product: ProductDetail) => void; // Para abrir diálogo de edición en page.tsx
  }
 
 
 const ProductDatabaseComponent: React.FC<ProductDatabaseProps> = ({
     userId,
-    catalogProducts, // Use this prop for displaying products
-    isLoadingExternal = false,
+    catalogProducts, // Lista de productos del catálogo (desde IndexedDB vía page.tsx)
+    isLoadingCatalog, // Indicador de si el catálogo se está cargando/sincronizando
     processingStatus,
-    setProcessingStatus,
-    onEditProductRequest,
+    setProcessingStatus, // Aún se usa para el estado de carga de GS
     onLoadFromGoogleSheet,
-    onAddOrUpdateLocalProduct, // Renamed for clarity, points to handleAddOrUpdateCatalogProduct in page.tsx
-    onDeleteLocalProduct,      // Renamed for clarity, points to handleDeleteCatalogProduct in page.tsx
+    onAddOrUpdateProduct, // Se conecta con handleAddOrUpdateCatalogProduct en page.tsx
+    onDeleteProduct,      // Se conecta con handleDeleteCatalogProduct en page.tsx
     onClearCatalogRequest,
-    onStartCountByProvider
+    onStartCountByProvider,
+    onEditProductRequest
  }) => {
   const { toast } = useToast();
-  const [isLoadingLocal, setIsLoadingLocal] = useState(false);
+  // isLoadingLocal ya no es necesario, se usa isLoadingCatalog de props
   const [googleSheetUrlOrId, setGoogleSheetUrlOrId] = useLocalStorage<string>(
       GOOGLE_SHEET_URL_LOCALSTORAGE_KEY, ""
   );
@@ -93,6 +75,13 @@ const ProductDatabaseComponent: React.FC<ProductDatabaseProps> = ({
     return () => { isMountedRef.current = false; };
   }, []);
 
+  // Ya no hay carga directa de productos aquí, se reciben como prop 'catalogProducts'
+  // useEffect(() => {
+  //   if (userId) {
+  //     loadLocalCatalog(); // Esta función ahora está en page.tsx como synchronizeAndLoadCatalog
+  //   }
+  // }, [userId, loadLocalCatalog]);
+
   const handleGoogleSheetUrlOrIdChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     setGoogleSheetUrlOrId(e.target.value);
   };
@@ -102,7 +91,8 @@ const ProductDatabaseComponent: React.FC<ProductDatabaseProps> = ({
       requestAnimationFrame(() => toast({ variant: "destructive", title: "URL/ID Requerido" }));
       return;
     }
-    // This now calls the function passed from Home.tsx, which handles Firestore & IndexedDB cache
+    // Llama a la función pasada por props, que ahora está en page.tsx
+    // y maneja la lógica de fetchGoogleSheetData y la actualización de IndexedDB
     await onLoadFromGoogleSheet(googleSheetUrlOrId);
   };
 
@@ -137,7 +127,7 @@ const ProductDatabaseComponent: React.FC<ProductDatabaseProps> = ({
 
   const filteredProducts = useMemo(() => {
     const lowerSearchTerm = searchTerm.toLowerCase();
-    return catalogProducts // Use catalogProducts prop directly
+    return catalogProducts
       .filter(product => {
         if (!product || !product.barcode) return false;
         const matchesSearch = !lowerSearchTerm ||
@@ -148,15 +138,13 @@ const ProductDatabaseComponent: React.FC<ProductDatabaseProps> = ({
         const matchesProvider = selectedProviderFilter === 'all' || (product.provider || "Desconocido") === selectedProviderFilter;
         return matchesSearch && matchesProvider;
       })
-      // Sorting is now handled by the parent component (Home.tsx) which gets data from Firestore
-      // .sort((a, b) => (a.description || '').localeCompare(b.description || ''));
+      // El ordenamiento ahora se hace en page.tsx antes de pasar catalogProducts
   }, [catalogProducts, searchTerm, selectedProviderFilter]);
 
-  //isLoading combines external and local loading states
-  const isLoading = isLoadingExternal || isLoadingLocal;
+  const isLoading = isLoadingCatalog || (processingStatus !== ""); // Considerar ambos
 
   const handleAddNewProductClick = () => {
-    // Calls the prop function which opens EditProductDialog in Home.tsx with product = null
+    // Llama a la prop que abre EditProductDialog en page.tsx
     onEditProductRequest({ barcode: '', description: '', provider: '', stock: 0, expirationDate: null });
   };
 
@@ -237,7 +225,7 @@ const ProductDatabaseComponent: React.FC<ProductDatabaseProps> = ({
              </Button>
          </div>
          <p id="google-sheet-info" className="text-xs text-muted-foreground mt-1">
-            Columnas: 1=Código, 2=Descripción, 6=Stock, 10=Proveedor. (Opcional Col 3=Vencimiento YYYY-MM-DD). Asegúrese que la hoja tenga permisos de 'cualquiera con el enlace puede ver'.
+            Columnas: 1=Código, 2=Descripción, 3=Vencimiento (YYYY-MM-DD opcional), 6=Stock, 10=Proveedor. Asegúrese que la hoja tenga permisos de 'cualquiera con el enlace puede ver'.
          </p>
          {processingStatus && (
              <div className="mt-4 space-y-1">
@@ -246,30 +234,30 @@ const ProductDatabaseComponent: React.FC<ProductDatabaseProps> = ({
                  </p>
              </div>
          )}
-         {isLoadingExternal && !processingStatus && (
+         {isLoadingCatalog && !processingStatus && ( // Usar isLoadingCatalog aquí
               <div className="flex justify-center items-center py-6">
                  <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
-                 <span className="ml-2 text-muted-foreground">Sincronizando catálogo desde la nube...</span>
+                 <span className="ml-2 text-muted-foreground">Cargando catálogo...</span>
               </div>
          )}
           <Button
                 variant="destructive"
-                onClick={onClearCatalogRequest} // Uses prop from parent
+                onClick={onClearCatalogRequest} 
                 disabled={isLoading || catalogProducts.length === 0}
                 className="mt-4 w-full sm:w-auto"
-                title="Eliminar todos los productos del catálogo (nube y local)"
+                title="Eliminar todos los productos del catálogo local (IndexedDB)"
             >
                  <Trash className="mr-2 h-4 w-4" /> Borrar Catálogo Completo
             </Button>
        </div>
 
        <ProductTable
-           products={filteredProducts} // Use the filtered list based on catalogProducts prop
-           isLoading={isLoadingExternal && !processingStatus} // Show loading if global load or local load without specific status
-           onEdit={(product) => onEditProductRequest(product)}
+           products={filteredProducts}
+           isLoading={isLoadingCatalog && !processingStatus} // isLoadingCatalog para la tabla
+           onEdit={(product) => onEditProductRequest(product)} // Llama a la prop de page.tsx
            onDeleteRequest={(product) => {
              if (userId && product.barcode) {
-                onDeleteLocalProduct(product.barcode); // Calls handler in page.tsx
+                onDeleteProduct(product.barcode); // Llama a la prop de page.tsx
              }
            }}
        />
@@ -296,7 +284,7 @@ const ProductTable: React.FC<ProductTableProps> = React.memo(({
   return (
     <ScrollArea className="h-[calc(100vh-500px)] md:h-[calc(100vh-450px)] border rounded-lg shadow-sm bg-card dark:bg-card">
       <Table>
-        <TableCaption>Productos en el catálogo. Click en la descripción para editar.</TableCaption>
+        <TableCaption>Productos en el catálogo local (IndexedDB). Click en la descripción para editar.</TableCaption>
         <TableHeader className="sticky top-0 bg-muted/50 z-10 shadow-sm">
           <TableRow>
             <TableHead className="w-[20%] sm:w-[15%] px-2 sm:px-4 py-3 text-left text-xs font-medium uppercase tracking-wider">Código Barras</TableHead>
@@ -367,134 +355,7 @@ const ProductTable: React.FC<ProductTableProps> = React.memo(({
 });
 ProductTable.displayName = 'ProductTable';
 
-// --- Google Sheet Data Fetching Logic ---
-const extractSpreadsheetIdAndGid = (input: string): { spreadsheetId: string | null; gid: string } => {
-    if (!input) return { spreadsheetId: null, gid: '0' };
-  
-    let spreadsheetId: string | null = null;
-    const sheetUrlPattern = /\/spreadsheets\/d\/([a-zA-Z0-9-_]+)(?:\/.*)?/;
-    const idMatch = input.match(sheetUrlPattern);
-  
-    if (idMatch && idMatch[1]) {
-        spreadsheetId = idMatch[1];
-    } else if (!input.includes('/') && input.length > 30 && input.length < 50 && /^[a-zA-Z0-9-_]+$/.test(input)) {
-        spreadsheetId = input;
-    }
-  
-    const gidMatch = input.match(/[#&]gid=([0-9]+)/);
-    const gid = gidMatch ? gidMatch[1] : '0';
-  
-    return { spreadsheetId, gid };
-  };
-  
-async function fetchGoogleSheetData(sheetUrlOrId: string): Promise<ProductDetail[]> {
-    const { spreadsheetId, gid } = extractSpreadsheetIdAndGid(sheetUrlOrId);
-  
-    if (!spreadsheetId) {
-      console.warn("[fetchGoogleSheetData] Could not extract spreadsheet ID from input:", sheetUrlOrId);
-      throw new Error("URL/ID de Hoja de Google inválido. Asegúrate de que la URL sea válida o que el ID sea correcto.");
-    }
-  
-    const csvExportUrl = `https://docs.google.com/spreadsheets/d/${spreadsheetId}/export?format=csv&gid=${gid}`;
-    let response: Response;
-  
-    try {
-      const urlWithCacheBust = `${csvExportUrl}&_=${new Date().getTime()}`;
-      response = await fetch(urlWithCacheBust, { cache: "no-store" });
-    } catch (error: any) {
-      let userMessage = "Error de red al obtener la hoja. Verifique su conexión y la URL/ID.";
-      if (error.message?.includes('Failed to fetch')) {
-          userMessage += " Posible problema de CORS, conectividad, o la URL/ID es incorrecta. Asegúrese de que la hoja tenga permisos de 'cualquiera con el enlace puede ver'.";
-      } else {
-          userMessage += ` Detalle: ${error.message}`;
-      }
-      console.error("[fetchGoogleSheetData] Network error:", error);
-      throw new Error(userMessage);
-    }
-  
-    if (!response.ok) {
-      const status = response.status;
-      const statusText = response.statusText;
-      let errorBody = "No se pudo leer el cuerpo del error.";
-      try { errorBody = await response.text(); } catch { /* no-op */ }
-  
-      let userMessage = `Error ${status} al obtener datos. `;
-      if (status === 400) userMessage += "Solicitud incorrecta.";
-      else if (status === 403) userMessage += "Acceso denegado. Asegúrese de que la hoja tenga permisos de 'cualquiera con el enlace puede ver'.";
-      else if (status === 404) userMessage += "Hoja no encontrada.";
-      else userMessage += ` ${statusText}. Detalle: ${errorBody.substring(0, 200)}`;
-      
-      console.error("[fetchGoogleSheetData] Google Sheet fetch error details:", { status, statusText, errorBody, csvExportUrl });
-      throw new Error(userMessage);
-    }
-  
-    const csvText = await response.text();
-  
-    return new Promise((resolve, reject) => {
-      if (typeof Papa === 'undefined') {
-        console.error("[fetchGoogleSheetData] PapaParse (Papa) is not defined/loaded.");
-        reject(new Error("La librería PapaParse (Papa) no está cargada."));
-        return;
-      }
-  
-      Papa.parse<string[]>(csvText, {
-        skipEmptyLines: true,
-        complete: (results) => {
-          if (results.errors.length > 0) {
-              results.errors.forEach(err => console.warn(`[fetchGoogleSheetData] PapaParse error: ${err.message} on row ${err.row}. Code: ${err.code}. Type: ${err.type}`));
-          }
-          const csvData = results.data;
-          const products: ProductDetail[] = [];
-  
-          if (csvData.length <= 1) {
-            resolve(products);
-            return;
-          }
-          
-          const BARCODE_COLUMN_INDEX = 0; // Columna 1
-          const DESCRIPTION_COLUMN_INDEX = 1; // Columna 2
-          const STOCK_COLUMN_INDEX = 5; // Columna 6
-          const PROVIDER_COLUMN_INDEX = 9; // Columna 10
-          const EXPIRATION_DATE_COLUMN_INDEX = 2; 
-  
-          for (let i = 1; i < csvData.length; i++) {
-            const values = csvData[i];
-            if (!values || values.length === 0 || values.every(v => !v?.trim())) continue;
-  
-            const barcode = values[BARCODE_COLUMN_INDEX]?.trim();
-            if (!barcode) {
-              console.warn(`[fetchGoogleSheetData] Fila ${i + 1} omitida: Código de barras vacío o faltante.`);
-              continue;
-            }
-  
-            const description = values[DESCRIPTION_COLUMN_INDEX]?.trim();
-            const provider = values[PROVIDER_COLUMN_INDEX]?.trim();
-            const stockStr = values[STOCK_COLUMN_INDEX]?.trim();
-            const expirationDateStr = values[EXPIRATION_DATE_COLUMN_INDEX]?.trim();
-  
-            const finalDescription = description || `Producto ${barcode}`;
-            const finalProvider = provider || "Desconocido";
-  
-            let stock = 0;
-            if (stockStr) {
-              const parsedStock = parseInt(stockStr, 10);
-              if (!isNaN(parsedStock) && parsedStock >= 0) {
-                stock = parsedStock;
-              } else {
-                console.warn(`[fetchGoogleSheetData] Valor de stock inválido "${stockStr}" para código ${barcode} en fila ${i + 1}. Usando 0.`);
-              }
-            }
-            
-            const expirationDate: string | null = (expirationDateStr && expirationDateStr.trim() !== "") ? expirationDateStr.trim() : null;
-  
-            products.push({ barcode, description: finalDescription, provider: finalProvider, stock, expirationDate });
-          }
-          resolve(products);
-        },
-        error: (error: any) => {
-          console.error("[fetchGoogleSheetData] PapaParse CSV parsing error:", error);
-          reject(new Error(`Error al analizar el archivo CSV desde Google Sheet: ${error.message}`));
-        }
-      });
-    });
-}
+// La lógica de fetchGoogleSheetData y extractSpreadsheetIdAndGid ahora reside en page.tsx
+// o en un archivo de utilidades, y se llama desde page.tsx.
+// ProductDatabaseComponent solo invoca la prop onLoadFromGoogleSheet.
+

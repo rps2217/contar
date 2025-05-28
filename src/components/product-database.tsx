@@ -41,13 +41,13 @@ const SEARCH_DEBOUNCE_MS = 300;
   userId: string | null;
   catalogProducts: ProductDetail[];
   isLoadingCatalog: boolean;
-  processingStatus: string;
-  googleSheetUrl: string; // Renamed from googleSheetUrlOrId for clarity
-  setGoogleSheetUrl: (url: string) => void; // Renamed from setGoogleSheetUrlOrId
+  processingStatus: string; // For Google Sheet load status primarily
+  googleSheetUrl: string;
+  setGoogleSheetUrl: (url: string) => void; // For useLocalStorage hook in parent
 
   onLoadFromGoogleSheet: (sheetUrlOrId: string) => Promise<void>;
   onAddOrUpdateProduct: (product: ProductDetail) => Promise<void>;
-  onDeleteProductRequest: (barcode: string) => void; // Changed to request to match pattern
+  onDeleteProductRequest: (barcode: string) => void;
   onClearCatalogRequest: () => void;
   onStartCountByProvider: (products: ProductDetail[]) => void;
   onEditProductRequest: (product: ProductDetail) => void;
@@ -56,19 +56,20 @@ const SEARCH_DEBOUNCE_MS = 300;
 
 const ProductDatabaseComponent: React.FC<ProductDatabaseProps> = ({
     userId,
-    catalogProducts = [],
-    isLoadingCatalog,
-    processingStatus: parentProcessingStatus,
-    googleSheetUrl,
-    setGoogleSheetUrl,
+    catalogProducts = [], // Default to empty array
+    isLoadingCatalog: parentIsLoadingCatalog, // Prop for general catalog loading from parent
+    processingStatus: parentProcessingStatus,  // Prop for specific processing status (e.g. GS load)
+    googleSheetUrl, // This comes from useLocalStorage in parent
+    setGoogleSheetUrl, // This updates the useLocalStorage in parent
     onLoadFromGoogleSheet,
-    onAddOrUpdateProduct,
+    onAddOrUpdateProduct, // This will now call a handler in page.tsx that interacts with Firestore
     onDeleteProductRequest,
     onClearCatalogRequest,
     onStartCountByProvider,
     onEditProductRequest
  }) => {
   const { toast } = useToast();
+  // localGoogleSheetUrl is for the input field, to avoid updating localStorage on every keystroke
   const [localGoogleSheetUrl, setLocalGoogleSheetUrl] = useState(googleSheetUrl);
   const [searchTerm, setSearchTerm] = useState("");
   const [selectedProviderFilter, setSelectedProviderFilter] = useState<string>("all");
@@ -79,10 +80,12 @@ const ProductDatabaseComponent: React.FC<ProductDatabaseProps> = ({
     return () => { isMountedRef.current = false; };
   }, []);
 
+  // Sync localGoogleSheetUrl if the prop from useLocalStorage changes
   useEffect(() => {
-    // Sync localGoogleSheetUrl if the prop changes (e.g., loaded from localStorage initially)
-    setLocalGoogleSheetUrl(googleSheetUrl);
-  }, [googleSheetUrl]);
+    if (googleSheetUrl !== localGoogleSheetUrl) {
+      setLocalGoogleSheetUrl(googleSheetUrl);
+    }
+  }, [googleSheetUrl, localGoogleSheetUrl]);
 
 
   const handleLoadFromGoogleSheetClick = async () => {
@@ -90,8 +93,10 @@ const ProductDatabaseComponent: React.FC<ProductDatabaseProps> = ({
       requestAnimationFrame(() => toast({ variant: "destructive", title: "URL/ID Requerido", description: "Por favor, ingrese la URL o ID de la Hoja de Google." }));
       return;
     }
+    // Call the handler from page.tsx, which now contains the full logic
+    // including fetchGoogleSheetData, saving to Firestore, and updating IndexedDB cache
     await onLoadFromGoogleSheet(localGoogleSheetUrl.trim());
-    // The parent (page.tsx) will call setGoogleSheetUrl (from useLocalStorage) on success.
+    // setGoogleSheetUrl(localGoogleSheetUrl.trim()); // This will be called by parent on success via useLocalStorage
   };
 
   const providerOptions = useMemo(() => {
@@ -125,9 +130,9 @@ const ProductDatabaseComponent: React.FC<ProductDatabaseProps> = ({
 
   const filteredProducts = useMemo(() => {
     const lowerSearchTerm = searchTerm.toLowerCase();
-    return (catalogProducts || [])
+    return (catalogProducts || []) // Ensure catalogProducts is an array
       .filter(product => {
-        if (!product || !product.barcode) return false;
+        if (!product || !product.barcode) return false; // Basic check for valid product object
         const matchesSearch = !lowerSearchTerm ||
                               (product.description || '').toLowerCase().includes(lowerSearchTerm) ||
                               product.barcode.includes(lowerSearchTerm) ||
@@ -138,7 +143,8 @@ const ProductDatabaseComponent: React.FC<ProductDatabaseProps> = ({
       })
   }, [catalogProducts, searchTerm, selectedProviderFilter]);
 
-  const isLoading = isLoadingCatalog || (parentProcessingStatus !== "");
+  // isLoading combines the general catalog loading state from parent and any specific processing status
+  const isLoading = parentIsLoadingCatalog || (parentProcessingStatus !== "" && parentProcessingStatus !== "Catálogo local cargado." && parentProcessingStatus !== "Catálogo local vacío.");
 
   const handleAddNewProductClick = () => {
     onEditProductRequest({ barcode: '', description: '', provider: '', stock: 0, expirationDate: null });
@@ -205,49 +211,50 @@ const ProductDatabaseComponent: React.FC<ProductDatabaseProps> = ({
              </CardTitle>
              <CardDescription>
                 Pega la URL completa de tu Hoja de Google o su ID. Asegúrate que la hoja tenga permisos de 'cualquiera con el enlace puede ver'.
+                La carga actualizará tu catálogo local (IndexedDB).
              </CardDescription>
            </CardHeader>
            <CardContent className="space-y-3">
             <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
                 <Label htmlFor="google-sheet-url" className="sr-only">URL de Hoja de Google</Label>
                 <Input
-                id="google-sheet-url"
-                type="text"
-                placeholder="URL completa o ID de Hoja de Google"
-                value={localGoogleSheetUrl}
-                onChange={(e) => setLocalGoogleSheetUrl(e.target.value)} // Usa estado local
-                className="flex-grow h-10 bg-background"
-                aria-describedby="google-sheet-info"
-                disabled={isLoading} // Solo deshabilita si hay una carga general del catálogo
+                    id="google-sheet-url"
+                    type="text"
+                    placeholder="URL completa o ID de Hoja de Google"
+                    value={localGoogleSheetUrl} // Usa el estado local
+                    onChange={(e) => setLocalGoogleSheetUrl(e.target.value)}
+                    className="flex-grow h-10 bg-background"
+                    aria-describedby="google-sheet-info"
+                    disabled={isLoading && parentProcessingStatus.includes("Google Sheet")} // Deshabilitar solo si la carga de GS está en curso
                 />
-                <Button 
-                    variant="secondary" 
-                    disabled={isLoading || !localGoogleSheetUrl.trim()} // Deshabilita si está cargando o el input está vacío
+                <Button
+                    variant="secondary"
+                    disabled={isLoading || !localGoogleSheetUrl.trim()}
                     onClick={handleLoadFromGoogleSheetClick}
                     className="h-10"
                 >
-                    {(isLoadingCatalog && parentProcessingStatus.includes("Google Sheet")) || (parentProcessingStatus.includes("Cargando desde Google Sheet")) ? 
+                    {(isLoading && parentProcessingStatus.includes("Google Sheet")) ?
                       <Loader2 className="mr-2 h-4 w-4 animate-spin" /> :
                       <Upload className="mr-2 h-4 w-4" />
                     }
-                    {(isLoadingCatalog && parentProcessingStatus.includes("Google Sheet")) || (parentProcessingStatus.includes("Cargando desde Google Sheet")) ? 'Cargando...' : 'Cargar Datos'}
+                    {(isLoading && parentProcessingStatus.includes("Google Sheet")) ? 'Cargando...' : 'Cargar Datos'}
                 </Button>
             </div>
             <p id="google-sheet-info" className="text-xs text-muted-foreground mt-1">
-                Columnas esperadas: 1=Código, 2=Descripción, 6=Stock, 10=Proveedor. La columna 3 (Vencimiento YYYY-MM-DD) es opcional.
+                Columnas: 1=Código, 2=Descripción, 3=Vencimiento(Opcional YYYY-MM-DD), 6=Stock, 10=Proveedor.
             </p>
             </CardContent>
             <CardFooter className="flex flex-col items-start space-y-2">
-                {parentProcessingStatus && (
+                {parentProcessingStatus && parentProcessingStatus !== "Catálogo local cargado." && parentProcessingStatus !== "Catálogo local vacío." && (
                     <div className="w-full text-center p-2 bg-muted/50 rounded-md">
                         <p className="text-sm text-muted-foreground">
                             {parentProcessingStatus}
                         </p>
                     </div>
                 )}
-                <Button
+                 <Button
                     variant="destructive"
-                    onClick={onClearCatalogRequest}
+                    onClick={onClearCatalogRequest} // Esto llama a la función en page.tsx
                     disabled={isLoading || (catalogProducts || []).length === 0}
                     className="w-full sm:w-auto"
                     title="Eliminar todos los productos del catálogo local (IndexedDB)"
@@ -260,11 +267,11 @@ const ProductDatabaseComponent: React.FC<ProductDatabaseProps> = ({
 
        <ProductTable
            products={filteredProducts}
-           isLoading={isLoadingCatalog && !parentProcessingStatus} // Pasa el estado de carga del catálogo
+           isLoading={parentIsLoadingCatalog && !parentProcessingStatus} // Mostrar carga solo si el catálogo general se está cargando
            onEdit={onEditProductRequest}
-           onDeleteRequest={(product) => { // Modificado para coincidir con la prop
-             if (userId && product.barcode) {
-                onDeleteProductRequest(product.barcode);
+           onDeleteRequest={(productBarcode) => { // onDeleteRequest en ProductTable espera barcode
+             if (userId && productBarcode) {
+                onDeleteProductRequest(productBarcode); // Llama a la función en page.tsx
              }
            }}
        />
@@ -279,7 +286,7 @@ interface ProductTableProps {
   products: ProductDetail[];
   isLoading: boolean;
   onEdit: (product: ProductDetail) => void;
-  onDeleteRequest: (barcode: string) => void; // Cambiado para aceptar solo barcode
+  onDeleteRequest: (barcode: string) => void;
 }
 
 const ProductTable: React.FC<ProductTableProps> = React.memo(({
@@ -296,14 +303,14 @@ const ProductTable: React.FC<ProductTableProps> = React.memo(({
           <TableRow>
             <TableHead className="w-[20%] sm:w-[15%] px-2 sm:px-4 py-3 text-left text-xs font-medium uppercase tracking-wider">Código Barras</TableHead>
             <TableHead className="w-[30%] sm:w-[25%] px-2 sm:px-4 py-3 text-left text-xs font-medium uppercase tracking-wider">Descripción</TableHead>
-            <TableHead className="w-[20%] sm:w-[20%] px-2 sm:px-4 py-3 text-left text-xs font-medium uppercase tracking-wider">Proveedor</TableHead>
+            <TableHead className="w-[20%] sm:w-[20%] px-2 sm:px-4 py-3 text-left text-xs font-medium uppercase tracking-wider hidden md:table-cell">Proveedor</TableHead>
             <TableHead className="w-[10%] sm:w-[10%] px-2 sm:px-4 py-3 text-center text-xs font-medium uppercase tracking-wider">Stock</TableHead>
-            <TableHead className="w-[10%] sm:w-[15%] px-2 sm:px-4 py-3 text-center text-xs font-medium uppercase tracking-wider">Vencimiento</TableHead>
+            <TableHead className="w-[10%] sm:w-[15%] px-2 sm:px-4 py-3 text-center text-xs font-medium uppercase tracking-wider hidden md:table-cell">Vencimiento</TableHead>
             <TableHead className="w-[10%] sm:w-[15%] px-2 sm:px-4 py-3 text-center text-xs font-medium uppercase tracking-wider">Acciones</TableHead>
           </TableRow>
         </TableHeader>
         <TableBody>
-          {isLoading ? ( // Mostrar loader prioritariamente
+          {isLoading ? (
             <TableRow>
               <TableCell colSpan={6} className="text-center py-10 text-muted-foreground">
                 <div className="flex justify-center items-center">
@@ -332,12 +339,12 @@ const ProductTable: React.FC<ProductTableProps> = React.memo(({
                  >
                     {product.description}
                 </TableCell>
-                 <TableCell className="px-2 sm:px-4 py-3">{product.provider || 'N/A'}</TableCell>
+                 <TableCell className="px-2 sm:px-4 py-3 hidden md:table-cell">{product.provider || 'N/A'}</TableCell>
                 <TableCell className="px-2 sm:px-4 py-3 text-center tabular-nums">
                   {product.stock ?? 0}
                 </TableCell>
                 <TableCell
-                    className={cn("px-2 sm:px-4 py-3 text-center tabular-nums text-xs",
+                    className={cn("px-2 sm:px-4 py-3 text-center tabular-nums text-xs hidden md:table-cell",
                         isValidExp && expirationDateObj && new Date() > expirationDateObj ? 'text-red-500 font-semibold' : ''
                     )}
                     title={isValidExp && expirationDateObj ? `Vence: ${format(expirationDateObj, 'PP', {locale: es})}` : 'Sin fecha'}
@@ -348,7 +355,7 @@ const ProductTable: React.FC<ProductTableProps> = React.memo(({
                     <Button variant="ghost" size="icon" onClick={() => onEdit(product)} className="text-blue-600 hover:text-blue-700 h-7 w-7" title="Editar Producto">
                         <Edit className="h-4 w-4"/>
                     </Button>
-                    <Button variant="ghost" size="icon" onClick={() => onDeleteProductRequest(product.barcode)} className="text-red-600 hover:text-red-700 h-7 w-7" title="Eliminar Producto">
+                    <Button variant="ghost" size="icon" onClick={() => onDeleteRequest(product.barcode)} className="text-red-600 hover:text-red-700 h-7 w-7" title="Eliminar Producto">
                         <Trash className="h-4 w-4"/>
                     </Button>
                 </TableCell>
@@ -366,5 +373,3 @@ ProductTable.displayName = 'ProductTable';
 // Moved fetchGoogleSheetData and extractSpreadsheetIdAndGid to page.tsx
 // to centralize data fetching and state management logic.
 // Ensure Papa is imported in page.tsx if fetchGoogleSheetData is moved there.
-
-```

@@ -11,7 +11,7 @@ import {
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label"; // Added for login form
+import { Label } from "@/components/ui/label";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import {
     Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
@@ -26,7 +26,6 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 
-
 import { format, isValid, parseISO } from 'date-fns';
 import { es } from 'date-fns/locale';
 import {
@@ -37,7 +36,7 @@ import {
 } from "lucide-react";
 import React, { useCallback, useEffect, useRef, useState, useMemo, useTransition } from "react";
 
-// IndexedDB functions for Product Catalog
+// IndexedDB functions (Product Catalog as local cache, History)
 import {
   getProductFromDB as getProductFromIndexedDB,
   getAllProductsFromDB as getAllProductsFromIndexedDB,
@@ -45,9 +44,13 @@ import {
   deleteProductFromDB as deleteProductFromIndexedDB,
   clearProductDatabase as clearProductDatabaseInIndexedDB,
   addProductsToDB as addProductsToIndexedDB,
-} from '@/lib/database';
+} from '@/lib/database'; // Using IndexedDB for product catalog
 
-// Firestore functions (Warehouses, CountingList)
+// Firebase db instance for Firestore operations
+import { db } from '@/lib/firebase'; 
+import { writeBatch, doc, collection } from 'firebase/firestore';
+
+// Firestore functions
 import {
   subscribeToWarehouses,
   addOrUpdateWarehouseInFirestore,
@@ -56,6 +59,13 @@ import {
   deleteCountingListItem,
   subscribeToCountingList,
   clearCountingListForWarehouseInFirestore,
+  // --- Firestore Catalog Functions ---
+  getAllProductsFromCatalog,
+  addOrUpdateProductInCatalog,
+  deleteProductFromCatalog,
+  addProductsToCatalog,
+  clearProductCatalogInFirestore,
+  getProductFromCatalog, // Keep if used for single product fetch from catalog
 } from '@/lib/firestore-service';
 
 import { SidebarLayout } from '@/components/sidebar-layout';
@@ -73,11 +83,6 @@ import { ConsolidatedView } from '@/components/consolidated-view';
 import { BarcodeEntry } from '@/components/barcode-entry';
 import { BarcodeScannerCamera } from '@/components/barcode-scanner-camera';
 
-
-// Firebase db instance for Firestore operations
-import { db } from '@/lib/firebase';
-import { writeBatch, doc, collection } from 'firebase/firestore';
-import Papa from 'papaparse';
 import { useLocalStorage } from '@/hooks/use-local-storage';
 import { playBeep } from '@/lib/helpers';
 import {
@@ -94,9 +99,10 @@ import {
     GOOGLE_SHEET_URL_LOCALSTORAGE_KEY,
     LOCAL_STORAGE_COUNTING_LIST_KEY_PREFIX,
   } from '@/lib/constants';
+import Papa from 'papaparse';
 
 
-// Moved from product-database.tsx
+// Moved from product-database.tsx to be used by handleGoogleSheetLoadToCatalog in page.tsx
 const extractSpreadsheetIdAndGid = (url: string): { spreadsheetId: string | null; gid: string | null } => {
     if (!url) return { spreadsheetId: null, gid: null };
     let spreadsheetId: string | null = null;
@@ -106,13 +112,13 @@ const extractSpreadsheetIdAndGid = (url: string): { spreadsheetId: string | null
     if (idMatch && idMatch[1]) {
         spreadsheetId = idMatch[1];
     } else if (!url.includes('/')) {
-        spreadsheetId = url;
+        spreadsheetId = url; // Assume it's just the ID
     }
     const gidRegex = /[#&]gid=([0-9]+)/;
     const gidMatch = url.match(gidRegex);
     if (gidMatch && gidMatch[1]) {
         gid = gidMatch[1];
-    } else if (spreadsheetId && !url.includes('gid=')) {
+    } else if (spreadsheetId && !url.includes('gid=')) { // If an ID was found and no gid specified, default to 0
         gid = '0';
     }
     return { spreadsheetId, gid };
@@ -125,44 +131,49 @@ async function fetchGoogleSheetData(sheetUrlOrId: string): Promise<ProductDetail
         throw new Error("No se pudo extraer el ID de la Hoja de Google de la URL/ID proporcionado.");
     }
 
-    const gidParam = gid ? `&gid=${gid}` : '&gid=0';
+    const gidParam = gid ? `&gid=${gid}` : '&gid=0'; // Default to gid=0 if not specified
     const csvUrl = `https://docs.google.com/spreadsheets/d/${spreadsheetId}/export?format=csv${gidParam}`;
 
     try {
         const response = await fetch(csvUrl);
         if (!response.ok) {
             const errorText = await response.text();
+            console.error(`Error fetching Google Sheet (HTTP ${response.status}). URL: ${csvUrl}. Response: ${errorText}`);
             throw new Error(`Error al obtener la Hoja de Google (HTTP ${response.status}). Asegúrate de que la URL sea correcta y que la hoja esté compartida como "Cualquier persona con el enlace puede ver". Detalle: ${errorText}`);
         }
         const csvText = await response.text();
-
+        
         return new Promise<ProductDetail[]>((resolve, reject) => {
             if (typeof Papa === 'undefined') {
+                 console.error("PapaParse library is not loaded.");
                 reject(new Error("La librería PapaParse no está cargada."));
                 return;
             }
 
             Papa.parse(csvText, {
-                header: false,
+                header: false, // Important: we'll use column indices
                 skipEmptyLines: true,
                 complete: (results) => {
                     const products: ProductDetail[] = [];
-                    const BARCODE_COLUMN_INDEX = 0;
-                    const DESCRIPTION_COLUMN_INDEX = 1;
-                    const STOCK_COLUMN_INDEX = 5;
-                    const PROVIDER_COLUMN_INDEX = 9;
-                    const EXPIRATION_DATE_COLUMN_INDEX = 2;
+                    // Define column indices based on your sheet structure
+                    const BARCODE_COLUMN_INDEX = 0;       // Columna 1
+                    const DESCRIPTION_COLUMN_INDEX = 1;   // Columna 2
+                    const STOCK_COLUMN_INDEX = 5;         // Columna 6
+                    const PROVIDER_COLUMN_INDEX = 9;      // Columna 10
+                    const EXPIRATION_DATE_COLUMN_INDEX = 2; // Example: Columna 3 for expiration
 
                     results.data.forEach((row: any, rowIndex) => {
+                        // Skip header row if it looks like one
                         if (rowIndex === 0 && (row as string[]).some(header =>
-                            ["codigo", "código", "cod.", "barra", "barras", "barcode", "producto", "descrip", "nombre"].some(kw => header?.toLowerCase().includes(kw))
+                            ["codigo", "código", "cod.", "barra", "barras", "barcode", "producto", "descrip", "nombre", "stock", "proveedor", "laboratorio"].some(kw => header?.toLowerCase().includes(kw))
                         )) {
+                            console.log("[fetchGoogleSheetData] Skipping header row:", row);
                             return;
                         }
 
                         const values = row as string[];
                         const barcode = values[BARCODE_COLUMN_INDEX]?.trim();
-                        if (!barcode) return;
+                        if (!barcode) return; // Skip rows without a barcode
 
                         const description = values[DESCRIPTION_COLUMN_INDEX]?.trim();
                         const provider = values[PROVIDER_COLUMN_INDEX]?.trim();
@@ -172,22 +183,27 @@ async function fetchGoogleSheetData(sheetUrlOrId: string): Promise<ProductDetail
 
                         const finalDescription = description || `Producto ${barcode}`;
                         const finalProvider = provider || "Desconocido";
+                        
                         const expirationDateStr = values[EXPIRATION_DATE_COLUMN_INDEX]?.trim();
                         const expirationDate: string | null = expirationDateStr ? expirationDateStr : null;
+
 
                         products.push({ barcode, description: finalDescription, provider: finalProvider, stock, expirationDate });
                     });
                     resolve(products);
                 },
                 error: (error: any) => {
+                    console.error("Error parsing CSV:", error);
                     reject(new Error(`Error al parsear el archivo CSV: ${error.message}`));
                 }
             });
         });
     } catch (error: any) {
+        console.error("Failed to load or process Google Sheet:", error);
         throw new Error(`No se pudo cargar o procesar la Hoja de Google: ${error.message}`);
     }
 }
+
 
 const PREDEFINED_WAREHOUSES_LIST: Warehouse[] = [
     { id: DEFAULT_WAREHOUSE_ID, name: DEFAULT_WAREHOUSE_NAME },
@@ -211,8 +227,7 @@ export default function Home() {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [loginUsername, setLoginUsername] = useState("");
   const [loginPassword, setLoginPassword] = useState("");
-  const [currentUserId, setCurrentUserId] = useLocalStorage<string | null>(LOCAL_STORAGE_USER_ID_KEY, null);
-
+  
   // --- UI State ---
   const [activeSection, setActiveSection] = useLocalStorage<string>(
     LOCAL_STORAGE_ACTIVE_SECTION_KEY,
@@ -224,8 +239,8 @@ export default function Home() {
   );
   const [mobileSheetOpen, setMobileSheetOpen] = useState(false);
   const isMobile = useIsMobile();
-  const [isDbLoading, setIsDbLoading] = useState(true);
-  const [isSyncing, setIsSyncing] = useState(false); // For Firestore operations indicator
+  const [isDbLoading, setIsDbLoading] = useState(true); // For IndexedDB and initial Firestore loads
+  const [isSyncing, setIsSyncing] = useState(false); // For Firestore write operations indicator
   const [processingStatus, setProcessingStatus] = useState<string>(""); // For GS load status
   const [focusTrigger, setFocusTrigger] = useState<number>(0);
 
@@ -233,12 +248,13 @@ export default function Home() {
   // --- Warehouse State ---
   const [warehouses, setWarehouses] = useState<Warehouse[]>(PREDEFINED_WAREHOUSES_LIST);
   const [currentWarehouseId, setCurrentWarehouseId] = useState<string>(DEFAULT_WAREHOUSE_ID);
+  const [currentUserId, setCurrentUserId] = useLocalStorage<string | null>(LOCAL_STORAGE_USER_ID_KEY, null); // Moved up
   const [isInitialFetchDoneForUserWarehouses, setIsInitialFetchDoneForUserWarehouses] = useState(false);
 
-  // --- Product Catalog State (IndexedDB as primary, React state as copy) ---
+  // --- Product Catalog State (from IndexedDB, with Firestore as master) ---
   const [catalogProducts, setCatalogProducts] = useState<ProductDetail[]>([]);
 
-  // --- Counting List State ---
+  // --- Counting List State (from localStorage, synced with Firestore) ---
   const [barcode, setBarcode] = useState("");
   const [countingList, setCountingList] = useState<DisplayProduct[]>([]);
   const [searchTerm, setSearchTerm] = useState("");
@@ -270,8 +286,7 @@ export default function Home() {
   const [googleSheetUrlForCatalog, setGoogleSheetUrlForCatalog] = useLocalStorage<string>(
     GOOGLE_SHEET_URL_LOCALSTORAGE_KEY, ""
   );
-
-  // --- Callback Functions ---
+  
   const focusBarcodeIfCounting = useCallback(() => {
     const attemptFocus = (retriesLeft: number) => {
         if (retriesLeft <= 0 || !isMountedRef.current || activeSection !== 'Contador' || !barcodeInputRef.current || isCameraScanMode) {
@@ -294,6 +309,7 @@ export default function Home() {
       });
     }
   }, [activeSection, isCameraScanMode]);
+
 
   useEffect(() => {
     if (focusTrigger > 0 && activeSection === 'Contador' && !isCameraScanMode) {
@@ -335,44 +351,88 @@ export default function Home() {
     return false;
   }, [toast, activeSection]);
 
+
+  // --- Catalog Management (Hybrid: Firestore as master, IndexedDB as local cache) ---
   const synchronizeAndLoadCatalog = useCallback(async () => {
     if (!isMountedRef.current) return;
+    if (!currentUserId) {
+      console.log("[SyncCatalog] No current user ID, cannot sync or load catalog.");
+      setCatalogProducts([]);
+      setIsDbLoading(false);
+      return;
+    }
+
+    console.log("[SyncCatalog] Starting catalog synchronization...");
     setIsDbLoading(true);
-    setProcessingStatus("Sincronizando catálogo...");
-    console.log("[SyncCatalog] Starting catalog synchronization (using IndexedDB).");
+    setProcessingStatus("Sincronizando catálogo con la nube...");
 
     try {
-        const localProducts = await getAllProductsFromIndexedDB();
-        const sortedLocalProducts = localProducts
-            .filter(p => p && p.barcode)
-            .map(p => ({
-                ...p,
-                description: p.description || `Producto ${p.barcode}`,
-                provider: p.provider || "Desconocido",
-                stock: p.stock ?? 0,
-                expirationDate: p.expirationDate || null,
-            }))
-            .sort((a, b) => (a.description || '').localeCompare(b.description || ''));
-        
-        startTransition(() => setCatalogProducts(sortedLocalProducts));
-        setProcessingStatus(localProducts.length > 0 ? "Catálogo local cargado." : "Catálogo local vacío.");
-        console.log(`[SyncCatalog] Loaded ${sortedLocalProducts.length} products from IndexedDB.`);
+      if (db) { // Check if Firestore is initialized
+        const firestoreProducts = await getAllProductsFromCatalog(currentUserId);
+        console.log(`[SyncCatalog] Fetched ${firestoreProducts.length} products from Firestore.`);
+         // Log first 5 products for inspection
+        // console.log("[SyncCatalog] First 5 products from Firestore:", firestoreProducts.slice(0, 5).map(p => JSON.parse(JSON.stringify(p))));
 
+
+        const sortedFirestoreProducts = firestoreProducts
+            .filter(p => p && p.barcode) // Ensure valid product objects
+            .map(p => ({ ...p, description: p.description || `Producto ${p.barcode}` })) // Ensure description
+            .sort((a, b) => (a.description!).localeCompare(b.description!));
+        
+        startTransition(() => {
+          setCatalogProducts(sortedFirestoreProducts);
+        });
+        setProcessingStatus("Catálogo sincronizado desde la nube.");
+
+        // Update IndexedDB cache
+        await clearProductDatabaseInIndexedDB();
+        await addProductsToIndexedDB(sortedFirestoreProducts);
+        console.log("[SyncCatalog] IndexedDB cache updated from Firestore.");
+
+      } else {
+        console.warn("[SyncCatalog] Firestore (db) not initialized. Attempting to load catalog from IndexedDB.");
+        throw new Error("Firestore not initialized"); // Force fallback to IndexedDB
+      }
     } catch (error: any) {
-        console.error("[SyncCatalog] Error during catalog synchronization (using IndexedDB):", error.message, error.stack);
+        console.error("[SyncCatalog] Error during catalog synchronization:", error.message, error.stack);
         if (isMountedRef.current) {
-            requestAnimationFrame(() => toast({ variant: "destructive", title: "Error Catálogo Local", description: "No se pudo cargar el catálogo local." }));
+            requestAnimationFrame(() => toast({ variant: "destructive", title: "Error Sincronización Catálogo", description: "No se pudo sincronizar catálogo con la nube. Usando datos locales." }));
         }
-        startTransition(() => setCatalogProducts([]));
-        setProcessingStatus("Error al cargar catálogo local.");
+        // Fallback to IndexedDB if Firestore fails
+        try {
+            console.warn("[SyncCatalog] Firestore sync failed, falling back to IndexedDB.");
+            const localProducts = await getAllProductsFromIndexedDB();
+            console.log(`[SyncCatalog] Loaded ${localProducts.length} products from IndexedDB as fallback.`);
+            // console.log("[SyncCatalog] First 5 products from IndexedDB fallback:", localProducts.slice(0, 5).map(p => JSON.parse(JSON.stringify(p))));
+
+            const sortedLocalProducts = localProducts
+                .filter(p => p && p.barcode)
+                .map(p => ({ ...p, description: p.description || `Producto ${p.barcode}` }))
+                .sort((a, b) => (a.description!).localeCompare(b.description!));
+
+            startTransition(() => {
+              setCatalogProducts(sortedLocalProducts);
+            });
+            setProcessingStatus(localProducts.length > 0 ? "Catálogo local cargado." : "Catálogo local vacío. Sincronización falló.");
+        } catch (dbError: any) {
+            console.error("[SyncCatalog] Error loading catalog from IndexedDB as fallback:", dbError.message, dbError.stack);
+            startTransition(() => {
+              setCatalogProducts([]);
+            });
+            setProcessingStatus("Error al cargar catálogo local.");
+        }
     } finally {
-        if (isMountedRef.current) setIsDbLoading(false);
-        console.log("[SyncCatalog] Finished catalog synchronization.");
+        if (isMountedRef.current) {
+            setIsDbLoading(false);
+             console.log("[SyncCatalog] Finished catalog synchronization attempt.");
+        }
     }
   }, [
-    toast, getAllProductsFromIndexedDB, 
-    setCatalogProducts, setIsDbLoading, setProcessingStatus, startTransition
+    currentUserId, toast, 
+    clearProductDatabaseInIndexedDB, addProductsToIndexedDB, getAllProductsFromIndexedDB, // IndexedDB
+    setCatalogProducts, setIsDbLoading, setProcessingStatus, getAllProductsFromCatalog // Firestore
   ]);
+
 
   const handleAddProduct = useCallback(async (scannedBarcode?: string) => {
     if (!isMountedRef.current) return;
@@ -387,8 +447,10 @@ export default function Home() {
       }
       return;
     }
-    if (!currentUserId || !currentWarehouseId) {
-      if(isMountedRef.current) requestAnimationFrame(() => toast({ variant: "destructive", title: "Error", description: "No se ha seleccionado ningún almacén o no hay usuario activo." }));
+
+    if (!currentUserId || !currentWarehouseId || !db) { // Check db for Firestore operations
+      requestAnimationFrame(() => toast({ variant: "destructive", title: "Error", description: "Falta ID de usuario, almacén o conexión a la base de datos en la nube." }));
+      if (!scannedBarcode) { setBarcode(""); setFocusTrigger(prev => prev + 1); }
       return;
     }
 
@@ -405,30 +467,34 @@ export default function Home() {
       setLastScannedBarcode(trimmedBarcode);
       lastScannedTimeoutRef.current = setTimeout(() => { if (isMountedRef.current) setLastScannedBarcode(null); }, LAST_SCANNED_BARCODE_TIMEOUT_MS);
     }
+    
+    setIsSyncing(true); // Indicate start of potential Firestore operation
 
-    const existingProductInList = countingList.find((p) => p.barcode === trimmedBarcode && p.warehouseId === currentWarehouseId);
     let dataForFirestore: DisplayProduct;
+    const existingProductInList = countingList.find((p) => p.barcode === trimmedBarcode && p.warehouseId === currentWarehouseId);
 
     if (existingProductInList) {
         const newCount = (existingProductInList.count ?? 0) + 1;
-        dataForFirestore = { ...existingProductInList, count: newCount, lastUpdated: new Date().toISOString(), firestoreLastUpdated: new Date() }; // Ensure firestoreLastUpdated
+        dataForFirestore = { ...existingProductInList, count: newCount, lastUpdated: new Date().toISOString() };
+        // No toast for simple increment if no discrepancy or confirmation needed
     } else {
-        let baseProductData: Omit<DisplayProduct, 'barcode' | 'warehouseId' | 'count' | 'lastUpdated' | 'firestoreLastUpdated'>;
+        let baseProductData: Omit<DisplayProduct, 'barcode' | 'warehouseId' | 'count' | 'lastUpdated'| 'firestoreLastUpdated'>;
+        
         const barcodeToLookup = trimmedBarcode;
         let catalogProd = catalogProducts.find(p => p.barcode === barcodeToLookup);
 
         if (!catalogProd) {
             try {
-                catalogProd = await getProductFromIndexedDB(barcodeToLookup);
+                catalogProd = await getProductFromIndexedDB(barcodeToLookup); 
             } catch (dbError) {
                 console.error("[handleAddProduct] Error fetching from IndexedDB for fallback:", dbError);
-                catalogProd = undefined; // Ensure it's undefined if DB call fails
+                catalogProd = undefined;
             }
         }
         
         if (catalogProd && catalogProd.barcode) {
             baseProductData = {
-                description: catalogProd.description || `Producto ${trimmedBarcode}`,
+                description: catalogProd.description || `Producto ${catalogProd.barcode}`,
                 provider: catalogProd.provider || "Desconocido",
                 stock: catalogProd.stock ?? 0,
                 expirationDate: catalogProd.expirationDate || null,
@@ -441,7 +507,7 @@ export default function Home() {
                 stock: 0,
                 expirationDate: null,
             };
-            if (isMountedRef.current && activeSection !== 'Contador' && activeSection !== 'Contador Cámara') {
+             if (isMountedRef.current && activeSection !== 'Contador' && activeSection !== 'Contador Cámara') {
                 requestAnimationFrame(() => {
                     if (isMountedRef.current) {
                         toast({ variant: "destructive", title: "Producto Desconocido", description: `Agregado temporalmente. Edita en 'Catálogo'.`});
@@ -450,49 +516,52 @@ export default function Home() {
             }
             playBeep(440, 300);
         }
+
         dataForFirestore = {
             ...baseProductData,
             barcode: trimmedBarcode,
             warehouseId: currentWarehouseId,
             count: 1,
             lastUpdated: new Date().toISOString(),
-            firestoreLastUpdated: new Date(), // Ensure firestoreLastUpdated
         };
+        showDiscrepancyToastIfNeeded(dataForFirestore); 
     }
 
-    if (db && currentUserId && currentWarehouseId) {
-      setIsSyncing(true);
-      try {
-          await setCountingListItem(currentUserId, currentWarehouseId, dataForFirestore);
-          if (!existingProductInList) showDiscrepancyToastIfNeeded(dataForFirestore);
-      } catch (error: any) {
-          console.error("Error guardando en Firestore:", error);
-          if (isMountedRef.current) {
-            requestAnimationFrame(() => toast({ variant: "destructive", title: "Error de Sincronización", description: `No se pudo guardar el producto en la nube. ${error.message}` }));
-          }
-      } finally {
-          if (isMountedRef.current) setIsSyncing(false);
+    try {
+        await setCountingListItem(currentUserId, currentWarehouseId, dataForFirestore);
+    } catch (error: any) {
+        console.error("Error en handleAddProduct (guardando en Firestore o procesando):", error);
+        if (isMountedRef.current) {
+          requestAnimationFrame(() => toast({ variant: "destructive", title: "Error de Sincronización", description: `No se pudo guardar el producto en la nube. ${error.message}` }));
+        }
+    } finally {
+      if (isMountedRef.current) {
+        setIsSyncing(false);
       }
     }
-
+    
     if (!scannedBarcode && isMountedRef.current) {
-      setBarcode("");
+      setBarcode(""); 
       setFocusTrigger(prev => prev + 1);
-    } else if (scannedBarcode && isMountedRef.current && activeSection === 'Contador') {
-      setFocusTrigger(prev => prev + 1);
+    } else if (scannedBarcode && isMountedRef.current && (activeSection === 'Contador' || activeSection === 'Contador Cámara')) {
+      if (activeSection === 'Contador') { 
+         setFocusTrigger(prev => prev + 1);
+      }
     }
   }, [
     barcode, currentWarehouseId, currentUserId, lastScannedBarcode, toast, countingList, 
-    focusBarcodeIfCounting, activeSection, catalogProducts, getProductFromIndexedDB, 
+    activeSection, catalogProducts, getProductFromIndexedDB, 
     setBarcode, setIsSyncing, setLastScannedBarcode, startTransition, 
-    setCountingList, showDiscrepancyToastIfNeeded, setCountingListItem, 
+    setCountingList, showDiscrepancyToastIfNeeded, setCountingListItem, focusTrigger, setFocusTrigger,
+    focusBarcodeIfCounting
   ]);
 
   const handleBarcodeScannedFromCamera = useCallback((scannedBarcode: string) => {
     if (isMountedRef.current && activeSection === 'Contador Cámara' && isActivelyScanningByButton) {
-      handleAddProduct(scannedBarcode);
+      handleAddProduct(scannedBarcode); 
     }
   }, [activeSection, isActivelyScanningByButton, handleAddProduct]);
+
 
   useEffect(() => {
     isMountedRef.current = true;
@@ -524,35 +593,38 @@ export default function Home() {
     if (isAuthenticated && currentUserId && activeSection === 'Contador' && !isCameraScanMode) {
        setFocusTrigger(prev => prev + 1);
     }
-  }, [isAuthenticated, currentUserId, activeSection, isCameraScanMode]);
+  }, [isAuthenticated, currentUserId, activeSection, isCameraScanMode, focusTrigger]);
 
   useEffect(() => {
-    let unsubscribeFirestoreWarehouses: (() => void) = () => {};
+    let unsubscribeFirestoreWarehouses: (() => void) | null = null;
     const localUserWarehouseListKey = currentUserId ? `${LOCAL_STORAGE_WAREHOUSE_LIST_KEY_PREFIX}${currentUserId}` : null;
-    let initialWarehouses = PREDEFINED_WAREHOUSES_LIST;
 
-    if (localUserWarehouseListKey) {
-        const localStored = getLocalStorageItem<Warehouse[]>(localUserWarehouseListKey, []);
-        if (localStored.length > 0) initialWarehouses = localStored;
+    if (isMountedRef.current && localUserWarehouseListKey) {
+        const localStoredWarehouses = getLocalStorageItem<Warehouse[]>(localUserWarehouseListKey, []);
+        if (localStoredWarehouses.length > 0) {
+            startTransition(() => setWarehouses(localStoredWarehouses.sort((a,b) => a.name.localeCompare(b.name))));
+        } else if (warehouses.length === 0 || !warehouses.some(w => PREDEFINED_WAREHOUSES_LIST.some(p => p.id === w.id))) { 
+            startTransition(() => setWarehouses(PREDEFINED_WAREHOUSES_LIST.sort((a,b) => a.name.localeCompare(b.name))));
+        }
+    } else if (isMountedRef.current && !localUserWarehouseListKey && (warehouses.length === 0 || !warehouses.some(w => PREDEFINED_WAREHOUSES_LIST.some(p => p.id === w.id)))) {
+        startTransition(() => setWarehouses(PREDEFINED_WAREHOUSES_LIST.sort((a,b) => a.name.localeCompare(b.name))));
     }
-    
-    startTransition(() => setWarehouses(initialWarehouses.sort((a, b) => a.name.localeCompare(b.name))));
     
     const storedCurrentWarehouseIdKey = currentUserId ? `${LOCAL_STORAGE_CURRENT_WAREHOUSE_ID_KEY_PREFIX}${currentUserId}` : null;
     if (storedCurrentWarehouseIdKey) {
         const storedId = getLocalStorageItem<string>(storedCurrentWarehouseIdKey, DEFAULT_WAREHOUSE_ID);
-        if (initialWarehouses.some(w => w.id === storedId)) {
+        const currentWarehousesForCheck = warehouses.length > 0 ? warehouses : PREDEFINED_WAREHOUSES_LIST;
+        if (currentWarehousesForCheck.some(w => w.id === storedId)) {
             if (currentWarehouseId !== storedId) setCurrentWarehouseId(storedId);
-        } else if (initialWarehouses.length > 0 && !initialWarehouses.some(w => w.id === currentWarehouseId)){
-            const newDefaultId = initialWarehouses.find(w => w.id === DEFAULT_WAREHOUSE_ID) ? DEFAULT_WAREHOUSE_ID : initialWarehouses[0].id;
+        } else if (currentWarehousesForCheck.length > 0 && !currentWarehousesForCheck.some(w => w.id === currentWarehouseId)){
+            const newDefaultId = currentWarehousesForCheck.find(w => w.id === DEFAULT_WAREHOUSE_ID) ? DEFAULT_WAREHOUSE_ID : currentWarehousesForCheck[0].id;
             if (currentWarehouseId !== newDefaultId) setCurrentWarehouseId(newDefaultId);
         }
     }
 
-
     if (!currentUserId || !db || !isAuthenticated) {
         setIsInitialFetchDoneForUserWarehouses(false); 
-        return;
+        return () => { if(unsubscribeFirestoreWarehouses) unsubscribeFirestoreWarehouses(); };
     }
 
     let isInitialFetchForUser = !isInitialFetchDoneForUserWarehouses;
@@ -564,6 +636,9 @@ export default function Home() {
         let effectiveWarehouseList = [...fetchedWarehousesFromFirestore];
         
         if (isInitialFetchForUser && currentUserId) {
+            setIsInitialFetchDoneForUserWarehouses(true); 
+            isInitialFetchForUser = false;
+            
             const warehousesToAddBatch: Warehouse[] = [];
             PREDEFINED_WAREHOUSES_LIST.forEach(predef => {
                 if (!effectiveWarehouseList.some(fsWh => fsWh.id === predef.id)) {
@@ -580,17 +655,13 @@ export default function Home() {
                         batch.set(warehouseDocRef, wh);
                     });
                     await batch.commit();
-                    // Firestore listener will pick up these changes, no need to merge manually here.
+                     if (isMountedRef.current) setIsSyncing(false); 
+                    return; 
                 } catch (err) {
                     console.error(`[Warehouses] Failed to add predefined warehouses to Firestore for ${currentUserId}:`, err);
                     if (isMountedRef.current) requestAnimationFrame(() => toast({ variant: "destructive", title: "Error DB", description: `No se pudieron agregar almacenes predefinidos.`}));
-                } finally {
-                     if (isMountedRef.current) setIsSyncing(false);
                 }
             }
-            if (isMountedRef.current) setIsInitialFetchDoneForUserWarehouses(true);
-            isInitialFetchForUser = false; 
-             if (warehousesToAddBatch.length > 0) return; // Let onSnapshot handle the update
         }
 
         const sortedWarehouses = effectiveWarehouseList.sort((a, b) => a.name.localeCompare(b.name));
@@ -604,9 +675,14 @@ export default function Home() {
             
             if (sortedWarehouses.some(w => w.id === storedId)) {
                 currentSelectionId = storedId;
-            } else if (!sortedWarehouses.some(w => w.id === currentWarehouseId)) {
+            } else if (sortedWarehouses.length > 0 && !sortedWarehouses.some(w => w.id === currentWarehouseId)) {
                 const mainExists = sortedWarehouses.find(w => w.id === DEFAULT_WAREHOUSE_ID);
                 currentSelectionId = mainExists ? DEFAULT_WAREHOUSE_ID : (sortedWarehouses[0]?.id || DEFAULT_WAREHOUSE_ID);
+            } else if (sortedWarehouses.length === 0) { 
+                currentSelectionId = DEFAULT_WAREHOUSE_ID; 
+                 if (isMountedRef.current && !warehouses.some(w => w.id === DEFAULT_WAREHOUSE_ID)){ 
+                    setWarehouses(PREDEFINED_WAREHOUSES_LIST.sort((a,b)=>a.name.localeCompare(b.name)));
+                 }
             }
             
             if (currentWarehouseId !== currentSelectionId) {
@@ -621,7 +697,7 @@ export default function Home() {
         if (isMountedRef.current) {
             if (localUserWarehouseListKey) {
                 const fallbackWarehouses = getLocalStorageItem<Warehouse[]>(localUserWarehouseListKey, PREDEFINED_WAREHOUSES_LIST);
-                startTransition(() => {
+                 startTransition(() => {
                     setWarehouses(fallbackWarehouses.sort((a,b)=>a.name.localeCompare(b.name)));
                      const finalStoredCurrentWarehouseIdKey = currentUserId ? `${LOCAL_STORAGE_CURRENT_WAREHOUSE_ID_KEY_PREFIX}${currentUserId}` : null;
                     const storedId = finalStoredCurrentWarehouseIdKey ? getLocalStorageItem<string>(finalStoredCurrentWarehouseIdKey, DEFAULT_WAREHOUSE_ID) : DEFAULT_WAREHOUSE_ID;
@@ -636,59 +712,55 @@ export default function Home() {
         }
     });
     return () => {
-      unsubscribeFirestoreWarehouses();
+      if (unsubscribeFirestoreWarehouses) unsubscribeFirestoreWarehouses();
       if(isMountedRef.current && isSyncing) setIsSyncing(false);
     };
   }, [currentUserId, isAuthenticated, isInitialFetchDoneForUserWarehouses, toast, setIsSyncing, setCurrentWarehouseId, setWarehouses, currentWarehouseId]); 
 
   useEffect(() => {
-    let unsubscribeCountingList: (() => void) | null = null;
-    const localKey = currentUserId && currentWarehouseId ? `${LOCAL_STORAGE_COUNTING_LIST_KEY_PREFIX}${currentWarehouseId}_${currentUserId}` : null;
-
-    if (isMountedRef.current && localKey) {
-      const localList = getLocalStorageItem<DisplayProduct[]>(localKey, []);
-      if (localList.length > 0) {
-          startTransition(() => setCountingList(localList));
-      } else if (countingList.length > 0 && localList.length === 0) {
-          startTransition(() => setCountingList([]));
-      }
-    } else if (isMountedRef.current && !localKey && countingList.length > 0) {
-        startTransition(() => setCountingList([]));
-    }
-
+    let unsubscribeFirestore: (() => void) | undefined;
     if (!currentUserId || !currentWarehouseId || !isAuthenticated || !db) {
-      if (unsubscribeCountingList) unsubscribeCountingList();
-      if (isMountedRef.current && isSyncing && (activeSection === 'Contador' || activeSection === 'Contador Cámara')) setIsSyncing(false);
+      if (isMountedRef.current) {
+        startTransition(() => setCountingList(getLocalStorageItem<DisplayProduct[]>(`${LOCAL_STORAGE_COUNTING_LIST_KEY_PREFIX}${currentWarehouseId}_${currentUserId}`, [])));
+        if (isSyncing && (activeSection === 'Contador' || activeSection === 'Contador Cámara')) setIsSyncing(false);
+      }
       return;
     }
 
-    if(isMountedRef.current && (activeSection === 'Contador' || activeSection === 'Contador Cámara')) setIsSyncing(true);
-
-    unsubscribeCountingList = subscribeToCountingList(
+    if (isMountedRef.current && (activeSection === 'Contador' || activeSection === 'Contador Cámara')) {
+      setIsSyncing(true);
+      // Cargar desde localStorage primero para UI rápida
+      const localList = getLocalStorageItem<DisplayProduct[]>(`${LOCAL_STORAGE_COUNTING_LIST_KEY_PREFIX}${currentWarehouseId}_${currentUserId}`, []);
+      startTransition(() => setCountingList(localList));
+    }
+    
+    unsubscribeFirestore = subscribeToCountingList(
       currentUserId,
       currentWarehouseId,
       (productsFromFirestore) => {
         if (isMountedRef.current) {
-            startTransition(() => {
-                setCountingList(productsFromFirestore);
-                if (localKey) setLocalStorageItem(localKey, productsFromFirestore);
-            });
-             if (isMountedRef.current && isSyncing && (activeSection === 'Contador' || activeSection === 'Contador Cámara')) setIsSyncing(false);
+          startTransition(() => {
+            setCountingList(productsFromFirestore);
+            setLocalStorageItem(`${LOCAL_STORAGE_COUNTING_LIST_KEY_PREFIX}${currentWarehouseId}_${currentUserId}`, productsFromFirestore);
+          });
+          if (isSyncing && (activeSection === 'Contador' || activeSection === 'Contador Cámara')) setIsSyncing(false);
         }
       },
       (error) => {
         if (isMountedRef.current) {
-            console.warn(`[CountingList] Firestore subscription error (user ${currentUserId}, warehouse ${currentWarehouseId}). Using localStorage.`, error);
-            if (isSyncing && (activeSection === 'Contador' || activeSection === 'Contador Cámara')) setIsSyncing(false);
-            requestAnimationFrame(() => toast({ variant: "default", title: "Modo Offline (Conteo)", description: "Usando datos locales."}));
+          console.warn(`[CountingList] Firestore subscription error (user ${currentUserId}, warehouse ${currentWarehouseId}). Using localStorage.`, error);
+          if (isSyncing && (activeSection === 'Contador' || activeSection === 'Contador Cámara')) setIsSyncing(false);
+          // No mostrar toast aquí, la app sigue funcional con localStorage
         }
       }
     );
+
     return () => {
-        if (unsubscribeCountingList) unsubscribeCountingList();
-        if (isMountedRef.current && isSyncing && (activeSection === 'Contador' || activeSection === 'Contador Cámara')) setIsSyncing(false);
+      if (unsubscribeFirestore) unsubscribeFirestore();
+      if (isMountedRef.current && isSyncing && (activeSection === 'Contador' || activeSection === 'Contador Cámara')) setIsSyncing(false);
     };
   }, [currentWarehouseId, currentUserId, isAuthenticated, activeSection, toast, setIsSyncing, setCountingList]);
+
 
   const getWarehouseName = useCallback((warehouseId: string | null | undefined) => {
     if (!warehouseId) return 'N/A';
@@ -696,15 +768,15 @@ export default function Home() {
     return warehouse ? warehouse.name : `Almacén (${warehouseId.substring(0,6)}...)`;
   }, [warehouses]);
 
-  const modifyProductValue = useCallback(async (productBarcode: string, type: 'count' | 'stock', change: number) => {
-    if (!isMountedRef.current || !currentUserId || !currentWarehouseId) {
-        requestAnimationFrame(() => toast({ variant: "destructive", title: "Error", description: "No se puede modificar."}));
+ const modifyProductValue = useCallback(async (productBarcode: string, type: 'count' | 'stock', change: number) => {
+    if (!isMountedRef.current || !currentUserId || !currentWarehouseId || !db) {
+        requestAnimationFrame(() => toast({ variant: "destructive", title: "Error", description: "No se puede modificar. Verifique la conexión y el usuario."}));
         return;
     }
 
     const productInList = countingList.find(p => p.barcode === productBarcode && p.warehouseId === currentWarehouseId);
     if (!productInList) {
-         if(isMountedRef.current) requestAnimationFrame(() => toast({ variant: "destructive", title: "Error", description: `Producto no encontrado.`}));
+         if(isMountedRef.current) requestAnimationFrame(() => toast({ variant: "destructive", title: "Error", description: `Producto no encontrado en la lista actual.`}));
          return;
     }
 
@@ -716,7 +788,7 @@ export default function Home() {
         const stockValue = productInList.stock ?? 0; 
         needsConfirmation = (stockValue !== 0) &&
                             calculatedNewValue > stockValue &&
-                            originalValue <= stockValue;
+                            originalValue <= stockValue; 
     }
 
     if (type === 'count' && needsConfirmation && !isConfirmQuantityDialogOpen) {
@@ -726,29 +798,33 @@ export default function Home() {
             setConfirmQuantityNewValue(calculatedNewValue);
             setIsConfirmQuantityDialogOpen(true);
         }
-        playBeep(660, 100);
+        playBeep(660, 100); 
         return;
     }
 
     setIsSyncing(true);
     try {
-        let updatedProductData: DisplayProduct;
         if (type === 'count') {
-             updatedProductData = { ...productInList, count: calculatedNewValue, lastUpdated: new Date().toISOString(), firestoreLastUpdated: new Date() };
-             if (db && currentUserId) await setCountingListItem(currentUserId, currentWarehouseId, updatedProductData);
+             const updatedProductData: DisplayProduct = { ...productInList, count: calculatedNewValue, lastUpdated: new Date().toISOString() };
+             await setCountingListItem(currentUserId, currentWarehouseId, updatedProductData);
              showDiscrepancyToastIfNeeded(updatedProductData, calculatedNewValue);
         } else { 
-            const catalogProdToUpdate = await getProductFromIndexedDB(productBarcode); 
+            const catalogProdToUpdate = await getProductFromIndexedDB(productBarcode);
             if (catalogProdToUpdate) {
                  const updatedMasterProduct: ProductDetail = { ...catalogProdToUpdate, stock: calculatedNewValue };
                  await addOrUpdateProductToIndexedDB(updatedMasterProduct); 
-                 setCatalogProducts(prev => prev.map(p => p.barcode === productBarcode ? {...p, stock: calculatedNewValue} : p));
+                 if (db) await addOrUpdateProductInCatalog(currentUserId, updatedMasterProduct); 
                  
-                 updatedProductData = { ...productInList, stock: calculatedNewValue, lastUpdated: new Date().toISOString(), firestoreLastUpdated: new Date() };
-                 if (db && currentUserId) await setCountingListItem(currentUserId, currentWarehouseId, updatedProductData); 
+                 startTransition(() => {
+                    setCatalogProducts(prev => prev.map(p => p.barcode === productBarcode ? {...p, stock: calculatedNewValue} : p));
+                 });
+                 
+                 const updatedProductInCountingList: DisplayProduct = { ...productInList, stock: calculatedNewValue, lastUpdated: new Date().toISOString() };
+                 await setCountingListItem(currentUserId, currentWarehouseId, updatedProductInCountingList);
+                 
                  requestAnimationFrame(() => toast({ title: "Stock en Catálogo Actualizado" }));
             } else {
-                 if(isMountedRef.current) requestAnimationFrame(() => toast({ variant: "default", title: "Aviso", description: "Producto no en catálogo local."}));
+                 if(isMountedRef.current) requestAnimationFrame(() => toast({ variant: "default", title: "Aviso", description: "Producto no encontrado en catálogo local para actualizar stock."}));
                  setIsSyncing(false);
                  return;
             }
@@ -759,7 +835,7 @@ export default function Home() {
     } finally {
         if (isMountedRef.current) {
              setIsSyncing(false);
-             if (activeSection === 'Contador') setFocusTrigger(prev => prev + 1);
+             setFocusTrigger(prev => prev + 1);
         }
     }
   }, [
@@ -768,39 +844,43 @@ export default function Home() {
     setIsSyncing, setConfirmQuantityProductBarcode, setConfirmQuantityAction,
     setConfirmQuantityNewValue, setIsConfirmQuantityDialogOpen, showDiscrepancyToastIfNeeded,
     setCountingListItem, getProductFromIndexedDB, addOrUpdateProductToIndexedDB, setCatalogProducts, 
-    focusBarcodeIfCounting, // Re-added focusBarcodeIfCounting
-  ]);
+    addOrUpdateProductInCatalog, startTransition, focusTrigger, setFocusTrigger 
+]);
 
   const handleSetProductValue = useCallback(async (productBarcode: string, type: 'count' | 'stock', newValue: number, sumValue: boolean = false) => {
-    if (!isMountedRef.current || !currentUserId || !currentWarehouseId) {
-        requestAnimationFrame(() => toast({ variant: "destructive", title: "Error", description: "No se puede modificar."}));
+    if (!isMountedRef.current || !currentUserId || !currentWarehouseId || !db) {
+        requestAnimationFrame(() => toast({ variant: "destructive", title: "Error", description: "No se puede modificar. Verifique la conexión y el usuario."}));
         return;
     }
     if (newValue < 0 || isNaN(newValue)) {
         requestAnimationFrame(() => toast({ variant: "destructive", title: "Valor Inválido" }));
-        if (activeSection === 'Contador') setFocusTrigger(prev => prev + 1);
+        setFocusTrigger(prev => prev + 1);
         return;
     }
+
     const productInList = countingList.find(p => p.barcode === productBarcode && p.warehouseId === currentWarehouseId);
     if (!productInList) {
-      requestAnimationFrame(() => toast({ variant: "destructive", title: "Error", description: "Producto no encontrado." }));
+      requestAnimationFrame(() => toast({ variant: "destructive", title: "Error", description: "Producto no encontrado en la lista actual." }));
       if(isMountedRef.current) setOpenModifyDialog(null);
       return;
     }
+
     const originalValue = type === 'count' ? productInList.count ?? 0 : productInList.stock ?? 0;
     if (type === 'count' && !sumValue && newValue === originalValue && !isConfirmQuantityDialogOpen) {
         if (isMountedRef.current) setOpenModifyDialog(null);
-        if (activeSection === 'Contador') setFocusTrigger(prev => prev + 1);
+        setFocusTrigger(prev => prev + 1);
         return;
     }
+
     let calculatedValue = sumValue ? (originalValue + newValue) : newValue;
     const finalNewValue = Math.max(0, calculatedValue);
+
     let needsConfirmation = false;
     if (type === 'count') {
         const stockValue = productInList.stock ?? 0;
         needsConfirmation = (stockValue !== 0) &&
                             finalNewValue > stockValue &&
-                            (!sumValue || originalValue <= stockValue);
+                            (!sumValue || originalValue <= stockValue); 
     }
 
     if (type === 'count' && needsConfirmation && !isConfirmQuantityDialogOpen) {
@@ -813,25 +893,30 @@ export default function Home() {
         playBeep(660, 100);
         return;
     }
+
     setIsSyncing(true);
     try {
-        let updatedProductData: DisplayProduct;
         if (type === 'count') {
-            updatedProductData = { ...productInList, count: finalNewValue, lastUpdated: new Date().toISOString(), firestoreLastUpdated: new Date() };
-            if(db && currentUserId) await setCountingListItem(currentUserId, currentWarehouseId, updatedProductData);
+            const updatedProductData: DisplayProduct = { ...productInList, count: finalNewValue, lastUpdated: new Date().toISOString() };
+            await setCountingListItem(currentUserId, currentWarehouseId, updatedProductData);
             showDiscrepancyToastIfNeeded(updatedProductData, finalNewValue);
         } else { 
-            const catalogProdToUpdate = await getProductFromIndexedDB(productBarcode); 
+            const catalogProdToUpdate = await getProductFromIndexedDB(productBarcode);
             if (catalogProdToUpdate) {
                  const updatedMasterProduct: ProductDetail = { ...catalogProdToUpdate, stock: finalNewValue };
                  await addOrUpdateProductToIndexedDB(updatedMasterProduct);
-                 setCatalogProducts(prev => prev.map(p => p.barcode === productBarcode ? {...p, stock: finalNewValue} : p));
+                 if(db) await addOrUpdateProductInCatalog(currentUserId, updatedMasterProduct);
+                 
+                 startTransition(() => {
+                    setCatalogProducts(prev => prev.map(p => p.barcode === productBarcode ? {...p, stock: finalNewValue} : p));
+                 });
 
-                 updatedProductData = { ...productInList, stock: finalNewValue, lastUpdated: new Date().toISOString(), firestoreLastUpdated: new Date() };
-                 if (db && currentUserId) await setCountingListItem(currentUserId, currentWarehouseId, updatedProductData); 
+                 const updatedProductInCountingList: DisplayProduct = { ...productInList, stock: finalNewValue, lastUpdated: new Date().toISOString() };
+                 await setCountingListItem(currentUserId, currentWarehouseId, updatedProductInCountingList);
+                 
                  requestAnimationFrame(() => toast({ title: "Stock en Catálogo Actualizado" }));
             } else {
-                 if(isMountedRef.current) requestAnimationFrame(() => toast({ variant: "default", title: "Aviso", description: "Producto no en catálogo local."}));
+                 if(isMountedRef.current) requestAnimationFrame(() => toast({ variant: "default", title: "Aviso", description: "Producto no en catálogo local para actualizar stock."}));
                  setIsSyncing(false);
                  return;
             }
@@ -842,15 +927,16 @@ export default function Home() {
     } finally {
         if (isMountedRef.current) {
              setIsSyncing(false);
-            if (activeSection === 'Contador') setFocusTrigger(prev => prev + 1);
+            setFocusTrigger(prev => prev + 1);
         }
     }
     if(isMountedRef.current) setOpenModifyDialog(null);
 }, [
-    toast, countingList, currentUserId, currentWarehouseId, isConfirmQuantityDialogOpen, db, activeSection, focusBarcodeIfCounting,
+    toast, countingList, currentUserId, currentWarehouseId, isConfirmQuantityDialogOpen, db, activeSection, 
     setCountingListItem, getProductFromIndexedDB, addOrUpdateProductToIndexedDB, setCatalogProducts,
+    addOrUpdateProductInCatalog, startTransition,
     setIsSyncing, setConfirmQuantityProductBarcode, setConfirmQuantityAction, setConfirmQuantityNewValue,
-    setIsConfirmQuantityDialogOpen, setOpenModifyDialog, showDiscrepancyToastIfNeeded, 
+    setIsConfirmQuantityDialogOpen, setOpenModifyDialog, showDiscrepancyToastIfNeeded, focusTrigger, setFocusTrigger
 ]);
 
   const handleIncrement = useCallback((barcode: string, type: 'count' | 'stock') => {
@@ -862,22 +948,24 @@ export default function Home() {
   }, [modifyProductValue]);
 
  const handleConfirmQuantityChange = useCallback(async () => {
-     if (!isMountedRef.current || !confirmQuantityProductBarcode || confirmQuantityAction === null || confirmQuantityNewValue === null || !currentUserId || !currentWarehouseId) {
+     if (!isMountedRef.current || !confirmQuantityProductBarcode || confirmQuantityAction === null || confirmQuantityNewValue === null || !currentUserId || !currentWarehouseId || !db) {
          if(isMountedRef.current) setIsConfirmQuantityDialogOpen(false);
-         if (activeSection === 'Contador') setFocusTrigger(prev => prev + 1);
+         setFocusTrigger(prev => prev + 1);
          return;
      }
+
      const productInList = countingList.find(p => p.barcode === confirmQuantityProductBarcode && p.warehouseId === currentWarehouseId);
      if (!productInList) {
          if(isMountedRef.current) setIsConfirmQuantityDialogOpen(false);
-         if (activeSection === 'Contador') setFocusTrigger(prev => prev + 1);
+         setFocusTrigger(prev => prev + 1);
          return;
      }
+
     const finalConfirmedCount = Math.max(0, confirmQuantityNewValue);
     setIsSyncing(true);
     try {
-        const updatedProductForFirestore: DisplayProduct = { ...productInList, count: finalConfirmedCount, lastUpdated: new Date().toISOString(), firestoreLastUpdated: new Date() };
-        if(db && currentUserId) await setCountingListItem(currentUserId, currentWarehouseId, updatedProductForFirestore);
+        const updatedProductForFirestore: DisplayProduct = { ...productInList, count: finalConfirmedCount, lastUpdated: new Date().toISOString() };
+        await setCountingListItem(currentUserId, currentWarehouseId, updatedProductForFirestore);
         showDiscrepancyToastIfNeeded(updatedProductForFirestore, finalConfirmedCount);
     } catch (error: any) {
         if(isMountedRef.current) requestAnimationFrame(() => toast({ variant: "destructive", title: "Error Sincronización", description: error.message }));
@@ -889,15 +977,15 @@ export default function Home() {
             setConfirmQuantityAction(null);
             setConfirmQuantityNewValue(null);
             setOpenModifyDialog(null); 
-            if (activeSection === 'Contador') setFocusTrigger(prev => prev + 1);
+            setFocusTrigger(prev => prev + 1);
         }
     }
  }, [
     currentWarehouseId, currentUserId, confirmQuantityProductBarcode, confirmQuantityAction, confirmQuantityNewValue,
-    toast, countingList, db, activeSection, focusBarcodeIfCounting,
+    toast, countingList, db, activeSection, 
     setCountingListItem,
     setIsSyncing, setIsConfirmQuantityDialogOpen, setConfirmQuantityProductBarcode, setConfirmQuantityAction,
-    setConfirmQuantityNewValue, setOpenModifyDialog, showDiscrepancyToastIfNeeded, 
+    setConfirmQuantityNewValue, setOpenModifyDialog, showDiscrepancyToastIfNeeded, focusTrigger, setFocusTrigger
 ]);
 
  const handleDeleteRequest = useCallback((product: DisplayProduct) => {
@@ -906,12 +994,12 @@ export default function Home() {
   }, [setProductToDelete, setIsDeleteDialogOpen]);
 
  const confirmDelete = useCallback(async () => {
-    if (!isMountedRef.current || !productToDelete || !currentUserId || !currentWarehouseId) return;
+    if (!isMountedRef.current || !productToDelete || !currentUserId || !currentWarehouseId || !db) return;
     const {barcode: barcodeForToast, description: descriptionForToast } = productToDelete;
     setIsSyncing(true);
     try {
-        if(db && currentUserId) await deleteCountingListItem(currentUserId, currentWarehouseId, barcodeForToast);
-        if(isMountedRef.current) requestAnimationFrame(() => toast({ title: "Producto eliminado", description: `"${descriptionForToast}" (${barcodeForToast}) se eliminó de la lista.` }));
+        await deleteCountingListItem(currentUserId, currentWarehouseId, barcodeForToast);
+        if(isMountedRef.current) requestAnimationFrame(() => toast({ title: "Producto eliminado", description: `"${descriptionForToast}" se eliminó de la lista actual.` }));
     } catch (error: any) {
         if(isMountedRef.current) requestAnimationFrame(() => toast({ variant: "destructive", title: "Error Sincronización", description: error.message }));
     } finally {
@@ -919,20 +1007,20 @@ export default function Home() {
             setIsSyncing(false);
             setIsDeleteDialogOpen(false);
             setProductToDelete(null);
-            if (activeSection === 'Contador') setFocusTrigger(prev => prev + 1);
+            setFocusTrigger(prev => prev + 1);
         }
     }
  }, [
-    productToDelete, toast, currentUserId, currentWarehouseId, db, activeSection, focusBarcodeIfCounting,
+    productToDelete, toast, currentUserId, currentWarehouseId, db, activeSection, 
     deleteCountingListItem,
-    setIsSyncing, setIsDeleteDialogOpen, setProductToDelete, 
+    setIsSyncing, setIsDeleteDialogOpen, setProductToDelete, focusTrigger, setFocusTrigger
 ]);
 
  const handleClearCurrentList = useCallback(async () => {
-     if (!isMountedRef.current || !currentWarehouseId || !currentUserId) return;
+     if (!isMountedRef.current || !currentWarehouseId || !currentUserId || !db) return;
     setIsSyncing(true);
     try {
-        if(db && currentUserId) await clearCountingListForWarehouseInFirestore(currentUserId, currentWarehouseId);
+        await clearCountingListForWarehouseInFirestore(currentUserId, currentWarehouseId);
         if(isMountedRef.current) requestAnimationFrame(() => toast({ title: "Lista Borrada" }));
     } catch (error: any) {
         if(isMountedRef.current) requestAnimationFrame(() => toast({ variant: "destructive", title: "Error Sincronización", description: error.message }));
@@ -940,13 +1028,13 @@ export default function Home() {
         if(isMountedRef.current) {
             setIsSyncing(false);
             setIsDeleteListDialogOpen(false);
-            if (activeSection === 'Contador') setFocusTrigger(prev => prev + 1);
+            setFocusTrigger(prev => prev + 1);
         }
     }
  }, [
-    currentWarehouseId, toast, currentUserId, db, activeSection, focusBarcodeIfCounting,
+    currentWarehouseId, toast, currentUserId, db, activeSection, 
     clearCountingListForWarehouseInFirestore,
-    setIsSyncing, setIsDeleteListDialogOpen, 
+    setIsSyncing, setIsDeleteListDialogOpen, focusTrigger, setFocusTrigger
   ]);
 
  const handleExport = useCallback(() => {
@@ -997,16 +1085,16 @@ export default function Home() {
         console.error("Error exportando inventario:", error);
         if(isMountedRef.current) requestAnimationFrame(() => toast({ variant: "destructive", title: "Error Exportación" }));
     }
-    if (activeSection === 'Contador') setFocusTrigger(prev => prev + 1);
- }, [countingList, currentWarehouseId, toast, getWarehouseName, activeSection, focusBarcodeIfCounting]);
+    setFocusTrigger(prev => prev + 1);
+ }, [countingList, currentWarehouseId, toast, getWarehouseName, activeSection, focusTrigger, setFocusTrigger]);
 
  const handleRefreshStock = useCallback(async () => {
     if (!currentUserId || !currentWarehouseId || !isMountedRef.current || !db) {
-        requestAnimationFrame(() => toast({ title: "Error", description: "No se puede actualizar."}));
+        requestAnimationFrame(() => toast({ title: "Error", description: "No se puede actualizar. Verifique la conexión y el usuario."}));
         return;
     }
     if (!catalogProducts || catalogProducts.length === 0) { 
-        requestAnimationFrame(() => toast({ title: "Catálogo Vacío", description: "Carga el catálogo primero." }));
+        requestAnimationFrame(() => toast({ title: "Catálogo Vacío", description: "Carga el catálogo primero (desde Google Sheet o manualmente)." }));
         return;
     }
     if(isMountedRef.current) { setIsRefreshingStock(true); setIsSyncing(true); }
@@ -1025,16 +1113,15 @@ export default function Home() {
                    )
                 {
                     updatedProductCount++;
-                    const updatedItem: DisplayProduct = {
+                    const updatedItemForFirestore: DisplayProduct = {
                         ...countingProduct, 
                         description: catalogProd.description,
                         provider: catalogProd.provider,
                         stock: catalogProd.stock ?? 0,
                         expirationDate: catalogProd.expirationDate || null,
                         lastUpdated: new Date().toISOString(), 
-                        firestoreLastUpdated: new Date() // Ensure firestoreLastUpdated
                     };
-                    productsToUpdateInFirestore.push(updatedItem);
+                    productsToUpdateInFirestore.push(updatedItemForFirestore);
                 }
             }
         });
@@ -1045,26 +1132,26 @@ export default function Home() {
                 if (!itemToUpdate.barcode) return; 
                 const docRef = doc(collection(db, `users/${currentUserId}/countingLists/${currentWarehouseId}/products`), itemToUpdate.barcode);
                 const { barcode, warehouseId, ...dataToSet } = itemToUpdate; 
-                batch.set(docRef, { ...dataToSet, firestoreLastUpdated: new Date() }, { merge: true });
+                batch.set(docRef, dataToSet, { merge: true }); // firestoreLastUpdated se maneja por Firestore
             });
             await batch.commit();
         }
 
         if(updatedProductCount > 0 && isMountedRef.current) {
-            requestAnimationFrame(() => toast({ title: "Datos Actualizados", description: `${updatedProductCount} producto(s) actualizado(s).` }));
+            requestAnimationFrame(() => toast({ title: "Datos Actualizados", description: `${updatedProductCount} producto(s) actualizado(s) en la lista.` }));
         } else if (isMountedRef.current) {
-            requestAnimationFrame(() => toast({ title: "Sin Cambios", description: "Productos ya actualizados." }));
+            requestAnimationFrame(() => toast({ title: "Sin Cambios", description: "Productos en la lista ya estaban actualizados con el catálogo." }));
         }
 
     } catch (error: any) {
          if (!isMountedRef.current) return; 
          requestAnimationFrame(() => toast({ variant: "destructive", title: "Error al Actualizar", description: `No se pudo actualizar: ${error.message}` }));
     } finally {
-         if (isMountedRef.current) { setIsRefreshingStock(false); setIsSyncing(false); if (activeSection === 'Contador') setFocusTrigger(prev => prev + 1); }
+         if (isMountedRef.current) { setIsRefreshingStock(false); setIsSyncing(false); setFocusTrigger(prev => prev + 1); }
     }
  }, [
-    currentWarehouseId, toast, currentUserId, countingList, catalogProducts, db, activeSection, focusBarcodeIfCounting,
-    setIsRefreshingStock, setIsSyncing, 
+    currentWarehouseId, toast, currentUserId, countingList, catalogProducts, db, activeSection, 
+    setIsRefreshingStock, setIsSyncing, focusTrigger, setFocusTrigger
 ]);
 
  const handleOpenModifyDialog = useCallback((product: DisplayProduct, type: 'count' | 'stock') => {
@@ -1073,39 +1160,46 @@ export default function Home() {
 
  const handleCloseModifyDialog = () => {
     if(isMountedRef.current) setOpenModifyDialog(null);
-    if (activeSection === 'Contador') setFocusTrigger(prev => prev + 1);
+    setFocusTrigger(prev => prev + 1);
  };
 
- const handleAddOrUpdateCatalogProduct = useCallback(async (productData: ProductDetail) => {
-    if (!isMountedRef.current || !currentUserId || !db) {
-        requestAnimationFrame(() => toast({ variant: "destructive", title: "Error", description: "No se puede guardar en catálogo (Nube)." }));
-        return;
+  // --- Catalog Management Callbacks (to be passed to ProductDatabaseComponent) ---
+  const handleAddOrUpdateCatalogProduct = useCallback(async (productData: ProductDetail) => {
+    if (!currentUserId || !db) {
+      requestAnimationFrame(() => toast({ variant: "destructive", title: "Error", description: "No se puede guardar en catálogo: falta ID de usuario o conexión a DB." }));
+      return;
     }
-    setIsDbLoading(true);
+    setIsDbLoading(true); 
     setIsSyncing(true);
-    setProcessingStatus("Guardando en catálogo...");
+    setProcessingStatus("Guardando en catálogo (nube e local)...");
     try {
-        await addOrUpdateProductInCatalog(currentUserId, productData); 
-        await synchronizeAndLoadCatalog(); // This will refresh from Firestore and update IndexedDB cache
-        requestAnimationFrame(() => toast({ title: "Producto Guardado en Catálogo" }));
-        if(isMountedRef.current) { setProcessingStatus("Producto guardado."); setIsEditDetailDialogOpen(false); setProductToEditDetail(null); }
+      await addOrUpdateProductInCatalog(currentUserId, productData); 
+      await addOrUpdateProductToIndexedDB(productData);
+      
+      await synchronizeAndLoadCatalog(); 
+      
+      requestAnimationFrame(() => toast({ title: "Producto Guardado en Catálogo" }));
+      setProcessingStatus("Producto guardado en catálogo.");
+      setIsEditDetailDialogOpen(false);
+      setProductToEditDetail(null);
     } catch (error: any) {
-        console.error("Error guardando en catálogo:", error);
-        if (isMountedRef.current) {
-            setProcessingStatus(`Error al guardar en catálogo: ${error.message}`);
-            requestAnimationFrame(() => toast({ variant: "destructive", title: "Error Catálogo (Nube)", description: `No se pudo guardar: ${error.message}` }));
-        }
+      console.error("Error guardando producto en catálogo:", error);
+      if (isMountedRef.current) {
+        setProcessingStatus(`Error al guardar: ${error.message}`);
+        requestAnimationFrame(() => toast({ variant: "destructive", title: "Error Catálogo", description: `No se pudo guardar el producto: ${error.message}` }));
+      }
     } finally {
-        if (isMountedRef.current) { setIsDbLoading(false); setIsSyncing(false); setProcessingStatus(""); }
+      if (isMountedRef.current) { setIsDbLoading(false); setIsSyncing(false); setProcessingStatus(""); }
     }
   }, [
       currentUserId, toast, db, synchronizeAndLoadCatalog, addOrUpdateProductInCatalog, 
+      addOrUpdateProductToIndexedDB,
       setIsDbLoading, setIsSyncing, setProcessingStatus, setIsEditDetailDialogOpen, setProductToEditDetail
   ]);
 
   const handleDeleteCatalogProduct = useCallback(async (barcodeToDelete: string) => {
     if (!isMountedRef.current || !currentUserId || !db) {
-        requestAnimationFrame(() => toast({ variant: "destructive", title: "Error", description: "No se puede eliminar del catálogo (Nube)." }));
+        requestAnimationFrame(() => toast({ variant: "destructive", title: "Error", description: "No se puede eliminar del catálogo: falta ID de usuario o conexión a DB." }));
         return;
     }
     setIsDbLoading(true);
@@ -1113,53 +1207,63 @@ export default function Home() {
     setProcessingStatus("Eliminando de catálogo...");
     try {
         await deleteProductFromCatalog(currentUserId, barcodeToDelete); 
-        await synchronizeAndLoadCatalog();
+        await deleteProductFromIndexedDB(barcodeToDelete); 
+        
+        await synchronizeAndLoadCatalog(); 
+        
         requestAnimationFrame(() => toast({ title: "Producto Eliminado del Catálogo" }));
-        if(isMountedRef.current) { setProcessingStatus("Producto eliminado."); setIsEditDetailDialogOpen(false); setProductToEditDetail(null); }
+        setProcessingStatus("Producto eliminado.");
+        setIsEditDetailDialogOpen(false); 
+        setProductToEditDetail(null);
     } catch (error: any) {
-        console.error("Error eliminando de catálogo:", error);
+        console.error("Error eliminando producto del catálogo:", error);
         if (isMountedRef.current) {
             setProcessingStatus(`Error al eliminar: ${error.message}`);
-            requestAnimationFrame(() => toast({ variant: "destructive", title: "Error al Eliminar (Nube)", description: `No se pudo eliminar: ${error.message}` }));
+            requestAnimationFrame(() => toast({ variant: "destructive", title: "Error al Eliminar", description: `No se pudo eliminar: ${error.message}` }));
         }
     } finally {
         if (isMountedRef.current) { setIsDbLoading(false); setIsSyncing(false); setProcessingStatus(""); }
     }
   }, [
       currentUserId, toast, db, synchronizeAndLoadCatalog, deleteProductFromCatalog,
+      deleteProductFromIndexedDB,
       setIsDbLoading, setIsSyncing, setProcessingStatus, setIsEditDetailDialogOpen, setProductToEditDetail
   ]);
 
  const handleClearCatalog = useCallback(async () => {
     if (!isMountedRef.current || !currentUserId || !db) {
-        requestAnimationFrame(() => toast({ variant: "destructive", title: "Error", description: "No se puede borrar el catálogo (Nube)." }));
+        requestAnimationFrame(() => toast({ variant: "destructive", title: "Error", description: "No se puede borrar el catálogo: falta ID de usuario o conexión a DB." }));
         return;
     }
     setIsDbLoading(true);
     setIsSyncing(true);
-    setProcessingStatus("Borrando catálogo...");
+    setProcessingStatus("Borrando catálogo (nube e local)...");
     try {
       await clearProductCatalogInFirestore(currentUserId); 
+      await clearProductDatabaseInIndexedDB(); 
+      
       await synchronizeAndLoadCatalog(); 
+      
       requestAnimationFrame(() => toast({ title: "Catálogo Borrado" }));
-      if(isMountedRef.current) setProcessingStatus("Catálogo borrado.");
+      setProcessingStatus("Catálogo borrado.");
     } catch (error: any) {
       console.error("Error borrando catálogo:", error);
       if(isMountedRef.current) {
           setProcessingStatus(`Error al borrar: ${error.message}`);
-          requestAnimationFrame(() => toast({ variant: "destructive", title: "Error al Borrar Catálogo (Nube)", description: error.message }));
+          requestAnimationFrame(() => toast({ variant: "destructive", title: "Error al Borrar Catálogo", description: error.message }));
       }
     } finally {
       if (isMountedRef.current) { setIsDbLoading(false); setIsSyncing(false); setIsClearCatalogConfirmOpen(false); setProcessingStatus(""); }
     }
   }, [
     currentUserId, toast, db, synchronizeAndLoadCatalog, clearProductCatalogInFirestore,
+    clearProductDatabaseInIndexedDB,
     setIsDbLoading, setIsSyncing, setProcessingStatus, setIsClearCatalogConfirmOpen
   ]);
 
  const handleGoogleSheetLoadToCatalog = useCallback(async (sheetUrlOrId: string) => {
-    if (!isMountedRef.current || !currentUserId || !db) {
-      requestAnimationFrame(() => toast({ variant: "destructive", title: "Error", description: "No se puede cargar desde Google Sheet (Nube)." }));
+    if (!currentUserId || !db) {
+      requestAnimationFrame(() => toast({ variant: "destructive", title: "Error", description: "No se puede cargar desde Google Sheet: falta ID de usuario o conexión a DB." }));
       return;
     }
     if (!sheetUrlOrId) {
@@ -1172,8 +1276,11 @@ export default function Home() {
     try {
       const productsFromSheet = await fetchGoogleSheetData(sheetUrlOrId); 
       if (productsFromSheet.length > 0) {
-        await addProductsToCatalog(currentUserId, productsFromSheet); // Save to Firestore
-        await synchronizeAndLoadCatalog(); // Refresh from Firestore and update IndexedDB cache
+        await addProductsToCatalog(currentUserId, productsFromSheet); 
+        await addProductsToIndexedDB(productsFromSheet);
+        
+        await synchronizeAndLoadCatalog(); 
+        
         if (isMountedRef.current) {
             requestAnimationFrame(() => toast({ title: "Catálogo Actualizado desde Google Sheet", description: `${productsFromSheet.length} productos cargados.` }));
             setGoogleSheetUrlForCatalog(sheetUrlOrId); 
@@ -1199,18 +1306,21 @@ export default function Home() {
       }
     }
   }, [
-      currentUserId, toast, db, synchronizeAndLoadCatalog, addProductsToCatalog,
+      currentUserId, toast, db, synchronizeAndLoadCatalog, addProductsToCatalog, addProductsToIndexedDB,
       setIsDbLoading, setIsSyncing, setProcessingStatus, setGoogleSheetUrlForCatalog
   ]);
 
  const handleOpenEditDetailDialog = useCallback(async (product: ProductDetail | DisplayProduct) => {
-    if (!product || !product.barcode || !isMountedRef.current || !currentUserId || !db) {
+    if (!product || !product.barcode || !isMountedRef.current || !currentUserId ) {
         requestAnimationFrame(() => toast({ variant: "destructive", title: "Error", description: "No se puede editar." }));
         return;
     }
     if(isMountedRef.current) setIsDbLoading(true);
     try {
-        let productDataToEdit = await getProductFromCatalog(currentUserId, product.barcode); // Fetch from Firestore
+        let productDataToEdit = catalogProducts.find(p => p.barcode === product.barcode);
+        if (!productDataToEdit) {
+            productDataToEdit = await getProductFromIndexedDB(product.barcode);
+        }
 
         if (productDataToEdit) {
             startTransition(() => setProductToEditDetail({
@@ -1219,7 +1329,6 @@ export default function Home() {
                 expirationDate: productDataToEdit.expirationDate || null, 
             }));
         } else {
-            // Product not in Firestore catalog, prepare a new entry form
             const placeholderDetail: ProductDetail = {
                  barcode: product.barcode,
                  description: product.description || `Producto ${product.barcode}`,
@@ -1234,12 +1343,12 @@ export default function Home() {
     } catch (error: any) {
          if (!isMountedRef.current) return;
          console.error("Error obteniendo detalles del producto para editar:", error);
-         requestAnimationFrame(() => toast({ variant: "destructive", title: "Error Catálogo (Nube)", description: `No se pudo cargar detalle: ${error.message}` }));
+         requestAnimationFrame(() => toast({ variant: "destructive", title: "Error Catálogo", description: `No se pudo cargar detalle: ${error.message}` }));
     } finally {
          if (isMountedRef.current) setIsDbLoading(false);
     }
  }, [
-    toast, currentUserId, db, getProductFromCatalog,
+    toast, currentUserId, catalogProducts, getProductFromIndexedDB,
     setIsDbLoading, setProductToEditDetail, setIsEditDetailDialogOpen
 ]);
 
@@ -1260,6 +1369,7 @@ export default function Home() {
     if(isMountedRef.current) { setIsSyncing(true); setProcessingStatus("Iniciando conteo por proveedor..."); }
     try {
         await clearCountingListForWarehouseInFirestore(currentUserId, currentWarehouseId); 
+        
         const batch = writeBatch(db);
         productsToCount.forEach(dbProduct => {
             if (!dbProduct || !dbProduct.barcode) return;
@@ -1269,10 +1379,10 @@ export default function Home() {
                provider: dbProduct.provider || "Desconocido",
                stock: dbProduct.stock ?? 0,
                expirationDate: dbProduct.expirationDate || null,
-               count: 0,
+               count: 0, 
                lastUpdated: new Date().toISOString(), 
             };
-            batch.set(docRef, {...dataToSet, firestoreLastUpdated: new Date() }); 
+            batch.set(docRef, {...dataToSet }); 
         });
         await batch.commit();
         
@@ -1291,12 +1401,12 @@ export default function Home() {
             requestAnimationFrame(() => toast({ variant: "destructive", title: "Error Sincronización", description: `No se pudo iniciar el conteo. ${error.message}` }));
         }
     } finally {
-        if (isMountedRef.current) { setIsSyncing(false); setProcessingStatus(""); if (activeSection === 'Contador') setFocusTrigger(prev => prev + 1); }
+        if (isMountedRef.current) { setIsSyncing(false); setProcessingStatus(""); setFocusTrigger(prev => prev + 1); }
     }
   }, [
-    toast, setActiveSection, currentWarehouseId, currentUserId, db, activeSection, focusBarcodeIfCounting,
+    toast, setActiveSection, currentWarehouseId, currentUserId, db, activeSection, 
     clearCountingListForWarehouseInFirestore,
-    setIsSyncing, setProcessingStatus, setSearchTerm, 
+    setIsSyncing, setProcessingStatus, setSearchTerm, focusTrigger, setFocusTrigger
   ]);
 
   const filteredCountingList = useMemo(() => {
@@ -1328,7 +1438,7 @@ export default function Home() {
         setIsCameraScanMode(false); 
       }
     }
-  }, [setActiveSection, setIsCameraScanMode, focusBarcodeIfCounting, startTransition]);
+  }, [setActiveSection, setIsCameraScanMode, startTransition, focusTrigger, setFocusTrigger]);
 
   const toggleShowOnlyDiscrepancies = useCallback(() => {
     setShowOnlyDiscrepancies(prev => !prev);
@@ -1410,7 +1520,6 @@ export default function Home() {
     try {
       await deleteWarehouseFromFirestore(currentUserId, warehouseIdToDelete);
       requestAnimationFrame(() => toast({ title: "Almacén Eliminado", description: `"${warehouseNameForToast}" eliminado.` }));
-      // Logic for switching currentWarehouseId if the active one is deleted is handled by the useEffect listening to warehouses
     } catch (error: any) {
       if(isMountedRef.current) requestAnimationFrame(() => toast({ variant: 'destructive', title: 'Error DB', description: `No se pudo eliminar.` }));
     } finally {
@@ -1474,7 +1583,7 @@ export default function Home() {
     isCollapsed: isSidebarCollapsed,
     activeSection,
     sectionItems,
-    currentUserId, // Pasando currentUserId
+    currentUserId,
     warehouses,
     currentWarehouseId,
     handleWarehouseChange,
@@ -1513,9 +1622,9 @@ export default function Home() {
                 </div>
                 <div className="space-y-4">
                     <div>
-                        <Label htmlFor="username-login">Usuario</Label>
+                        <Label htmlFor="username">Usuario</Label>
                         <Input
-                            id="username-login"
+                            id="username"
                             type="text"
                             placeholder="Nombre de usuario"
                             value={loginUsername}
@@ -1524,9 +1633,9 @@ export default function Home() {
                         />
                     </div>
                     <div>
-                        <Label htmlFor="password-login">Contraseña</Label>
+                        <Label htmlFor="password">Contraseña</Label>
                         <Input
-                            id="password-login"
+                            id="password"
                             type="password"
                             placeholder="Contraseña"
                             value={loginPassword}
@@ -1830,7 +1939,7 @@ export default function Home() {
                <ProductDatabaseComponent
                   userId={currentUserId}
                   catalogProducts={catalogProducts}
-                  isLoadingCatalog={isDbLoading} 
+                  isLoadingCatalog={isDbLoading}
                   processingStatus={processingStatus}
                   googleSheetUrl={googleSheetUrlForCatalog}
                   setGoogleSheetUrl={setGoogleSheetUrlForCatalog}
@@ -1853,7 +1962,7 @@ export default function Home() {
                     onUpdateWarehouse={handleUpdateWarehouse} 
                     onDeleteWarehouse={handleDeleteWarehouse} 
                     onSelectWarehouse={handleWarehouseChange}
-                    isLoading={isSyncing || isTransitionPending} 
+                    isLoading={isSyncing || isTransitionPending || isDbLoading} 
                  />
              </div>
            )}
@@ -1892,7 +2001,7 @@ export default function Home() {
                     setConfirmQuantityAction(null);
                     setConfirmQuantityNewValue(null);
                 }
-                if (activeSection === 'Contador') setFocusTrigger(prev => prev + 1);
+                setFocusTrigger(prev => prev + 1);
             }
           }}
           title="Confirmar Modificación"
@@ -1910,35 +2019,35 @@ export default function Home() {
              })()
           }
           onConfirm={handleConfirmQuantityChange}
-          onCancel={() => { if(isMountedRef.current){ setIsConfirmQuantityDialogOpen(false); setConfirmQuantityProductBarcode(null); setConfirmQuantityAction(null); setConfirmQuantityNewValue(null); } if (activeSection === 'Contador') setFocusTrigger(prev => prev + 1); }}
+          onCancel={() => { if(isMountedRef.current){ setIsConfirmQuantityDialogOpen(false); setConfirmQuantityProductBarcode(null); setConfirmQuantityAction(null); setConfirmQuantityNewValue(null); } setFocusTrigger(prev => prev + 1); }}
           isProcessing={isTransitionPending || isSyncing}
       />
 
       <ConfirmationDialog
          isOpen={isDeleteDialogOpen}
-         onOpenChange={(open) => { if(isMountedRef.current) setIsDeleteDialogOpen(open); if (!open) { if(isMountedRef.current) setProductToDelete(null); if (activeSection === 'Contador') setFocusTrigger(prev => prev + 1); } }}
+         onOpenChange={(open) => { if(isMountedRef.current) setIsDeleteDialogOpen(open); if (!open) { if(isMountedRef.current) setProductToDelete(null); setFocusTrigger(prev => prev + 1); } }}
          title="Confirmar Eliminación"
          description={ productToDelete ? `¿Seguro que deseas eliminar "${productToDelete?.description}" (${productToDelete?.barcode}) de la lista actual?` : `¿Seguro que deseas eliminar este producto?`}
          onConfirm={confirmDelete}
-         onCancel={() => { if(isMountedRef.current) setIsDeleteDialogOpen(false); if (activeSection === 'Contador') setFocusTrigger(prev => prev + 1); }}
+         onCancel={() => { if(isMountedRef.current) setIsDeleteDialogOpen(false); setFocusTrigger(prev => prev + 1); }}
          isDestructive={true}
          isProcessing={isTransitionPending || isSyncing}
       />
 
       <ConfirmationDialog
           isOpen={isDeleteListDialogOpen}
-          onOpenChange={(open) => { if(isMountedRef.current) setIsDeleteListDialogOpen(open); if (!open) { if (activeSection === 'Contador') setFocusTrigger(prev => prev + 1); } }}
+          onOpenChange={(open) => { if(isMountedRef.current) setIsDeleteListDialogOpen(open); if (!open) { setFocusTrigger(prev => prev + 1); } }}
           title="Confirmar Borrado de Lista"
           description={`¿Estás seguro de que deseas borrar todos los productos del inventario actual (${getWarehouseName(currentWarehouseId)})?`}
           onConfirm={handleClearCurrentList}
-          onCancel={() => { if(isMountedRef.current) setIsDeleteListDialogOpen(false); if (activeSection === 'Contador') setFocusTrigger(prev => prev + 1); }}
+          onCancel={() => { if(isMountedRef.current) setIsDeleteListDialogOpen(false); setFocusTrigger(prev => prev + 1); }}
           isDestructive={true}
           isProcessing={isTransitionPending || isSyncing}
       />
 
         <ConfirmationDialog
             isOpen={isClearCatalogConfirmOpen}
-            onOpenChange={(open) => { if(isMountedRef.current) setIsClearCatalogConfirmOpen(open); if (!open) { if (activeSection === 'Catálogo de Productos') setFocusTrigger(prev => prev + 1); } }}
+            onOpenChange={(open) => { if(isMountedRef.current) setIsClearCatalogConfirmOpen(open); if (!open) { setFocusTrigger(prev => prev + 1); } }}
             title="Confirmar Borrado Catálogo"
             description={
                  <div className="space-y-2">
@@ -1951,7 +2060,7 @@ export default function Home() {
             }
             confirmText="Sí, Borrar Catálogo"
             onConfirm={handleClearCatalog}
-            onCancel={() => { if(isMountedRef.current) setIsClearCatalogConfirmOpen(false); if (activeSection === 'Catálogo de Productos') setFocusTrigger(prev => prev + 1); }}
+            onCancel={() => { if(isMountedRef.current) setIsClearCatalogConfirmOpen(false); setFocusTrigger(prev => prev + 1); }}
             isDestructive={true}
             isProcessing={isDbLoading || isTransitionPending || isSyncing}
         />
@@ -1963,7 +2072,7 @@ export default function Home() {
             if(isMountedRef.current) setIsEditDetailDialogOpen(open);
             if (!open) {
               if(isMountedRef.current) setProductToEditDetail(null);
-              if (activeSection === 'Catálogo de Productos' || activeSection === 'Contador' || activeSection === 'Contador Cámara') setFocusTrigger(prev => prev + 1);
+              setFocusTrigger(prev => prev + 1);
             }
           }}
           selectedDetail={productToEditDetail}
@@ -1986,9 +2095,11 @@ export default function Home() {
           }}
           warehouse={warehouseToEdit}
           onSave={handleUpdateWarehouse} 
-          isProcessing={isSyncing}
+          isProcessing={isSyncing || isTransitionPending}
         />
       )}
     </div>
   );
 }
+
+    

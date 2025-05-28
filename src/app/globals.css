@@ -9,8 +9,8 @@ body {
 
 @layer base {
   :root {
-    /* AppSheet Inspired - Light Theme (Fallback, but we focus on dark) */
-    --background: 220 13% 95%; /* Fresher, lighter gray for light theme */
+    /* AppSheet Inspired - Light Theme */
+    --background: 0 0% 97%; /* Very light gray, almost white */
     --foreground: 220 10% 12%; /* Dark text for high contrast */
     --card: 0 0% 100%; /* White cards */
     --card-foreground: 220 10% 12%;
@@ -49,24 +49,24 @@ body {
 
   .dark {
     /* AppSheet Inspired - Dark Theme (Focus) */
-    --background: 220 9% 13%; /* Dark, slightly cool gray for dark theme background */
+    --background: 220 6% 10%; /* Dark, almost black blue-gray */
     --foreground: 210 25% 95%; /* Off-white/very light gray for text */
-    --card: 220 9% 17%; /* Slightly lighter than background for cards */
+    --card: 220 6% 13%; /* Slightly lighter than background for cards */
     --card-foreground: 210 25% 95%;
-    --popover: 220 9% 17%;
+    --popover: 220 6% 13%;
     --popover-foreground: 210 25% 95%;
     --primary: 217 91% 60%; /* Strong, clear blue for primary actions */
     --primary-foreground: 210 40% 98%; /* White text for primary */
-    --secondary: 220 6% 20%; /* Dark gray for secondary elements */
+    --secondary: 220 5% 20%; /* Dark gray for secondary elements */
     --secondary-foreground: 210 20% 80%; /* Lighter gray text on secondary */
-    --muted: 220 6% 17%; /* For less prominent elements */
+    --muted: 220 5% 17%; /* For less prominent elements */
     --muted-foreground: 210 15% 65%; /* Muted text color */
     --accent: 200 80% 65%; /* Brighter, more cyan-ish blue for accents in dark mode */
     --accent-foreground: 210 40% 98%;
     --destructive: 0 63% 51%;
     --destructive-foreground: 0 0% 98%;
-    --border: 220 6% 25%; /* Subtle border */
-    --input: 220 6% 16%; /* Input field background */
+    --border: 220 5% 25%; /* Subtle border */
+    --input: 220 5% 16%; /* Input field background */
     --ring: 217 91% 70%; /* Focus ring blue - brighter for dark mode */
     --chart-1: 210 70% 55%;
     --chart-2: 200 80% 60%;
@@ -75,7 +75,7 @@ body {
     --chart-5: 150 50% 60%;
 
     /* Sidebar Dark Theme */
-    --sidebar-background: 220 6% 10%; /* Even darker for the sidebar, distinct from main background */
+    --sidebar-background: 220 6% 8%; /* Even darker for the sidebar, distinct from main background */
     --sidebar-foreground: hsl(var(--foreground));
     --sidebar-primary: hsl(var(--primary));
     --sidebar-primary-foreground: hsl(var(--primary-foreground));

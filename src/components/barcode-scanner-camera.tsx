@@ -29,24 +29,33 @@ const BarcodeScannerCameraComponent: React.FC<BarcodeScannerCameraProps> = ({
   const [lastScannedTime, setLastScannedTime] = useState<number>(0);
   const [availableVideoDevices, setAvailableVideoDevices] = useState<MediaDeviceInfo[]>([]);
   const [selectedDeviceId, setSelectedDeviceId] = useState<string | undefined>(undefined);
+  const isMountedRef = useRef(false);
+
 
   const SCAN_DEBOUNCE_TIME = 1500; // Milliseconds to wait before processing the same barcode again
 
+  useEffect(() => {
+    isMountedRef.current = true;
+    return () => {
+      isMountedRef.current = false;
+    };
+  }, []);
+
   const initializeScanner = useCallback(async () => {
-    if (!isScanningActive || !videoRef.current || isInitializing) {
-      if (isScanningActive && !videoRef.current) {
+    if (!isScanningActive || !videoRef.current || isInitializing || !isMountedRef.current) {
+      if (isScanningActive && !videoRef.current && isMountedRef.current) {
         console.warn("BarcodeScannerCamera: Video element ref not available during initialization attempt.");
       }
-      setIsLoading(false);
+      if (isMountedRef.current) setIsLoading(false);
       return;
     }
 
+    if (!isMountedRef.current) return;
     console.log("BarcodeScannerCamera: Starting initializeScanner...");
     setIsInitializing(true);
     setIsLoading(true);
     setError(null);
-    // setHasPermission(null); // Reset permission status for re-initialization
-
+    
     if (!readerRef.current) {
       const hints = new Map();
       const formats = [
@@ -57,20 +66,24 @@ const BarcodeScannerCameraComponent: React.FC<BarcodeScannerCameraProps> = ({
       hints.set(DecodeHintType.POSSIBLE_FORMATS, formats);
       hints.set(DecodeHintType.TRY_HARDER, true);
       readerRef.current = new BrowserMultiFormatReader(hints, {
-        delayBetweenScanAttempts: 100, // Adjust as needed
-        delayBetweenScanSuccess: 500,  // Adjust as needed
+        delayBetweenScanAttempts: 100,
+        delayBetweenScanSuccess: 500,
       });
       console.log("BarcodeScannerCamera: BrowserMultiFormatReader initialized.");
     }
     const reader = readerRef.current;
 
     try {
-      // Get video devices only if needed or not already fetched
       if (availableVideoDevices.length === 0) {
         console.log("BarcodeScannerCamera: Enumerating video devices...");
-        await navigator.mediaDevices.getUserMedia({ video: true }); // Request permission first to enable enumeration
+        if (navigator.mediaDevices && typeof navigator.mediaDevices.getUserMedia === 'function') {
+            await navigator.mediaDevices.getUserMedia({ video: true }); 
+        } else {
+            throw new Error("getUserMedia is not supported by this browser.");
+        }
         const devices = await navigator.mediaDevices.enumerateDevices();
         const videoDevices = devices.filter(device => device.kind === 'videoinput');
+        if (!isMountedRef.current) return;
         setAvailableVideoDevices(videoDevices);
         if (videoDevices.length > 0 && !selectedDeviceId) {
           const backCamera = videoDevices.find(device => device.label.toLowerCase().includes('back') || device.label.toLowerCase().includes('trasera'));
@@ -86,10 +99,9 @@ const BarcodeScannerCameraComponent: React.FC<BarcodeScannerCameraProps> = ({
         }
       }
 
-      // If selectedDeviceId is not set yet, wait for it from the device enumeration effect
       if (!selectedDeviceId && availableVideoDevices.length > 0) {
          console.log("BarcodeScannerCamera: Waiting for selectedDeviceId to be set.");
-         setIsLoading(false); // Not loading, but waiting for device selection
+         setIsLoading(false);
          setIsInitializing(false);
          return;
       }
@@ -106,6 +118,7 @@ const BarcodeScannerCameraComponent: React.FC<BarcodeScannerCameraProps> = ({
       const stream = await navigator.mediaDevices.getUserMedia({
         video: selectedDeviceId ? { deviceId: { exact: selectedDeviceId } } : { facingMode: 'environment' },
       });
+      if (!isMountedRef.current) { stream.getTracks().forEach(track => track.stop()); return; }
       setHasPermission(true);
       console.log("BarcodeScannerCamera: Camera permission granted, stream obtained.");
 
@@ -113,19 +126,20 @@ const BarcodeScannerCameraComponent: React.FC<BarcodeScannerCameraProps> = ({
         videoRef.current.srcObject = stream;
         videoRef.current.setAttribute('playsinline', 'true');
 
-        videoRef.current.onloadedmetadata = async () => {
+        videoRef.current.onloadedmetadata = () => {
+          if (!isMountedRef.current) { stream.getTracks().forEach(track => track.stop()); return; }
           console.log("BarcodeScannerCamera: Video metadata loaded.");
-          try {
-            await videoRef.current!.play();
+          videoRef.current!.play().then(() => {
+            if (!isMountedRef.current) { stream.getTracks().forEach(track => track.stop()); return; }
             console.log("BarcodeScannerCamera: Video playback started.");
-            setIsLoading(false); // Video is playing, ready to decode
+            setIsLoading(false); 
 
             if (readerRef.current && videoRef.current && isScanningActive) {
               console.log("BarcodeScannerCamera: Attempting to decode from video device...");
               reader.decodeFromVideoDevice(selectedDeviceId, videoRef.current, (result, decodeErr) => {
-                if (!isScanningActive) return; // Stop if scanning becomes inactive
+                if (!isScanningActive || !isMountedRef.current) return;
 
-                if (result && isDecodingActive) { // Only process if decoding is active (button pressed)
+                if (result && isDecodingActive) { 
                   const currentTime = Date.now();
                   if (result.getText() !== lastScanned || (currentTime - lastScannedTime > SCAN_DEBOUNCE_TIME)) {
                     console.log("BarcodeScannerCamera: Barcode detected:", result.getText());
@@ -141,12 +155,13 @@ const BarcodeScannerCameraComponent: React.FC<BarcodeScannerCameraProps> = ({
                   }
                 } else if (decodeErr) {
                   if (!(decodeErr instanceof NotFoundException || decodeErr instanceof ChecksumException || decodeErr instanceof FormatException)) {
-                    // console.warn("BarcodeScannerCamera: ZXing decoding error (non-critical):", decodeErr.message);
+                     // console.warn("BarcodeScannerCamera: ZXing decoding error (non-critical):", decodeErr.message);
                   }
                 }
               });
             }
-          } catch (playError: any) {
+          }).catch((playError: any) => {
+            if (!isMountedRef.current) { stream.getTracks().forEach(track => track.stop()); return; }
             console.error("BarcodeScannerCamera: Error trying to play video:", playError);
             if (playError.name === "NotAllowedError") {
               setError("El navegador impidió la reproducción automática del video. Intenta interactuar con la página o revisa los permisos.");
@@ -156,21 +171,23 @@ const BarcodeScannerCameraComponent: React.FC<BarcodeScannerCameraProps> = ({
             setIsLoading(false);
             stream.getTracks().forEach(track => track.stop());
             setHasPermission(false);
-            // Do not re-throw here to allow component to render error state
-          }
+          });
         };
         videoRef.current.onerror = () => {
+          if (!isMountedRef.current) return;
           console.error("BarcodeScannerCamera: Error with video element.");
           setError("Error con el elemento de video.");
           setIsLoading(false);
           setIsInitializing(false);
         };
       } else {
+        if (!isMountedRef.current) return;
         console.warn("BarcodeScannerCamera: Video ref or stream not available after getUserMedia.");
         setIsLoading(false);
         setIsInitializing(false);
       }
     } catch (err: any) {
+      if (!isMountedRef.current) return;
       console.error("BarcodeScannerCamera: Error in initializeScanner (getUserMedia or device enumeration):", err);
       setHasPermission(false);
       if (err.name === "NotAllowedError" || err.name === "PermissionDeniedError") {
@@ -180,22 +197,20 @@ const BarcodeScannerCameraComponent: React.FC<BarcodeScannerCameraProps> = ({
       } else if (err.name === "NotReadableError" || err.name === "TrackStartError") {
         setError("La cámara ya está en uso o no se puede acceder. Cierra otras aplicaciones que puedan estar usándola.");
       } else if (err.name === "SecurityError") {
-        setError("Error de seguridad al acceder a la cámara. Asegúrate de que la página se sirve sobre HTTPS y que no hay restricciones de política.");
+         setError("Error de seguridad al acceder a la cámara. Asegúrate de que la página se sirve sobre HTTPS y que no hay restricciones de política.");
       } else {
         setError(`Error al acceder a la cámara: ${err.name} - ${err.message}`);
       }
       setIsLoading(false);
     } finally {
-      setIsInitializing(false); // Ensure initializing is reset
+      if (isMountedRef.current) setIsInitializing(false);
     }
-  }, [isScanningActive, selectedDeviceId, onBarcodeScanned, lastScanned, lastScannedTime, isDecodingActive, isInitializing, availableVideoDevices.length]);
+  }, [isScanningActive, selectedDeviceId, onBarcodeScanned, lastScanned, lastScannedTime, isDecodingActive, isInitializing, availableVideoDevices, availableVideoDevices.length]);
 
 
-  // Effect to get available video devices on mount or when scanning becomes active
   useEffect(() => {
     if (!isScanningActive || typeof navigator === 'undefined' || !navigator.mediaDevices || availableVideoDevices.length > 0) {
-      if (availableVideoDevices.length > 0 && !selectedDeviceId) {
-        // If devices are already fetched but no device is selected, select one.
+      if (availableVideoDevices.length > 0 && !selectedDeviceId && isMountedRef.current) {
         const backCamera = availableVideoDevices.find(device => device.label.toLowerCase().includes('back') || device.label.toLowerCase().includes('trasera'));
         setSelectedDeviceId(backCamera ? backCamera.deviceId : availableVideoDevices[0].deviceId);
       }
@@ -204,10 +219,16 @@ const BarcodeScannerCameraComponent: React.FC<BarcodeScannerCameraProps> = ({
 
     console.log("BarcodeScannerCamera: Attempting to enumerate devices...");
     const getDevices = async () => {
-      setIsLoading(true); // Show loading while fetching devices
+      if (!isMountedRef.current) return;
+      setIsLoading(true);
       try {
-        await navigator.mediaDevices.getUserMedia({ video: true }); // Request permission first
+        if (navigator.mediaDevices && typeof navigator.mediaDevices.getUserMedia === 'function') {
+            await navigator.mediaDevices.getUserMedia({ video: true }); 
+        } else {
+            throw new Error("getUserMedia is not supported by this browser for device enumeration.");
+        }
         const devices = await navigator.mediaDevices.enumerateDevices();
+        if (!isMountedRef.current) return;
         const videoDevices = devices.filter(device => device.kind === 'videoinput');
         console.log("BarcodeScannerCamera: Found video devices:", videoDevices);
         setAvailableVideoDevices(videoDevices);
@@ -215,13 +236,14 @@ const BarcodeScannerCameraComponent: React.FC<BarcodeScannerCameraProps> = ({
         if (videoDevices.length > 0) {
           const backCamera = videoDevices.find(device => device.label.toLowerCase().includes('back') || device.label.toLowerCase().includes('trasera'));
           setSelectedDeviceId(backCamera ? backCamera.deviceId : videoDevices[0].deviceId);
-          setHasPermission(true); // Implied if we can enumerate after getUserMedia
+          setHasPermission(true);
           setError(null);
         } else {
           setError("No se encontraron dispositivos de video.");
           setHasPermission(false);
         }
       } catch (err: any) {
+        if (!isMountedRef.current) return;
         console.error("BarcodeScannerCamera: Error enumerating devices or getting initial permission:", err);
         if (err.name === "NotAllowedError" || err.name === "PermissionDeniedError") {
           setError("Permiso de cámara denegado.");
@@ -231,44 +253,63 @@ const BarcodeScannerCameraComponent: React.FC<BarcodeScannerCameraProps> = ({
           setHasPermission(false);
         }
       } finally {
-        setIsLoading(false);
+        if (isMountedRef.current) setIsLoading(false);
       }
     };
     getDevices();
-  }, [isScanningActive, availableVideoDevices.length, selectedDeviceId]); // Rerun if isScanningActive changes or if we need to select a device
+  }, [isScanningActive, availableVideoDevices.length, selectedDeviceId]);
 
-  // Effect to initialize and clean up the scanner
   useEffect(() => {
     let currentReader = readerRef.current;
     let currentVideoEl = videoRef.current;
 
-    if (isScanningActive && selectedDeviceId && hasPermission !== false && !isInitializing) {
+    if (isScanningActive && selectedDeviceId && hasPermission !== false && !isInitializing && videoRef.current) { // Added videoRef.current check
       initializeScanner().catch(initError => {
         console.error("BarcodeScannerCamera: initializeScanner promise rejected in useEffect:", initError);
-        // Error state should be set within initializeScanner
       });
     } else if (!isScanningActive && (currentVideoEl?.srcObject || currentReader)) {
       console.log("BarcodeScannerCamera: isScanningActive is false. Cleaning up...");
-      currentReader?.reset();
+      try {
+        currentReader?.reset();
+      } catch (e) {
+        console.warn("BarcodeScannerCamera: Error during reader.reset() on cleanup:", e);
+      }
       if (currentVideoEl?.srcObject) {
         const stream = currentVideoEl.srcObject as MediaStream;
-        stream.getTracks().forEach(track => track.stop());
+        stream.getTracks().forEach(track => {
+          try {
+            track.stop();
+          } catch (e) {
+            console.warn("BarcodeScannerCamera: Error stopping track on cleanup:", e);
+          }
+        });
         currentVideoEl.srcObject = null;
       }
-      setIsLoading(true); // Reset loading state for next activation
-      setHasPermission(null); // Reset permission to allow re-checking
-      setError(null);
+      if (isMountedRef.current) {
+        setIsLoading(true); 
+        setHasPermission(null); 
+        setError(null);
+      }
     }
 
-    return () => { // Cleanup
+    return () => { 
       console.log("BarcodeScannerCamera: Component cleanup effect running.");
-      currentReader?.reset();
+      try {
+        currentReader?.reset();
+      } catch (e) {
+        console.warn("BarcodeScannerCamera: Error during reader.reset() on component unmount:", e);
+      }
       if (currentVideoEl?.srcObject) {
         const stream = currentVideoEl.srcObject as MediaStream;
-        stream.getTracks().forEach(track => track.stop());
-        // currentVideoEl.srcObject = null; // This can cause issues if cleanup runs before next init
+        stream.getTracks().forEach(track => {
+          try {
+            track.stop();
+          } catch (e) {
+            console.warn("BarcodeScannerCamera: Error stopping track on component unmount:", e);
+          }
+        });
       }
-      readerRef.current = null;
+      readerRef.current = null; // Explicitly nullify on unmount
     };
   }, [isScanningActive, initializeScanner, selectedDeviceId, hasPermission, isInitializing]);
 
@@ -276,19 +317,19 @@ const BarcodeScannerCameraComponent: React.FC<BarcodeScannerCameraProps> = ({
   const handleDeviceChange = (event: React.ChangeEvent<HTMLSelectElement>) => {
     const newDeviceId = event.target.value;
     console.log("BarcodeScannerCamera: Device changed to:", newDeviceId);
-    setSelectedDeviceId(newDeviceId);
-    // Resetting the reader and stopping the current stream before re-initializing
-    if (readerRef.current) {
-        readerRef.current.reset();
+    if (isMountedRef.current) {
+      setSelectedDeviceId(newDeviceId);
+      if (readerRef.current) {
+          try { readerRef.current.reset(); } catch(e) { console.warn("Error resetting reader on device change", e); }
+      }
+      if (videoRef.current && videoRef.current.srcObject) {
+          const stream = videoRef.current.srcObject as MediaStream;
+          stream.getTracks().forEach(track => track.stop());
+          videoRef.current.srcObject = null;
+      }
+      setHasPermission(null);
+      setIsLoading(true);
     }
-    if (videoRef.current && videoRef.current.srcObject) {
-        const stream = videoRef.current.srcObject as MediaStream;
-        stream.getTracks().forEach(track => track.stop());
-        videoRef.current.srcObject = null;
-    }
-    // Let the main useEffect handle re-initialization with the new deviceId
-    setHasPermission(null); // Force re-check/re-init
-    setIsLoading(true);
   };
 
   if (!isScanningActive) {
@@ -301,7 +342,7 @@ const BarcodeScannerCameraComponent: React.FC<BarcodeScannerCameraProps> = ({
         <video
           ref={videoRef}
           className={cn("w-full h-full object-contain", {
-            'hidden': isLoading || error || hasPermission === false,
+            'hidden': isLoading || error || hasPermission === false || !videoRef.current?.srcObject,
           })}
           playsInline
           muted
@@ -313,7 +354,7 @@ const BarcodeScannerCameraComponent: React.FC<BarcodeScannerCameraProps> = ({
             <AlertTriangle className="mx-auto h-10 w-10 text-white mb-2" />
             <p className="font-semibold text-lg">Error de Cámara</p>
             <p className="text-sm">{error}</p>
-             <Button onClick={() => { setError(null); setHasPermission(null); setIsLoading(true); initializeScanner(); }} variant="outline" size="sm" className="mt-4 border-white text-white hover:bg-white/20">
+             <Button onClick={() => { if(isMountedRef.current) { setError(null); setHasPermission(null); setIsLoading(true); initializeScanner(); }}} variant="outline" size="sm" className="mt-4 border-white text-white hover:bg-white/20">
               <RefreshCcw className="mr-1 h-3 w-3" /> Reintentar Permiso
             </Button>
           </div>
@@ -366,3 +407,4 @@ const BarcodeScannerCameraComponent: React.FC<BarcodeScannerCameraProps> = ({
 };
 
 export const BarcodeScannerCamera = React.memo(BarcodeScannerCameraComponent);
+

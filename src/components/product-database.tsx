@@ -1,3 +1,4 @@
+
 // src/components/product-database.tsx
 "use client";
 
@@ -5,8 +6,8 @@ import type { ProductDetail } from '@/types/product';
 import { useToast } from "@/hooks/use-toast";
 import { cn, debounce } from "@/lib/utils";
 import {
-    Filter, Play, Loader2, Save, Trash, Upload, Edit, AlertTriangle, Plus
-} from "lucide-react"; 
+    Filter, Play, Loader2, Save, Trash, Upload, Edit, AlertTriangle, Plus, X, PackageSearch, FileSpreadsheet, BookOpenText
+} from "lucide-react";
 
 import * as React from "react";
 import { useCallback, useEffect, useState, useMemo, useRef } from "react";
@@ -22,6 +23,12 @@ import {
 import {
     Table, TableBody, TableCaption, TableCell, TableHead, TableHeader, TableRow
 } from "@/components/ui/table";
+import {
+    AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
+    AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle
+} from "@/components/ui/alert-dialog";
+import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
+
 import { format, parseISO, isValid as isValidDate } from 'date-fns';
 import { es } from 'date-fns/locale';
 import { GOOGLE_SHEET_URL_LOCALSTORAGE_KEY } from '@/lib/constants';
@@ -32,61 +39,63 @@ const SEARCH_DEBOUNCE_MS = 300;
 
  interface ProductDatabaseProps {
   userId: string | null;
-  catalogProducts: ProductDetail[]; // Prop que viene de page.tsx
-  isLoadingCatalog: boolean; 
-  processingStatus: string; 
-  setProcessingStatus: (status: string) => void;
-  
-  onLoadFromGoogleSheet: (sheetUrlOrId: string) => Promise<void>; 
-  onAddOrUpdateProduct: (product: ProductDetail) => Promise<void>; 
-  onDeleteProduct: (barcode: string) => Promise<void>; 
-  onClearCatalogRequest: () => void; 
-  onStartCountByProvider: (products: ProductDetail[]) => void; 
-  onEditProductRequest: (product: ProductDetail) => void; 
+  catalogProducts: ProductDetail[];
+  isLoadingCatalog: boolean;
+  processingStatus: string;
+  googleSheetUrl: string; // Renamed from googleSheetUrlOrId for clarity
+  setGoogleSheetUrl: (url: string) => void; // Renamed from setGoogleSheetUrlOrId
+
+  onLoadFromGoogleSheet: (sheetUrlOrId: string) => Promise<void>;
+  onAddOrUpdateProduct: (product: ProductDetail) => Promise<void>;
+  onDeleteProductRequest: (barcode: string) => void; // Changed to request to match pattern
+  onClearCatalogRequest: () => void;
+  onStartCountByProvider: (products: ProductDetail[]) => void;
+  onEditProductRequest: (product: ProductDetail) => void;
  }
 
 
 const ProductDatabaseComponent: React.FC<ProductDatabaseProps> = ({
     userId,
-    catalogProducts = [], // <<--- DEFAULT VALUE ADDED HERE
-    isLoadingCatalog, 
-    processingStatus: parentProcessingStatus, // Renombrar para evitar conflicto con estado local
-    setProcessingStatus: setParentProcessingStatus, // Renombrar
+    catalogProducts = [],
+    isLoadingCatalog,
+    processingStatus: parentProcessingStatus,
+    googleSheetUrl,
+    setGoogleSheetUrl,
     onLoadFromGoogleSheet,
-    onAddOrUpdateProduct, 
-    onDeleteProduct,      
+    onAddOrUpdateProduct,
+    onDeleteProductRequest,
     onClearCatalogRequest,
     onStartCountByProvider,
     onEditProductRequest
  }) => {
   const { toast } = useToast();
-  const [googleSheetUrlOrId, setGoogleSheetUrlOrId] = useLocalStorage<string>(
-      GOOGLE_SHEET_URL_LOCALSTORAGE_KEY, ""
-  );
+  const [localGoogleSheetUrl, setLocalGoogleSheetUrl] = useState(googleSheetUrl);
   const [searchTerm, setSearchTerm] = useState("");
   const [selectedProviderFilter, setSelectedProviderFilter] = useState<string>("all");
   const isMountedRef = useRef(false);
-  const [localProcessingStatus, setLocalProcessingStatus] = useState(""); // Estado local para mensajes de este componente
 
   useEffect(() => {
     isMountedRef.current = true;
     return () => { isMountedRef.current = false; };
   }, []);
 
-  const handleGoogleSheetUrlOrIdChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    setGoogleSheetUrlOrId(e.target.value);
-  };
+  useEffect(() => {
+    // Sync localGoogleSheetUrl if the prop changes (e.g., loaded from localStorage initially)
+    setLocalGoogleSheetUrl(googleSheetUrl);
+  }, [googleSheetUrl]);
+
 
   const handleLoadFromGoogleSheetClick = async () => {
-    if (!googleSheetUrlOrId) {
-      requestAnimationFrame(() => toast({ variant: "destructive", title: "URL/ID Requerido" }));
+    if (!localGoogleSheetUrl.trim()) {
+      requestAnimationFrame(() => toast({ variant: "destructive", title: "URL/ID Requerido", description: "Por favor, ingrese la URL o ID de la Hoja de Google." }));
       return;
     }
-    await onLoadFromGoogleSheet(googleSheetUrlOrId);
+    await onLoadFromGoogleSheet(localGoogleSheetUrl.trim());
+    // The parent (page.tsx) will call setGoogleSheetUrl (from useLocalStorage) on success.
   };
 
   const providerOptions = useMemo(() => {
-        const providers = new Set((catalogProducts || []).map(p => p.provider || "Desconocido").filter(Boolean)); // Añadir || []
+        const providers = new Set((catalogProducts || []).map(p => p.provider || "Desconocido").filter(Boolean));
         const sortedProviders = ["all", ...Array.from(providers)].sort((a, b) => {
             if (a === 'all') return -1; if (b === 'all') return 1;
             return (a as string).localeCompare(b as string);
@@ -96,11 +105,11 @@ const ProductDatabaseComponent: React.FC<ProductDatabaseProps> = ({
 
   const handleStartCountByProviderClick = useCallback(async () => {
     if (selectedProviderFilter === 'all') {
-      requestAnimationFrame(() => toast({ title: "Seleccionar Proveedor" }));
+      requestAnimationFrame(() => toast({ title: "Seleccionar Proveedor", description:"Debe seleccionar un proveedor para iniciar el conteo." }));
       return;
     }
     if (!isMountedRef.current) return;
-    const providerProducts = (catalogProducts || []).filter(product => (product.provider || "Desconocido") === selectedProviderFilter); // Añadir || []
+    const providerProducts = (catalogProducts || []).filter(product => (product.provider || "Desconocido") === selectedProviderFilter);
     if (providerProducts.length === 0) {
       if (isMountedRef.current) requestAnimationFrame(() => toast({ title: "Vacío", description: `No hay productos para ${selectedProviderFilter}.` }));
     } else {
@@ -116,7 +125,7 @@ const ProductDatabaseComponent: React.FC<ProductDatabaseProps> = ({
 
   const filteredProducts = useMemo(() => {
     const lowerSearchTerm = searchTerm.toLowerCase();
-    return (catalogProducts || []) // Añadir || []
+    return (catalogProducts || [])
       .filter(product => {
         if (!product || !product.barcode) return false;
         const matchesSearch = !lowerSearchTerm ||
@@ -129,7 +138,7 @@ const ProductDatabaseComponent: React.FC<ProductDatabaseProps> = ({
       })
   }, [catalogProducts, searchTerm, selectedProviderFilter]);
 
-  const isLoading = isLoadingCatalog || (parentProcessingStatus !== ""); 
+  const isLoading = isLoadingCatalog || (parentProcessingStatus !== "");
 
   const handleAddNewProductClick = () => {
     onEditProductRequest({ barcode: '', description: '', provider: '', stock: 0, expirationDate: null });
@@ -137,7 +146,7 @@ const ProductDatabaseComponent: React.FC<ProductDatabaseProps> = ({
 
 
   return (
-    <div className="p-4 md:p-6 space-y-6">
+    <div className="p-4 md:p-6 space-y-6 h-full flex flex-col">
        <div className="flex flex-col md:flex-row md:justify-between md:items-start gap-4">
          <div className="flex flex-wrap gap-2">
             <Button
@@ -188,63 +197,74 @@ const ProductDatabaseComponent: React.FC<ProductDatabaseProps> = ({
          </div>
        </div>
 
-       <div className="space-y-2 p-4 border rounded-lg bg-card shadow-sm">
-           <Label htmlFor="google-sheet-url" className="block font-medium mb-1">
-              Cargar/Actualizar Catálogo desde Google Sheet:
-           </Label>
-          <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
-             <Input
-             id="google-sheet-url"
-             type="text"
-             placeholder="URL completa de Hoja de Google o ID de Hoja"
-             value={googleSheetUrlOrId}
-             onChange={handleGoogleSheetUrlOrIdChange}
-             className="flex-grow h-10 bg-background"
-             disabled={isLoading}
-             aria-describedby="google-sheet-info"
-             />
-             <Button variant="secondary" disabled={isLoading || !googleSheetUrlOrId} onClick={handleLoadFromGoogleSheetClick}>
-                {isLoading && parentProcessingStatus?.includes("Google") ? // Usar prop renombrada
-                  <Loader2 className="mr-2 h-4 w-4 animate-spin" /> :
-                  <Upload className="mr-2 h-4 w-4" />
-                 }
-                 {isLoading && parentProcessingStatus?.includes("Google") ? 'Cargando...' : 'Cargar Datos'} 
-             </Button>
-         </div>
-         <p id="google-sheet-info" className="text-xs text-muted-foreground mt-1">
-            Columnas: 1=Código, 2=Descripción, 3=Vencimiento (YYYY-MM-DD opcional), 6=Stock, 10=Proveedor. Asegúrese que la hoja tenga permisos de 'cualquiera con el enlace puede ver'.
-         </p>
-         {parentProcessingStatus && ( // Usar prop renombrada
-             <div className="mt-4 space-y-1">
-                 <p className="text-sm text-muted-foreground text-center">
-                     {parentProcessingStatus}
-                 </p>
-             </div>
-         )}
-         {isLoadingCatalog && !parentProcessingStatus && ( 
-              <div className="flex justify-center items-center py-6">
-                 <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
-                 <span className="ml-2 text-muted-foreground">Cargando catálogo...</span>
-              </div>
-         )}
-          <Button
-                variant="destructive"
-                onClick={onClearCatalogRequest} 
-                disabled={isLoading || (catalogProducts || []).length === 0} // Añadir || []
-                className="mt-4 w-full sm:w-auto"
-                title="Eliminar todos los productos del catálogo local (IndexedDB)"
-            >
-                 <Trash className="mr-2 h-4 w-4" /> Borrar Catálogo Completo
-            </Button>
-       </div>
+       <Card className="shadow-md rounded-lg bg-card border border-border">
+           <CardHeader>
+             <CardTitle className="text-lg flex items-center">
+                <FileSpreadsheet className="mr-2 h-5 w-5 text-primary" />
+                Cargar/Actualizar Catálogo desde Google Sheet
+             </CardTitle>
+             <CardDescription>
+                Pega la URL completa de tu Hoja de Google o su ID. Asegúrate que la hoja tenga permisos de 'cualquiera con el enlace puede ver'.
+             </CardDescription>
+           </CardHeader>
+           <CardContent className="space-y-3">
+            <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
+                <Label htmlFor="google-sheet-url" className="sr-only">URL de Hoja de Google</Label>
+                <Input
+                id="google-sheet-url"
+                type="text"
+                placeholder="URL completa o ID de Hoja de Google"
+                value={localGoogleSheetUrl}
+                onChange={(e) => setLocalGoogleSheetUrl(e.target.value)} // Usa estado local
+                className="flex-grow h-10 bg-background"
+                aria-describedby="google-sheet-info"
+                disabled={isLoading} // Solo deshabilita si hay una carga general del catálogo
+                />
+                <Button 
+                    variant="secondary" 
+                    disabled={isLoading || !localGoogleSheetUrl.trim()} // Deshabilita si está cargando o el input está vacío
+                    onClick={handleLoadFromGoogleSheetClick}
+                    className="h-10"
+                >
+                    {(isLoadingCatalog && parentProcessingStatus.includes("Google Sheet")) || (parentProcessingStatus.includes("Cargando desde Google Sheet")) ? 
+                      <Loader2 className="mr-2 h-4 w-4 animate-spin" /> :
+                      <Upload className="mr-2 h-4 w-4" />
+                    }
+                    {(isLoadingCatalog && parentProcessingStatus.includes("Google Sheet")) || (parentProcessingStatus.includes("Cargando desde Google Sheet")) ? 'Cargando...' : 'Cargar Datos'}
+                </Button>
+            </div>
+            <p id="google-sheet-info" className="text-xs text-muted-foreground mt-1">
+                Columnas esperadas: 1=Código, 2=Descripción, 6=Stock, 10=Proveedor. La columna 3 (Vencimiento YYYY-MM-DD) es opcional.
+            </p>
+            </CardContent>
+            <CardFooter className="flex flex-col items-start space-y-2">
+                {parentProcessingStatus && (
+                    <div className="w-full text-center p-2 bg-muted/50 rounded-md">
+                        <p className="text-sm text-muted-foreground">
+                            {parentProcessingStatus}
+                        </p>
+                    </div>
+                )}
+                <Button
+                    variant="destructive"
+                    onClick={onClearCatalogRequest}
+                    disabled={isLoading || (catalogProducts || []).length === 0}
+                    className="w-full sm:w-auto"
+                    title="Eliminar todos los productos del catálogo local (IndexedDB)"
+                >
+                    <Trash className="mr-2 h-4 w-4" /> Borrar Catálogo Completo
+                </Button>
+            </CardFooter>
+       </Card>
+
 
        <ProductTable
            products={filteredProducts}
-           isLoading={isLoadingCatalog && !parentProcessingStatus} 
-           onEdit={(product) => onEditProductRequest(product)} 
-           onDeleteRequest={(product) => {
+           isLoading={isLoadingCatalog && !parentProcessingStatus} // Pasa el estado de carga del catálogo
+           onEdit={onEditProductRequest}
+           onDeleteRequest={(product) => { // Modificado para coincidir con la prop
              if (userId && product.barcode) {
-                onDeleteProduct(product.barcode); 
+                onDeleteProductRequest(product.barcode);
              }
            }}
        />
@@ -259,7 +279,7 @@ interface ProductTableProps {
   products: ProductDetail[];
   isLoading: boolean;
   onEdit: (product: ProductDetail) => void;
-  onDeleteRequest: (product: ProductDetail) => void;
+  onDeleteRequest: (barcode: string) => void; // Cambiado para aceptar solo barcode
 }
 
 const ProductTable: React.FC<ProductTableProps> = React.memo(({
@@ -269,7 +289,7 @@ const ProductTable: React.FC<ProductTableProps> = React.memo(({
   onDeleteRequest
 }) => {
   return (
-    <ScrollArea className="h-[calc(100vh-500px)] md:h-[calc(100vh-450px)] border rounded-lg shadow-sm bg-card dark:bg-card">
+    <ScrollArea className="flex-1 border rounded-lg shadow-sm bg-card dark:bg-card">
       <Table>
         <TableCaption>Productos en el catálogo local (IndexedDB). Click en la descripción para editar.</TableCaption>
         <TableHeader className="sticky top-0 bg-muted/50 z-10 shadow-sm">
@@ -283,7 +303,7 @@ const ProductTable: React.FC<ProductTableProps> = React.memo(({
           </TableRow>
         </TableHeader>
         <TableBody>
-          {isLoading && !products.length ? (
+          {isLoading ? ( // Mostrar loader prioritariamente
             <TableRow>
               <TableCell colSpan={6} className="text-center py-10 text-muted-foreground">
                 <div className="flex justify-center items-center">
@@ -292,7 +312,7 @@ const ProductTable: React.FC<ProductTableProps> = React.memo(({
                 </div>
               </TableCell>
             </TableRow>
-          ) : !isLoading && products.length === 0 ? (
+          ) : products.length === 0 ? (
             <TableRow>
               <TableCell colSpan={6} className="text-center py-10 text-muted-foreground">
                 No hay productos en el catálogo. Agrega uno o carga desde Google Sheet.
@@ -318,17 +338,17 @@ const ProductTable: React.FC<ProductTableProps> = React.memo(({
                 </TableCell>
                 <TableCell
                     className={cn("px-2 sm:px-4 py-3 text-center tabular-nums text-xs",
-                        isValidExp && new Date() > expirationDateObj! ? 'text-red-500 font-semibold' : ''
+                        isValidExp && expirationDateObj && new Date() > expirationDateObj ? 'text-red-500 font-semibold' : ''
                     )}
-                    title={isValidExp ? `Vence: ${format(expirationDateObj!, 'PP', {locale: es})}` : 'Sin fecha'}
+                    title={isValidExp && expirationDateObj ? `Vence: ${format(expirationDateObj, 'PP', {locale: es})}` : 'Sin fecha'}
                 >
-                  {isValidExp ? format(expirationDateObj!, 'dd/MM/yy', {locale: es}) : 'N/A'}
+                  {isValidExp && expirationDateObj ? format(expirationDateObj, 'dd/MM/yy', {locale: es}) : 'N/A'}
                 </TableCell>
                 <TableCell className="px-4 py-3 text-center">
                     <Button variant="ghost" size="icon" onClick={() => onEdit(product)} className="text-blue-600 hover:text-blue-700 h-7 w-7" title="Editar Producto">
                         <Edit className="h-4 w-4"/>
                     </Button>
-                    <Button variant="ghost" size="icon" onClick={() => onDeleteRequest(product)} className="text-red-600 hover:text-red-700 h-7 w-7" title="Eliminar Producto">
+                    <Button variant="ghost" size="icon" onClick={() => onDeleteProductRequest(product.barcode)} className="text-red-600 hover:text-red-700 h-7 w-7" title="Eliminar Producto">
                         <Trash className="h-4 w-4"/>
                     </Button>
                 </TableCell>
@@ -341,3 +361,10 @@ const ProductTable: React.FC<ProductTableProps> = React.memo(({
   );
 });
 ProductTable.displayName = 'ProductTable';
+
+// Helper functions (previously in this file, now assumed to be in page.tsx or a utility file)
+// Moved fetchGoogleSheetData and extractSpreadsheetIdAndGid to page.tsx
+// to centralize data fetching and state management logic.
+// Ensure Papa is imported in page.tsx if fetchGoogleSheetData is moved there.
+
+```
